@@ -1,0 +1,41 @@
+# Derived image that fixes three upstream bugs in
+# ghcr.io/abhigyanpatwari/gitnexus:1.6.3 without re-vendoring the full source
+# tree. See notes/decisions.md (2026-05-07 REVERSAL entry) for the rationale.
+#
+# The three upstream bugs:
+#   1. /data/hf-cache is never created with the right ownership, so USER node
+#      can't write the HuggingFace embedding cache (EACCES at first analyze
+#      run with --embeddings).
+#   2. The runtime stage COPYs gitnexus/{dist,vendor,node_modules,package.json}
+#      but skips scripts/. install-duckdb-extension.mjs is invoked at runtime
+#      to install DuckDB FTS+VECTOR extensions; without it the analyzer runs
+#      but persists 0 embeddings (MODULE_NOT_FOUND).
+#   3. The REST API caches LadybugDB connections by path
+#      (lbug-adapter.ts ensureLbugInitialized line 267) and never evicts
+#      them when the analyze worker (a child process) rewrites the lbug
+#      file. After a re-analyze, /api/graph and /api/query keep returning
+#      the pre-analyze data until the server restarts or a *different* repo
+#      is queried. The MCP backend already does the right thing
+#      (mcp/local/local-backend.ts line 439); we add the same staleness
+#      check to the REST adapter via scripts/patch-lbug-staleness.mjs.
+#
+# All three fixes are minimal layers on top of the upstream image — no
+# rebuild of gitnexus from source.
+
+FROM ghcr.io/abhigyanpatwari/gitnexus:1.6.3
+
+USER root
+
+RUN mkdir -p /data/hf-cache && chown -R node:node /data
+
+COPY --chown=node:node scripts/install-duckdb-extension.mjs /app/gitnexus/scripts/install-duckdb-extension.mjs
+
+# Apply the lbug staleness patch. The script is idempotent and verifies the
+# target shape — if a future upstream release changes ensureLbugInitialized
+# the build will fail loudly here rather than silently producing a broken
+# image. Run as root because the target lives under /app (node:node owns it
+# but the COPY above runs as root too).
+COPY --chown=node:node scripts/patch-lbug-staleness.mjs /app/gitnexus/scripts/patch-lbug-staleness.mjs
+RUN node /app/gitnexus/scripts/patch-lbug-staleness.mjs
+
+USER node

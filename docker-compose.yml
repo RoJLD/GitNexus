@@ -1,0 +1,101 @@
+# Standalone GitNexus deployment — independent of any specific project.
+#
+# Configuration:
+#   The host folder mounted into the containers as /data/projects is read from
+#   the PROJECTS_ROOT variable in the local .env file (next to this compose
+#   file). Each user must set their own. See .env.example for the template.
+#
+# Usage:
+#   .\start.ps1                          # one-click launcher (build + up + open UI)
+#   .\stop.ps1                           # graceful stop (containers kept, restart fast)
+#   docker compose down                  # full teardown (containers removed)
+#
+# Indexing a project:
+#   - GitHub URL:   in the UI at http://localhost:4173, RepoAnalyzer → GitHub URL mode.
+#   - Local path:   in the UI, Local Folder mode, type a path under /data/projects/...
+#                   That path maps to ${PROJECTS_ROOT}/... on the host.
+#                   Example: <PROJECTS_ROOT>/my-project
+#                            → /data/projects/my-project
+#   - Re-index:    .\reindex.ps1 /data/projects/<your-path>  (forces fresh analysis)
+#
+# Each indexed repo's graph DB lives next to its source as <repo>/.gitnexus/.
+# The global registry of indexed repos lives in the gitnexus-data volume.
+
+name: gitnexus
+
+services:
+  # GitNexus API server. Derived image: upstream :1.6.3 + two Dockerfile.cli patches
+  # (mkdir /data/hf-cache, COPY scripts/install-duckdb-extension.mjs).
+  gitnexus:
+    build:
+      context: .
+      dockerfile: Dockerfile.cli
+    image: gitnexus-derived:1.6.3-patched
+    container_name: gitnexus
+    environment:
+      HF_HOME: /data/hf-cache
+    ports:
+      - "4747:4747"
+    volumes:
+      # Mount the host's project root entirely so any sub-project is indexable
+      # via the UI's local-path mode. The host path comes from PROJECTS_ROOT
+      # in .env. RW because gitnexus creates .gitnexus/ next to .git/ in each
+      # indexed repo.
+      - "${PROJECTS_ROOT}:/data/projects"
+      - gitnexus-data:/data/gitnexus
+      - gitnexus-hf-cache:/data/hf-cache
+    restart: unless-stopped
+
+  # Web UI built from local upstream/ checkout (gitnexus@v1.6.3) so we can patch
+  # the React source. Patches:
+  #   - gitnexus-web/src/components/DropZone.tsx: visible progress bar on the
+  #     loading card.
+  #   - gitnexus-web/src/components/RepoAnalyzer.tsx: indeterminate bar during
+  #     "Starting analysis", recent-paths suggestions, and a server-backed
+  #     folder picker so users get a real absolute path without typing.
+  #   - gitnexus-web/src/components/Header.tsx: re-analyze + delete icons no
+  #     longer hidden behind hover; auto-refresh the repo list when the
+  #     dropdown opens (catches out-of-band registry changes).
+  #   - gitnexus-web/src/App.tsx: refetch repos after a successful
+  #     post-analyze connect (registry-flush race) and on tab visibilitychange
+  #     (catches reindex.ps1 / other tabs without polling).
+  #   - gitnexus-web/src/services/backend-client.ts: cache:'no-store' on
+  #     fetchRepos so the browser never serves a stale registry list.
+  #   - gitnexus-web/src/index.css: progress-indeterminate keyframes.
+  #   - gitnexus-web/src/components/Graph3DCanvas.tsx + hooks/useAppState.tsx
+  #     + components/GraphCanvas.tsx + App.tsx: 2D/3D toggle. The 3D canvas
+  #     uses react-force-graph-3d (Three.js); middle-mouse-drag also rotates,
+  #     matching CAD/3D-modeler conventions.
+  #   - docker-server.mjs: GET /listdir endpoint for the folder picker.
+  gitnexus-web:
+    build:
+      context: ./upstream
+      dockerfile: Dockerfile.web
+    image: gitnexus-web-derived:1.6.3-patched
+    container_name: gitnexus-web
+    ports:
+      - "4173:4173"
+    volumes:
+      # Mount of the host project root (PROJECTS_ROOT in .env) so /listdir
+      # can enumerate subfolders, /export can read .gitnexus directories, and
+      # /import can write extracted archives next to the source code. Same
+      # mount path as the API container (/data/projects) so paths returned
+      # here are usable directly as the analyze request's `path` field.
+      # Read-write because of /import.
+      - "${PROJECTS_ROOT}:/data/projects"
+      # Shared with the API container — lets /import register a repo into
+      # the global registry without going through /api/analyze (which would
+      # rebuild the index from the target source and overwrite the imported
+      # one when source isn't there). The API server reads registry.json
+      # fresh on every /api/repos call, so writes from this container show
+      # up immediately on the next list.
+      - gitnexus-data:/data/gitnexus
+    restart: unless-stopped
+
+volumes:
+  # Globally-named volumes (no compose-project prefix) so they can be referenced
+  # consistently and survive teardown/rebuild cycles.
+  gitnexus-data:
+    name: gitnexus-data
+  gitnexus-hf-cache:
+    name: gitnexus-hf-cache

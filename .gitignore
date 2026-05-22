@@ -1,0 +1,16 @@
+# Working clone of the gitnexus upstream — see patches/README.md for how
+# our modifications are tracked.
+upstream/
+
+# Env files that hold paths personal to the developer
+.env
+.env.local
+
+# Editor / OS noise
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Local logs
+*.log
