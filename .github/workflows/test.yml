@@ -1,0 +1,102 @@
+name: tests
+
+on:
+  push:
+    branches: [deployment]
+  workflow_dispatch:
+
+env:
+  GITNEXUS_VERSION: ${{ vars.GITNEXUS_VERSION || 'v1.6.3' }}
+  NODE_VERSION: '22.11.0'
+
+jobs:
+  inventory-check:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: Verify test inventory
+        run: node scripts/check-test-inventory.mjs
+
+  unit:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: 'tests/package-lock.json'
+      - run: cd tests && npm ci
+      - name: Apply upstream patches (for components paths)
+        run: node scripts/apply-upstream-patches.mjs
+      - run: cd tests && npm run test:unit -- --reporter=verbose
+
+  integration:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: 'tests/package-lock.json'
+      - run: cd tests && npm ci
+      - name: Apply upstream patches
+        run: node scripts/apply-upstream-patches.mjs
+      - name: Pre-pull upstream image
+        run: docker pull ghcr.io/abhigyanpatwari/gitnexus:${{ env.GITNEXUS_VERSION }}
+      - name: Build derived images
+        run: docker compose -f docker-compose.test.yml build
+      - name: Run integration tests
+        run: cd tests && npm run test:integ -- --reporter=verbose
+      - name: Dump logs on failure
+        if: failure()
+        run: docker compose -f docker-compose.test.yml logs --no-color > docker-logs.txt
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: docker-logs
+          path: docker-logs.txt
+      - name: Teardown stack
+        if: always()
+        run: docker compose -f docker-compose.test.yml down -v
+
+  e2e:
+    runs-on: ubuntu-latest
+    needs: integration
+    continue-on-error: true
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: 'tests/package-lock.json'
+      - run: cd tests && npm ci
+      - name: Install Playwright chromium
+        run: cd tests && npx playwright install --with-deps chromium
+      - name: Apply upstream patches
+        run: node scripts/apply-upstream-patches.mjs
+      - name: Build derived images
+        run: docker compose -f docker-compose.test.yml build
+      - name: Bring stack up
+        run: docker compose -f docker-compose.test.yml up -d
+      - name: Wait for stack
+        run: cd tests && node integration/helpers/wait-ready.mjs
+      - name: Run e2e
+        run: cd tests && npm run test:e2e
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report
+          path: tests/playwright-report
+      - if: always()
+        run: docker compose -f docker-compose.test.yml down -v
