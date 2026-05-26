@@ -83,17 +83,17 @@ try {
 
   notify('notifications/initialized');
 
-  // 2. tools/list — should list 16 tools (15 + commit_footprint)
+  // 2. tools/list — should list 17 tools (16 + snapshot_auto)
   const list = await send('tools/list');
   if (list.error) fail(`tools/list: ${list.error.message}`);
   const tools = list.result?.tools || [];
-  if (tools.length !== 16) fail(`tools/list: expected 16 tools, got ${tools.length}`);
+  if (tools.length !== 17) fail(`tools/list: expected 17 tools, got ${tools.length}`);
   for (const expected of [
     'gitnexus_list_repos', 'gitnexus_entropy', 'gitnexus_churn', 'gitnexus_coupling',
     'gitnexus_growth', 'gitnexus_lifespan', 'gitnexus_ownership', 'gitnexus_dissonance',
     'gitnexus_semantic_labels', 'gitnexus_coupling_cross', 'gitnexus_growth_cross',
     'gitnexus_similarity', 'gitnexus_entropy_commits', 'gitnexus_watches',
-    'gitnexus_repo_by_id', 'gitnexus_commit_footprint',
+    'gitnexus_repo_by_id', 'gitnexus_commit_footprint', 'gitnexus_snapshot_auto',
   ]) {
     if (!tools.find((t) => t.name === expected)) fail(`tools/list: missing ${expected}`);
   }

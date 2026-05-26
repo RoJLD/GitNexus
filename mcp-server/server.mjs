@@ -248,6 +248,45 @@ const TOOLS = [
     handler: ({ repo, sha }) => callWeb('/commit/footprint', { repo, sha }),
   },
   {
+    name: 'gitnexus_snapshot_auto',
+    description: 'Auto-snapshot the most "interesting" commits in a window — those whose entropy delta (per /entropy/commits) is in the top-P percent. Phase A of the incremental-snapshots design. Densifies the snapshot timeline at the moments that matter without forcing a full per-commit pass. ALWAYS call with dryRun:true first to inspect the plan — actual snapshots cost ~3-5 minutes each in compute and ~50 MB each in storage. Hard cap on maxToCreate (≤5 by default, env-overrideable) protects against runaway requests. Source of defaults: `.gitnexus.json > auto_snapshot` if present.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        repo: { type: 'string' },
+        topPercent: { type: 'number', minimum: 0.1, maximum: 100, default: 10 },
+        windowDays: { type: 'number', minimum: 1, maximum: 3650, default: 90 },
+        debounceDays: { type: 'number', minimum: 0, maximum: 365, default: 7 },
+        minDelta: { type: 'number', minimum: 0, default: 0 },
+        excludeMerges: { type: 'boolean', default: true },
+        metric: { type: 'string', enum: ['density', 'modularity'], default: 'density' },
+        dryRun: { type: 'boolean', default: false, description: 'STRONGLY RECOMMENDED: call with true first to see the plan.' },
+        maxToCreate: { type: 'number', minimum: 1, maximum: 100, default: 5 },
+      },
+      required: ['repo'],
+      additionalProperties: false,
+    },
+    handler: async ({ repo, ...body }) => {
+      // POST with body. Have to bypass the GET-only callWeb helper.
+      const url = `${WEB_URL}/snapshot/auto?repo=${encodeURIComponent(repo)}`;
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+      try {
+        const resp = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+          signal: controller.signal,
+        });
+        const json = await resp.json().catch(() => ({}));
+        if (!resp.ok) throw new Error(json?.error || `HTTP ${resp.status}`);
+        return json;
+      } finally {
+        clearTimeout(timer);
+      }
+    },
+  },
+  {
     name: 'gitnexus_repo_by_id',
     description: 'Resolve a stable repoId (16 hex chars, sha256(firstCommitSha + normalizedRemote) — Tier 2bis.5) back to one or more registered `<base>` names. Useful when a repo was re-cloned with a different folder name and the cross-repo features lost the link. The repoId itself is surfaced by `gitnexus_similarity` under `response.repos[].repoId`.',
     inputSchema: {
