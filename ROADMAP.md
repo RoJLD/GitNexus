@@ -1,7 +1,7 @@
 # GitNexus — Roadmap
 
 État vivant des fonctionnalités déjà livrées et des prochaines pistes.
-Dernière mise à jour : 2026-05-26 (revue architecturale : Tier 2bis plate-forme, 2.6 Galaxie séparée, Tier 3 étendu 3.6-3.10, sections Optimisations + Vision + Refactos structurels, Ordre d'exécution en 6 phases).
+Dernière mise à jour : 2026-05-26 (Tier 2.5a livré : structural × temporal cube + policy JSON + warnings auto).
 
 > 📋 **Voir aussi** [INVENTORY.md](INVENTORY.md) — état des lieux complet :
 > features upstream + nos ajouts + distance avec upstream. À utiliser
@@ -38,6 +38,7 @@ un nom marketing — et son premier pas concret.
 | 18 | **Cross-repo growth** (union timeline, per-repo step lines, label switcher) | `/growth/cross`, `GrowthChart` Layers toggle |
 | 19 | **What-if simulator** (rename / move / delete symbolic mutations, preview via diff coloring) | `services/mutation-engine.ts`, `WhatIfPanel.tsx` |
 | 20 | **VSCode extension v0.1** (status-bar bus factor for the active file) | `vscode-extension/` (separate package) |
+| 21 | **Cross-repo similarity v1** (structural × temporal cube, 5-dim identity vector, `.gitnexus-policy.json`, auto warnings) — semantic axis pending v1.1 | `/similarity`, `SimilarityPanel.tsx`, `patches/example-gitnexus-policy.json` |
 
 Toutes les analytics ci-dessus marchent dans un seul repo. La granularité
 est le node gitnexus (File, Function, Class, Section, …).
@@ -176,6 +177,12 @@ Effort : 1-2 semaines pour un MVP minimal, plus si on veut une vraie
 intégration polishée.
 
 ### 2.5 — Cross-repo similarity (Score de Correspondance)
+**État** : **v1 (a) livré 2026-05-26** — plan structural × temporal (4
+quadrants) + identity vector 5-dim + `.gitnexus-policy.json` + warnings
+auto. L'axe sémantique (cube complet 2×2×2) reste pour v1.1 (b) —
+demande des embeddings client-side via le même chemin LLM que
+`/semantic-labels`. La galaxie UMAP reste pour v1.2 (c).
+
 **Promesse** : pour 2+ repos indexés, un diagnostic à **3 axes**
 (structurel, sémantique, couplage temporel) qui classe chaque paire dans
 une grille **2×2×2** avec une recommandation par cellule. Garde-fou
@@ -183,6 +190,14 @@ manuel via la section `policy:` de `.gitnexus.yaml` (cf 2bis.4) pour
 neutraliser les faux positifs (compliance, multi-tenant, freeze legacy,
 fork OSS), et heuristiques automatiques de `warnings` (licence
 divergente, last-commit-age, sets d'auteurs disjoints).
+
+**v1 (a) — livré** : 5 dims `[density, modularity, busFactorNorm,
+topAuthorShare, foundationalRatio]`, cosine sur le vecteur, Jaccard sur
+les time-buckets co-actifs (fenêtre 90j). Policy = JSON par cohérence
+avec `.gitnexus-domains.json` (Node n'a pas de YAML stdlib). Endpoint :
+`GET /similarity?repos=A,B[,...][&windowDays=][&{structural,semantic,temporal}Threshold=]`.
+Panel : `SimilarityPanel.tsx` — matrice N×N color-coded par quadrant,
+drill-down par paire, table des identity vectors.
 
 **Pré-requis** : Repo ID stable (cf 2bis.5) pour que la similarité porte
 à travers les re-clones et identifie les paires legacy/rewrite (FN-2).

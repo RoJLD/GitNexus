@@ -113,10 +113,17 @@ When you add a backend endpoint or a new docker-server module:
 
 ```bash
 # Curl every backend module so we catch regressions in routing wiring.
-for ep in repos snapshots churn coupling growth lifespan entropy ownership semantic-labels; do
+for ep in snapshots churn coupling growth lifespan entropy ownership semantic-labels; do
   curl -s -o /dev/null -w "$ep: HTTP %{http_code}\n" \
     "http://localhost:4173/$ep?repo=hmm_studio"
 done
+# Cross-repo endpoints — need ≥2 indexed repos.
+curl -s -o /dev/null -w "coupling/cross: HTTP %{http_code}\n" \
+  "http://localhost:4173/coupling/cross?repos=hmm_studio,Experiment.Crypto.2026S1.RobinDenis"
+curl -s -o /dev/null -w "growth/cross: HTTP %{http_code}\n" \
+  "http://localhost:4173/growth/cross?repos=hmm_studio,Experiment.Crypto.2026S1.RobinDenis"
+curl -s -o /dev/null -w "similarity: HTTP %{http_code}\n" \
+  "http://localhost:4173/similarity?repos=hmm_studio,Experiment.Crypto.2026S1.RobinDenis"
 ```
 
 (Add new endpoints to that loop when you ship them.)

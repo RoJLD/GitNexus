@@ -1,8 +1,8 @@
 diff --git a/Dockerfile.web b/Dockerfile.web
-index 7d20e09..cb5346a 100644
+index 7d20e09..ec1d85e 100644
 --- a/Dockerfile.web
 +++ b/Dockerfile.web
-@@ -14,19 +14,49 @@ RUN npm run build --prefix gitnexus-shared
+@@ -14,19 +14,50 @@ RUN npm run build --prefix gitnexus-shared
  COPY gitnexus/package.json ./gitnexus/
  
  COPY gitnexus-web/package.json gitnexus-web/package-lock.json ./gitnexus-web/
@@ -50,6 +50,7 @@ index 7d20e09..cb5346a 100644
 +COPY docker-server-semantic-labels.mjs ./docker-server-semantic-labels.mjs
 +COPY docker-server-coupling-cross.mjs ./docker-server-coupling-cross.mjs
 +COPY docker-server-growth-cross.mjs ./docker-server-growth-cross.mjs
++COPY docker-server-similarity.mjs ./docker-server-similarity.mjs
 +COPY docker-server-csv.mjs ./docker-server-csv.mjs
  
  RUN chown -R node:node /app
@@ -2521,6 +2522,574 @@ index 0000000..21909b2
 +  }
 +  return false;
 +}
+diff --git a/docker-server-similarity.mjs b/docker-server-similarity.mjs
+new file mode 100644
+index 0000000..bb616fe
+--- /dev/null
++++ b/docker-server-similarity.mjs
+@@ -0,0 +1,562 @@
++/**
++ * Cross-repo similarity — ROADMAP Tier 2.5.
++ *
++ * Endpoint:
++ *   GET /similarity?repos=A,B[,C,...][&windowDays=90]
++ *                  [&structuralThreshold=0.7][&semanticThreshold=0.7]
++ *                  [&temporalThreshold=0.5]
++ *
++ * Aggregates the per-repo analytics we already serve elsewhere (entropy,
++ * ownership, lifespan) into a single 5-dim "identity vector" per repo,
++ * then for every pair computes:
++ *
++ *   - structuralScore   cosine similarity on the identity vector
++ *   - temporalCoupling  Jaccard of windowed co-activity from git logs
++ *                       over the last `windowDays` days
++ *   - semanticScore     INTENTIONALLY left null in v1. The semantic axis
++ *                       needs label embeddings, which the frontend has
++ *                       to compute (LLM credentials live there, same
++ *                       reason /semantic-labels keeps the LLM call
++ *                       client-side). A future v1.1 will let the
++ *                       frontend POST embeddings and we'll merge them.
++ *
++ * The position of each pair in the 2×2×2 cube is determined by the
++ * three thresholds. When semanticScore is null we collapse the cube to
++ * the 4 cells of the structural × temporal plane and tag the quadrant
++ * with `(semantic axis pending)`.
++ *
++ * --- Policy escape hatch ---
++ *
++ * `.gitnexus-policy.json` at the repo root (NOT yaml — same rationale
++ * as .gitnexus-domains.json: Node has no YAML in stdlib and pulling
++ * a parser for one config file isn't worth it):
++ *
++ *   {
++ *     "isolation_required": true,
++ *     "reason": "PCI compliance — code identique mais doit rester séparé",
++ *     "allow_merge_with": []
++ *   }
++ *
++ * When either side of a pair has `isolation_required: true` (and the
++ * other isn't on its `allow_merge_with` whitelist), the "Jumeaux actifs"
++ * / "Jumeaux isolés" quadrants are rewritten to
++ * "Jumeaux (isolation intentionnelle)" and the merge recommendation is
++ * stripped. The full policy object travels back in `pair.policyApplied`
++ * so the UI can show the reason.
++ *
++ * --- Warnings (auto-generated heuristics) ---
++ *
++ *   - LICENSE files diverge  (compares LICENSE / LICENSE.md / LICENSE.txt)
++ *   - Last commit > 6mo      (per repo, individual not pair)
++ *   - Distinct author sets   (no committer in common)
++ *
++ * Warnings are diagnostic only — they don't change the quadrant. The
++ * UI surfaces them as a "be careful, your data says…" banner.
++ */
++
++import { spawn } from 'node:child_process';
++import { readFile, stat } from 'node:fs/promises';
++import { join } from 'node:path';
++import { findRepoByName, SNAPSHOTS_ROOT, safeSnapshotKey } from './docker-server-snapshots.mjs';
++import { readdir } from 'node:fs/promises';
++
++const MAX_REPOS = 8;
++const DEFAULT_WINDOW_DAYS = 90;
++const DEFAULT_STRUCTURAL = 0.7;
++const DEFAULT_SEMANTIC = 0.7;
++const DEFAULT_TEMPORAL = 0.5;
++const COUPLING_BUCKET_HOURS = 24;
++const STALE_REPO_DAYS = 180;
++const LICENSE_FILENAMES = ['LICENSE', 'LICENSE.md', 'LICENSE.txt', 'LICENCE', 'COPYING'];
++const POLICY_FILENAME = '.gitnexus-policy.json';
++
++const IDENTITY_DIMS = ['density', 'modularity', 'busFactorNorm', 'topAuthorShare', 'foundationalRatio'];
++
++function runCmd(cmd, args, opts = {}) {
++  return new Promise((resolve, reject) => {
++    const child = spawn(cmd, args, opts);
++    let stdout = '';
++    let stderr = '';
++    child.stdout?.on('data', (d) => (stdout += d.toString()));
++    child.stderr?.on('data', (d) => (stderr += d.toString()));
++    child.on('error', reject);
++    child.on('close', (code) => {
++      if (code === 0) resolve(stdout);
++      else reject(new Error(`${cmd} exited ${code}: ${stderr.trim()}`));
++    });
++  });
++}
++
++async function readMeta(repoPath) {
++  try {
++    return JSON.parse(await readFile(join(repoPath, '.gitnexus', 'meta.json'), 'utf8'));
++  } catch {
++    return null;
++  }
++}
++
++async function readPolicy(repoPath) {
++  try {
++    const raw = await readFile(join(repoPath, POLICY_FILENAME), 'utf8');
++    const parsed = JSON.parse(raw);
++    return {
++      isolation_required: !!parsed.isolation_required,
++      reason: typeof parsed.reason === 'string' ? parsed.reason : null,
++      allow_merge_with: Array.isArray(parsed.allow_merge_with) ? parsed.allow_merge_with : [],
++    };
++  } catch (err) {
++    if (err && err.code === 'ENOENT') return null;
++    return { _error: err.message };
++  }
++}
++
++async function readLicense(repoPath) {
++  for (const name of LICENSE_FILENAMES) {
++    try {
++      const txt = await readFile(join(repoPath, name), 'utf8');
++      return txt.trim();
++    } catch (err) {
++      if (!err || err.code !== 'ENOENT') return null;
++    }
++  }
++  return null;
++}
++
++// Live entropy: density + modularity from meta.json (matches the
++// /entropy endpoint's `compute()` for the live point).
++function entropyFromStats(stats) {
++  const nodes = Number(stats?.nodes) || 0;
++  const edges = Number(stats?.edges) || 0;
++  const communities = Number(stats?.communities) || 0;
++  const denom = nodes * (nodes - 1);
++  const density = denom > 0 ? (2 * edges) / denom : 0;
++  const modularity = nodes > 0 ? communities / nodes : 0;
++  return { density, modularity };
++}
++
++// Parse `git log --pretty=format:%an%x09%aI --name-only --no-merges`
++// into { authors: Map<name,commits>, perBucketActivity: Set<bucketId>,
++// lastCommitDate, filesTouched }.
++function parseLogForRepo(stdout, windowMs) {
++  const authors = new Map();
++  const perBucketActivity = new Set();
++  let lastCommitDate = null;
++  let currentAuthor = null;
++  let currentDateMs = null;
++  let filesInThisCommit = 0;
++  let filesTouched = 0;
++  for (const rawLine of stdout.split('\n')) {
++    const line = rawLine.trimEnd();
++    if (line === '') {
++      if (currentAuthor !== null && filesInThisCommit > 0) {
++        authors.set(currentAuthor, (authors.get(currentAuthor) || 0) + 1);
++      }
++      currentAuthor = null;
++      currentDateMs = null;
++      filesInThisCommit = 0;
++      continue;
++    }
++    if (currentAuthor === null) {
++      // Header line: "<author>\t<isoDate>"
++      const tab = line.indexOf('\t');
++      if (tab < 0) continue;
++      currentAuthor = line.slice(0, tab);
++      const iso = line.slice(tab + 1);
++      const t = Date.parse(iso);
++      currentDateMs = Number.isFinite(t) ? t : null;
++      if (currentDateMs !== null) {
++        if (lastCommitDate === null || currentDateMs > lastCommitDate) lastCommitDate = currentDateMs;
++        perBucketActivity.add(Math.floor(currentDateMs / windowMs));
++      }
++      continue;
++    }
++    filesInThisCommit++;
++    filesTouched++;
++  }
++  // Trailing commit (no blank line at EOF).
++  if (currentAuthor !== null && filesInThisCommit > 0) {
++    authors.set(currentAuthor, (authors.get(currentAuthor) || 0) + 1);
++  }
++  return { authors, perBucketActivity, lastCommitDate, filesTouched };
++}
++
++function busFactor(authorMap, pct = 0.8) {
++  const sorted = [...authorMap.values()].sort((a, b) => b - a);
++  const total = sorted.reduce((s, c) => s + c, 0);
++  if (total === 0) return { bf: 0, topShare: 0, total: 0 };
++  let cum = 0;
++  let bf = 0;
++  for (const c of sorted) {
++    bf++;
++    cum += c;
++    if (cum / total >= pct) break;
++  }
++  return { bf, topShare: sorted[0] / total, total };
++}
++
++// Foundational ratio: fraction of node ids present in every snapshot
++// from start to live. We use snapshot meta.json node counts as a proxy
++// when we don't have the full id list — that's a much cheaper signal
++// than running /lifespan and good enough for a 5-dim identity vector.
++// If only 1 timeline point exists, returns null (caller fills with 0).
++async function foundationalRatioCheap(repoName) {
++  const dir = join(SNAPSHOTS_ROOT, safeSnapshotKey(repoName));
++  let entries;
++  try {
++    entries = await readdir(dir, { withFileTypes: true });
++  } catch (err) {
++    if (err && err.code === 'ENOENT') return null;
++    return null;
++  }
++  const snapshotNodeCounts = [];
++  for (const e of entries) {
++    if (!e.isDirectory()) continue;
++    try {
++      const meta = JSON.parse(
++        await readFile(join(dir, e.name, 'source', '.gitnexus', 'meta.json'), 'utf8'),
++      );
++      const n = Number(meta?.stats?.nodes);
++      if (Number.isFinite(n) && n > 0) snapshotNodeCounts.push(n);
++    } catch {
++      // half-built snapshot, skip
++    }
++  }
++  if (snapshotNodeCounts.length < 2) return null;
++  // Without per-id intersection (too expensive here), approximate
++  // "foundational ratio" as min(snapshots) / max(snapshots) — a repo
++  // whose node count is stable across all snapshots gets a high score;
++  // one that grew or shrank dramatically gets a low one. Imperfect
++  // proxy but coherent across repos in [0, 1].
++  const minN = Math.min(...snapshotNodeCounts);
++  const maxN = Math.max(...snapshotNodeCounts);
++  return maxN > 0 ? minN / maxN : 0;
++}
++
++async function buildRepoSnapshot(repoName, api) {
++  const live = await findRepoByName(repoName, api);
++  if (!live) return { error: `repo not found: ${repoName}` };
++  const repoPath = live.repoPath || live.path;
++  const hasGit = await stat(join(repoPath, '.git')).catch(() => null);
++
++  const liveMeta = await readMeta(repoPath);
++  const stats = liveMeta?.stats || live.stats || {};
++  const { density, modularity } = entropyFromStats(stats);
++
++  let authorsRepo = new Map();
++  let busFactorRepo = 0;
++  let topAuthorShare = 0;
++  let lastCommitMs = null;
++  let perBucketActivity = new Set();
++  let filesTouched = 0;
++  let gitError = null;
++
++  if (hasGit) {
++    try {
++      const log = await runCmd('git', [
++        '-C',
++        repoPath,
++        'log',
++        '--pretty=format:%an%x09%aI',
++        '--name-only',
++        '--no-merges',
++      ]);
++      const parsed = parseLogForRepo(log, COUPLING_BUCKET_HOURS * 3600 * 1000);
++      authorsRepo = parsed.authors;
++      perBucketActivity = parsed.perBucketActivity;
++      lastCommitMs = parsed.lastCommitDate;
++      filesTouched = parsed.filesTouched;
++      const bf = busFactor(authorsRepo);
++      busFactorRepo = bf.bf;
++      topAuthorShare = bf.topShare;
++    } catch (err) {
++      gitError = err.message;
++    }
++  }
++
++  const authorsCount = authorsRepo.size;
++  const busFactorNorm = authorsCount > 0 ? busFactorRepo / authorsCount : 0;
++
++  const foundationalRatio = (await foundationalRatioCheap(repoName)) ?? 0;
++
++  const identityVector = {
++    density,
++    modularity,
++    busFactorNorm,
++    topAuthorShare,
++    foundationalRatio,
++  };
++
++  const policy = await readPolicy(repoPath);
++  const license = await readLicense(repoPath);
++
++  return {
++    name: repoName,
++    repoPath,
++    hasGit: !!hasGit,
++    gitError,
++    identityVector,
++    rawStats: {
++      nodes: Number(stats?.nodes) || 0,
++      edges: Number(stats?.edges) || 0,
++      communities: Number(stats?.communities) || 0,
++      authorsCount,
++      busFactor: busFactorRepo,
++    },
++    authorsSet: new Set(authorsRepo.keys()),
++    perBucketActivity,
++    lastCommitMs,
++    license,
++    policy,
++  };
++}
++
++function cosineSimilarity(va, vb) {
++  let dot = 0;
++  let na = 0;
++  let nb = 0;
++  for (const k of IDENTITY_DIMS) {
++    const x = Number(va[k]) || 0;
++    const y = Number(vb[k]) || 0;
++    dot += x * y;
++    na += x * x;
++    nb += y * y;
++  }
++  if (na === 0 || nb === 0) return 0;
++  return dot / (Math.sqrt(na) * Math.sqrt(nb));
++}
++
++function dominantFeatures(va, vb) {
++  const diffs = IDENTITY_DIMS.map((k) => ({
++    dim: k,
++    delta: Math.abs((Number(va[k]) || 0) - (Number(vb[k]) || 0)),
++  }));
++  diffs.sort((x, y) => y.delta - x.delta);
++  return diffs.slice(0, 2).map((d) => d.dim);
++}
++
++function temporalJaccard(bucketsA, bucketsB, windowMs, sinceMs) {
++  // Restrict to recent window. sinceMs = epoch ms cutoff.
++  const sinceBucket = Math.floor(sinceMs / windowMs);
++  const a = new Set([...bucketsA].filter((b) => b >= sinceBucket));
++  const b = new Set([...bucketsB].filter((bk) => bk >= sinceBucket));
++  if (a.size === 0 && b.size === 0) return 0;
++  let inter = 0;
++  for (const bk of a) if (b.has(bk)) inter++;
++  const union = a.size + b.size - inter;
++  return union > 0 ? inter / union : 0;
++}
++
++function quadrantLabel(highS, highSem, highT, semanticAxisPresent) {
++  if (!semanticAxisPresent) {
++    // Collapse to 2D plane.
++    if (highS && highT) return 'Patterns + collision';
++    if (highS && !highT) return 'Patterns partagés';
++    if (!highS && highT) return 'Couplage caché';
++    return 'Indépendants';
++  }
++  if (highS && highSem && highT) return 'Jumeaux actifs';
++  if (highS && highSem && !highT) return 'Jumeaux isolés';
++  if (highS && !highSem && highT) return 'Patterns + collision';
++  if (highS && !highSem && !highT) return 'Patterns partagés';
++  if (!highS && highSem && highT) return 'Collision réelle';
++  if (!highS && highSem && !highT) return 'Domaines parallèles';
++  if (!highS && !highSem && highT) return 'Couplage caché';
++  return 'Indépendants';
++}
++
++function recommendationFor(quadrant) {
++  switch (quadrant) {
++    case 'Jumeaux actifs': return 'Extraire en lib partagée';
++    case 'Jumeaux isolés': return 'Suspect — vérifier .gitnexus-policy.json';
++    case 'Jumeaux (isolation intentionnelle)': return 'OK — isolation requise par policy';
++    case 'Patterns + collision': return 'Standardiser outillage';
++    case 'Patterns partagés': return 'Standardiser (sans urgence)';
++    case 'Collision réelle': return 'Orchestrer via API Gateway';
++    case 'Domaines parallèles': return 'Surveiller, pas d\'action';
++    case 'Couplage caché': return 'Découpler';
++    case 'Indépendants': return 'Aucune action';
++    default: return null;
++  }
++}
++
++function pairWarnings(repoA, repoB) {
++  const warnings = [];
++  // LICENSE divergence: both present and different.
++  if (repoA.license && repoB.license && repoA.license !== repoB.license) {
++    warnings.push('LICENSE files diverge');
++  }
++  // Stale repo: > 6mo since last commit.
++  const now = Date.now();
++  const stale = (r) => r.lastCommitMs && (now - r.lastCommitMs) / (24 * 3600 * 1000) > STALE_REPO_DAYS;
++  if (stale(repoA)) warnings.push(`Last commit on ${repoA.name} > ${STALE_REPO_DAYS}d`);
++  if (stale(repoB)) warnings.push(`Last commit on ${repoB.name} > ${STALE_REPO_DAYS}d`);
++  // Distinct author sets: zero overlap.
++  if (repoA.authorsSet.size > 0 && repoB.authorsSet.size > 0) {
++    let overlap = 0;
++    for (const a of repoA.authorsSet) if (repoB.authorsSet.has(a)) { overlap++; break; }
++    if (overlap === 0) warnings.push('Distinct author sets');
++  }
++  return warnings;
++}
++
++function applyPolicy(repoA, repoB, quadrant) {
++  const isolationA = repoA.policy?.isolation_required;
++  const isolationB = repoB.policy?.isolation_required;
++  if (!isolationA && !isolationB) return { quadrant, policyApplied: null };
++  // Check whitelist: does either side explicitly allow merging with the other?
++  const allowsAB = isolationA && repoA.policy.allow_merge_with?.includes(repoB.name);
++  const allowsBA = isolationB && repoB.policy.allow_merge_with?.includes(repoA.name);
++  if (allowsAB && allowsBA) return { quadrant, policyApplied: { whitelisted: true } };
++  // For "Jumeaux" quadrants, rewrite to the intentional-isolation variant.
++  if (quadrant === 'Jumeaux actifs' || quadrant === 'Jumeaux isolés') {
++    const reasons = [];
++    if (isolationA) reasons.push(`${repoA.name}: ${repoA.policy.reason || 'isolation_required'}`);
++    if (isolationB) reasons.push(`${repoB.name}: ${repoB.policy.reason || 'isolation_required'}`);
++    return {
++      quadrant: 'Jumeaux (isolation intentionnelle)',
++      policyApplied: { isolationRequired: true, reasons },
++    };
++  }
++  // For other quadrants, just attach the policy info without rewriting.
++  return {
++    quadrant,
++    policyApplied: {
++      isolationRequired: true,
++      reasons: [
++        ...(isolationA ? [`${repoA.name}: ${repoA.policy.reason || 'isolation_required'}`] : []),
++        ...(isolationB ? [`${repoB.name}: ${repoB.policy.reason || 'isolation_required'}`] : []),
++      ],
++    },
++  };
++}
++
++async function handleSimilarity(url, res, opts) {
++  const reposParam = url.searchParams.get('repos');
++  if (!reposParam) {
++    res.writeHead(400, { 'Content-Type': 'application/json' });
++    res.end(JSON.stringify({ error: 'missing repos (comma-separated)' }));
++    return;
++  }
++  const repoNames = reposParam
++    .split(',')
++    .map((s) => s.trim())
++    .filter(Boolean)
++    .filter((s) => !s.includes('@'))
++    .slice(0, MAX_REPOS);
++  if (repoNames.length < 2) {
++    res.writeHead(400, { 'Content-Type': 'application/json' });
++    res.end(JSON.stringify({ error: 'need at least 2 distinct repos' }));
++    return;
++  }
++
++  const windowDays = Math.max(1, Math.min(3650, Number(url.searchParams.get('windowDays')) || DEFAULT_WINDOW_DAYS));
++  const structuralThreshold = clampUnit(Number(url.searchParams.get('structuralThreshold')) || DEFAULT_STRUCTURAL);
++  const semanticThreshold = clampUnit(Number(url.searchParams.get('semanticThreshold')) || DEFAULT_SEMANTIC);
++  const temporalThreshold = clampUnit(Number(url.searchParams.get('temporalThreshold')) || DEFAULT_TEMPORAL);
++
++  // Build per-repo snapshots in parallel — git log is the slowest step
++  // and they're independent.
++  const snapshots = await Promise.all(repoNames.map((name) => buildRepoSnapshot(name, opts.api)));
++  for (let i = 0; i < snapshots.length; i++) {
++    if (snapshots[i].error) {
++      res.writeHead(404, { 'Content-Type': 'application/json' });
++      res.end(JSON.stringify({ error: snapshots[i].error }));
++      return;
++    }
++  }
++
++  const windowMs = COUPLING_BUCKET_HOURS * 3600 * 1000;
++  const sinceMs = Date.now() - windowDays * 24 * 3600 * 1000;
++
++  const pairs = [];
++  for (let i = 0; i < snapshots.length; i++) {
++    for (let j = i + 1; j < snapshots.length; j++) {
++      const a = snapshots[i];
++      const b = snapshots[j];
++      const structural = cosineSimilarity(a.identityVector, b.identityVector);
++      const temporal = temporalJaccard(a.perBucketActivity, b.perBucketActivity, windowMs, sinceMs);
++      const semantic = null; // v1: semantic axis pending (frontend embeddings)
++      const semanticAxisPresent = semantic !== null;
++
++      const highS = structural >= structuralThreshold;
++      const highSem = semantic !== null && semantic >= semanticThreshold;
++      const highT = temporal >= temporalThreshold;
++
++      let quadrant = quadrantLabel(highS, highSem, highT, semanticAxisPresent);
++      const policyOutcome = applyPolicy(a, b, quadrant);
++      quadrant = policyOutcome.quadrant;
++
++      const recommendation = recommendationFor(quadrant);
++      const warnings = pairWarnings(a, b);
++      const dominant = dominantFeatures(a.identityVector, b.identityVector);
++
++      pairs.push({
++        a: a.name,
++        b: b.name,
++        structuralScore: roundN(structural, 4),
++        semanticScore: semantic,
++        temporalCoupling: roundN(temporal, 4),
++        quadrant,
++        recommendation,
++        warnings,
++        dominantFeatures: dominant,
++        policyApplied: policyOutcome.policyApplied,
++      });
++    }
++  }
++
++  const repos = snapshots.map((s) => ({
++    name: s.name,
++    identityVector: roundVector(s.identityVector, 4),
++    stats: s.rawStats,
++    hasGit: s.hasGit,
++    gitError: s.gitError,
++    licensePresent: !!s.license,
++    policy: s.policy,
++    lastCommitDate: s.lastCommitMs ? new Date(s.lastCommitMs).toISOString() : null,
++  }));
++
++  res.writeHead(200, { 'Content-Type': 'application/json' });
++  res.end(
++    JSON.stringify({
++      repos,
++      pairs,
++      thresholds: {
++        structural: structuralThreshold,
++        semantic: semanticThreshold,
++        temporal: temporalThreshold,
++      },
++      windowDays,
++      identityDims: IDENTITY_DIMS,
++      semanticAxisAvailable: false,
++      semanticAxisNote: 'Semantic axis is computed client-side from embeddings of /semantic-labels. v1 returns the 4-quadrant structural × temporal plane.',
++    }),
++  );
++}
++
++function clampUnit(n) {
++  if (!Number.isFinite(n)) return 0;
++  if (n < 0) return 0;
++  if (n > 1) return 1;
++  return n;
++}
++
++function roundN(n, digits) {
++  if (!Number.isFinite(n)) return 0;
++  const f = Math.pow(10, digits);
++  return Math.round(n * f) / f;
++}
++
++function roundVector(v, digits) {
++  const out = {};
++  for (const k of Object.keys(v)) out[k] = roundN(v[k], digits);
++  return out;
++}
++
++export async function handleSimilarityRoute(req, url, res, opts) {
++  if (url.pathname === '/similarity' && req.method === 'GET') {
++    await handleSimilarity(url, res, opts);
++    return true;
++  }
++  return false;
++}
 diff --git a/docker-server-snapshots-bulk.mjs b/docker-server-snapshots-bulk.mjs
 new file mode 100644
 index 0000000..086ce14
@@ -3184,10 +3753,10 @@ index 0000000..f6f693f
 +  return false;
 +}
 diff --git a/docker-server.mjs b/docker-server.mjs
-index adf84a0..31ccf57 100644
+index adf84a0..3c59a6a 100644
 --- a/docker-server.mjs
 +++ b/docker-server.mjs
-@@ -1,12 +1,49 @@
+@@ -1,12 +1,50 @@
 -import { createReadStream } from 'node:fs';
 -import { stat } from 'node:fs/promises';
 +import { createReadStream, createWriteStream } from 'node:fs';
@@ -3209,6 +3778,7 @@ index adf84a0..31ccf57 100644
 +import { handleSemanticLabelsRoute } from './docker-server-semantic-labels.mjs';
 +import { handleCouplingCrossRoute } from './docker-server-coupling-cross.mjs';
 +import { handleGrowthCrossRoute } from './docker-server-growth-cross.mjs';
++import { handleSimilarityRoute } from './docker-server-similarity.mjs';
  
  const host = '0.0.0.0';
  const port = Number(process.env.PORT || '4173');
@@ -3240,7 +3810,7 @@ index adf84a0..31ccf57 100644
  const contentTypes = {
    '.css': 'text/css; charset=utf-8',
    '.html': 'text/html; charset=utf-8',
-@@ -34,8 +71,484 @@ function resolvePath(urlPath) {
+@@ -34,8 +72,488 @@ function resolvePath(urlPath) {
    return candidate;
  }
  
@@ -3720,6 +4290,10 @@ index adf84a0..31ccf57 100644
 +  }
 +  // Cross-repo growth (ROADMAP Tier 1.3)
 +  if (await handleGrowthCrossRoute(req, url, res, { api: GITNEXUS_API })) {
++    return;
++  }
++  // Cross-repo similarity (ROADMAP Tier 2.5)
++  if (await handleSimilarityRoute(req, url, res, { api: GITNEXUS_API })) {
 +    return;
 +  }
 +
@@ -4274,10 +4848,10 @@ index 836bad7..4c2f756 100644
      "@vitejs/plugin-react": "^5.1.4",
      "@vitest/coverage-v8": "^4.1.5",
 diff --git a/gitnexus-web/src/App.tsx b/gitnexus-web/src/App.tsx
-index 2ee3569..aae2ff5 100644
+index 2ee3569..e472628 100644
 --- a/gitnexus-web/src/App.tsx
 +++ b/gitnexus-web/src/App.tsx
-@@ -1,9 +1,18 @@
+@@ -1,9 +1,19 @@
  import { useCallback, useEffect, useRef, useState } from 'react';
  import { AppStateProvider, useAppState } from './hooks/useAppState';
  import { DropZone } from './components/DropZone';
@@ -4288,6 +4862,7 @@ index 2ee3569..aae2ff5 100644
 +import { OwnershipPanel } from './components/OwnershipPanel';
 +import { DissonancePanel } from './components/DissonancePanel';
 +import { WhatIfPanel } from './components/WhatIfPanel';
++import { SimilarityPanel } from './components/SimilarityPanel';
  import { LoadingOverlay } from './components/LoadingOverlay';
  import { Header } from './components/Header';
 +import { Timeline } from './components/Timeline';
@@ -4296,7 +4871,7 @@ index 2ee3569..aae2ff5 100644
  import { RightPanel } from './components/RightPanel';
  import { SettingsPanel } from './components/SettingsPanel';
  import { StatusBar } from './components/StatusBar';
-@@ -45,6 +54,7 @@ const AppContent = () => {
+@@ -45,6 +55,7 @@ const AppContent = () => {
      setAvailableRepos,
      switchRepo,
      setCurrentRepo,
@@ -4304,7 +4879,7 @@ index 2ee3569..aae2ff5 100644
    } = useAppState();
  
    const graphCanvasRef = useRef<GraphCanvasHandle>(null);
-@@ -194,6 +204,21 @@ const AppContent = () => {
+@@ -194,6 +205,21 @@ const AppContent = () => {
      initializeAgent();
    }, [refreshLLMSettings, initializeAgent]);
  
@@ -4326,7 +4901,7 @@ index 2ee3569..aae2ff5 100644
    // ── Server heartbeat: detect when server goes down while exploring ────────
    // Uses SSE (EventSource) for instant detection — no polling delay.
    // On disconnect: show a reconnecting banner instead of resetting to onboarding.
-@@ -250,22 +275,84 @@ const AppContent = () => {
+@@ -250,22 +276,84 @@ const AppContent = () => {
            // Retry once after 1s if the repo isn't found yet (server may still
            // be reinitializing after the worker completed).
            const url = serverBaseUrl ?? 'http://localhost:4747';
@@ -4412,7 +4987,7 @@ index 2ee3569..aae2ff5 100644
                fetchRepos()
                  .then((repos) => setAvailableRepos(repos))
                  .catch(() => {});
-@@ -281,7 +368,35 @@ const AppContent = () => {
+@@ -281,7 +369,40 @@ const AppContent = () => {
  
          {/* Graph area - takes remaining space */}
          <div className="relative min-w-0 flex-1">
@@ -4446,10 +5021,15 @@ index 2ee3569..aae2ff5 100644
 +              panel manages its own internal form state; the graph
 +              coloring rides on the existing diffData mechanism. */}
 +          <WhatIfPanel />
++
++          {/* Cross-repo similarity panel — top-right, same mutex slot
++              as Coupling/Ownership/Dissonance/What-If. Self-fetching
++              when toggled on. Renders nothing for single-repo setups. */}
++          <SimilarityPanel />
  
            {/* Code References Panel (overlay) - does NOT resize the graph, it overlaps on top */}
            {isCodePanelOpen && (codeReferences.length > 0 || !!selectedNode) && (
-@@ -295,6 +410,11 @@ const AppContent = () => {
+@@ -295,6 +416,11 @@ const AppContent = () => {
          {isRightPanelOpen && <RightPanel />}
        </main>
  
@@ -8870,6 +9450,455 @@ index 5781d26..ad64bcf 100644
        {/* Error retry */}
        {phase === 'error' && (
          <div className="flex items-center gap-3">
+diff --git a/gitnexus-web/src/components/SimilarityPanel.tsx b/gitnexus-web/src/components/SimilarityPanel.tsx
+new file mode 100644
+index 0000000..3cad6f4
+--- /dev/null
++++ b/gitnexus-web/src/components/SimilarityPanel.tsx
+@@ -0,0 +1,443 @@
++import { useEffect, useMemo, useState } from 'react';
++import {
++  X,
++  AlertCircle,
++  Loader2,
++  Network,
++  ShieldAlert,
++  Info,
++} from '@/lib/lucide-icons';
++import { useAppState } from '../hooks/useAppState';
++
++/**
++ * Cross-repo similarity panel — ROADMAP Tier 2.5.
++ *
++ * Aggregates the per-repo analytics (entropy, ownership, lifespan,
++ * git activity) into a 5-dim identity vector per repo and shows the
++ * pairwise diagnostic in a small matrix.
++ *
++ * v1 ships the structural × temporal plane (4 quadrants). The semantic
++ * axis is documented in the response (`semanticAxisAvailable: false`)
++ * but not computed — same rationale as /semantic-labels: the LLM
++ * credentials live client-side and embedding the labels needs a
++ * separate embeddings client, deferred to v1.1.
++ *
++ * Position: top-right slot, mutex with Coupling/Ownership/Dissonance/
++ * What-If. The panel auto-fetches when toggled on, using every
++ * non-snapshot repo in `availableRepos` (capped at 8 by the backend).
++ */
++
++const PANEL_WIDTH_PX = 460;
++
++type SimilarityRepo = {
++  name: string;
++  identityVector: Record<string, number>;
++  stats: {
++    nodes: number;
++    edges: number;
++    communities: number;
++    authorsCount: number;
++    busFactor: number;
++  };
++  hasGit: boolean;
++  gitError: string | null;
++  licensePresent: boolean;
++  policy: { isolation_required: boolean; reason: string | null; allow_merge_with: string[] } | null;
++  lastCommitDate: string | null;
++};
++
++type SimilarityPair = {
++  a: string;
++  b: string;
++  structuralScore: number;
++  semanticScore: number | null;
++  temporalCoupling: number;
++  quadrant: string;
++  recommendation: string | null;
++  warnings: string[];
++  dominantFeatures: string[];
++  policyApplied: { isolationRequired?: boolean; reasons?: string[]; whitelisted?: boolean } | null;
++};
++
++type SimilarityData = {
++  repos: SimilarityRepo[];
++  pairs: SimilarityPair[];
++  thresholds: { structural: number; semantic: number; temporal: number };
++  windowDays: number;
++  identityDims: string[];
++  semanticAxisAvailable: boolean;
++  semanticAxisNote: string;
++};
++
++// Quadrant → tailwind color tokens. The 4 v1 quadrants get distinct
++// hues so the matrix reads at a glance; the others (semantic-axis
++// dependent) are listed for future use.
++const QUADRANT_COLORS: Record<string, string> = {
++  'Jumeaux actifs': 'bg-emerald-500/40 hover:bg-emerald-500/60 border-emerald-500/60',
++  'Jumeaux isolés': 'bg-amber-500/40 hover:bg-amber-500/60 border-amber-500/60',
++  'Jumeaux (isolation intentionnelle)': 'bg-slate-500/30 hover:bg-slate-500/50 border-slate-500/50',
++  'Patterns + collision': 'bg-orange-500/40 hover:bg-orange-500/60 border-orange-500/60',
++  'Patterns partagés': 'bg-sky-500/40 hover:bg-sky-500/60 border-sky-500/60',
++  'Collision réelle': 'bg-red-500/40 hover:bg-red-500/60 border-red-500/60',
++  'Domaines parallèles': 'bg-indigo-500/30 hover:bg-indigo-500/50 border-indigo-500/50',
++  'Couplage caché': 'bg-fuchsia-500/40 hover:bg-fuchsia-500/60 border-fuchsia-500/60',
++  'Indépendants': 'bg-elevated hover:bg-hover border-border-default',
++};
++
++function quadrantColor(q: string): string {
++  return QUADRANT_COLORS[q] || 'bg-elevated hover:bg-hover border-border-default';
++}
++
++function fmtScore(n: number | null): string {
++  if (n === null) return '—';
++  return n.toFixed(2);
++}
++
++function dimLabel(dim: string): string {
++  switch (dim) {
++    case 'density': return 'graph density';
++    case 'modularity': return 'modularity';
++    case 'busFactorNorm': return 'bus factor (norm)';
++    case 'topAuthorShare': return 'top-author share';
++    case 'foundationalRatio': return 'foundational ratio';
++    default: return dim;
++  }
++}
++
++export const SimilarityPanel = () => {
++  const {
++    projectName,
++    availableRepos,
++    similarityActive,
++    similarityLoading,
++    similarityError,
++    similarityData,
++    similarityWindowDays,
++    setSimilarityWindowDays,
++    exitSimilarityMode,
++    refreshSimilarity,
++  } = useAppState();
++
++  const baseRepo = (projectName || '').split('@')[0];
++  const [selectedPair, setSelectedPair] = useState<{ a: string; b: string } | null>(null);
++
++  // Eligible repo set: all indexed repos that aren't snapshots. The
++  // backend caps at MAX_REPOS=8, so an oversized fleet just gets the
++  // first 8 alphabetically — we keep the same behavior here for
++  // visibility into what's being compared.
++  const eligibleRepos = useMemo(
++    () => availableRepos.map((r) => r.name).filter((n) => !n.includes('@')),
++    [availableRepos],
++  );
++
++  // Auto-fetch on entering similarity mode. Re-fetch when the eligible
++  // repo set changes (new repo indexed) or window changes.
++  useEffect(() => {
++    if (!similarityActive || eligibleRepos.length < 2) return;
++    void refreshSimilarity(eligibleRepos);
++  }, [similarityActive, eligibleRepos, similarityWindowDays, refreshSimilarity]);
++
++  // Index pairs by (a,b) and (b,a) for O(1) cell lookup.
++  const pairIndex = useMemo(() => {
++    const m = new Map<string, SimilarityPair>();
++    if (!similarityData) return m;
++    for (const p of similarityData.pairs) {
++      m.set(`${p.a}::${p.b}`, p);
++      m.set(`${p.b}::${p.a}`, p);
++    }
++    return m;
++  }, [similarityData]);
++
++  const selected = selectedPair
++    ? pairIndex.get(`${selectedPair.a}::${selectedPair.b}`) || null
++    : null;
++
++  if (!similarityActive && !similarityLoading && !similarityError) return null;
++
++  const reposShown = similarityData?.repos.map((r) => r.name) || [];
++
++  return (
++    <div
++      className="pointer-events-auto absolute top-3 right-3 z-30 flex flex-col overflow-hidden rounded-xl border border-border-subtle bg-surface/95 shadow-xl backdrop-blur"
++      style={{ width: PANEL_WIDTH_PX, maxHeight: 'calc(100% - 1.5rem)' }}
++    >
++      <div className="flex shrink-0 items-center gap-2 border-b border-border-subtle px-3 py-2">
++        <Network className="h-3.5 w-3.5 text-cyan-300" />
++        <span className="text-xs font-semibold text-text-primary">Cross-repo similarity</span>
++        {similarityData && (
++          <span className="font-mono text-[10px] text-text-muted">
++            {similarityData.repos.length} repos · {similarityData.windowDays}d window
++          </span>
++        )}
++        <button
++          type="button"
++          onClick={() => exitSimilarityMode()}
++          className="ml-auto shrink-0 cursor-pointer rounded p-1 text-text-muted transition-colors hover:bg-hover hover:text-text-primary"
++          title="Close panel"
++        >
++          <X className="h-3.5 w-3.5" />
++        </button>
++      </div>
++
++      {/* Pre-flight error: not enough repos */}
++      {similarityActive && eligibleRepos.length < 2 && !similarityLoading && (
++        <div className="flex items-start gap-2 px-3 py-3 text-xs text-text-muted">
++          <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" />
++          <span>
++            Need at least 2 indexed repos for similarity analysis. Currently {eligibleRepos.length}{' '}
++            available.
++          </span>
++        </div>
++      )}
++
++      {similarityLoading && (
++        <div className="flex items-center justify-center gap-2 py-6 text-xs text-text-muted">
++          <Loader2 className="h-3.5 w-3.5 animate-spin" />
++          Computing similarity…
++        </div>
++      )}
++      {similarityError && (
++        <div className="flex items-start gap-2 px-3 py-3 text-xs text-red-400 font-mono whitespace-pre-wrap">
++          <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
++          <span className="break-all">{similarityError}</span>
++        </div>
++      )}
++
++      {similarityData && !similarityLoading && (
++        <>
++          {/* Semantic-axis pending banner */}
++          {!similarityData.semanticAxisAvailable && (
++            <div className="shrink-0 border-b border-border-subtle bg-violet-500/5 px-3 py-1.5 text-[10px] text-violet-200">
++              <span className="font-semibold">Semantic axis pending.</span>{' '}
++              v1 ships the structural × temporal plane (4 quadrants). The semantic dimension needs
++              client-side label embeddings (deferred to v1.1).
++            </div>
++          )}
++
++          {/* Window-days control + thresholds */}
++          <div className="flex shrink-0 items-center gap-2 border-b border-border-subtle bg-elevated px-3 py-2 text-[10px] text-text-muted">
++            <label className="flex items-center gap-1">
++              <span>window</span>
++              <input
++                type="number"
++                min={7}
++                max={3650}
++                value={similarityWindowDays}
++                onChange={(e) => {
++                  const v = Math.max(7, Math.min(3650, Number(e.target.value) || 90));
++                  setSimilarityWindowDays(v);
++                }}
++                className="w-12 rounded border border-border-default bg-void px-1 py-0 text-right font-mono text-text-primary outline-none focus:border-accent/40"
++              />
++              <span>d</span>
++            </label>
++            <span className="text-text-muted/60">·</span>
++            <span title="Structural / Semantic / Temporal thresholds">
++              thresh {similarityData.thresholds.structural.toFixed(2)} /{' '}
++              {similarityData.thresholds.semantic.toFixed(2)} /{' '}
++              {similarityData.thresholds.temporal.toFixed(2)}
++            </span>
++          </div>
++
++          {/* The matrix */}
++          <div className="flex-1 overflow-y-auto">
++            <div className="px-3 py-2">
++              <div
++                className="grid gap-0.5"
++                style={{
++                  gridTemplateColumns: `minmax(80px, auto) repeat(${reposShown.length}, 28px)`,
++                }}
++              >
++                {/* Header row */}
++                <div />
++                {reposShown.map((r) => (
++                  <div
++                    key={`col-${r}`}
++                    className="flex h-6 items-end justify-center pb-0.5 font-mono text-[8px] text-text-muted"
++                    title={r}
++                    style={{ writingMode: 'vertical-rl', transform: 'rotate(180deg)' }}
++                  >
++                    <span className="block max-h-16 overflow-hidden text-ellipsis whitespace-nowrap">
++                      {r}
++                    </span>
++                  </div>
++                ))}
++                {/* Body rows */}
++                {reposShown.map((rowRepo) => (
++                  <div key={`row-${rowRepo}`} className="contents">
++                    <div
++                      className="flex h-6 items-center pr-1 text-right font-mono text-[10px] text-text-muted"
++                      title={rowRepo}
++                    >
++                      <span className="block w-full truncate">
++                        {rowRepo === baseRepo ? `${rowRepo} ★` : rowRepo}
++                      </span>
++                    </div>
++                    {reposShown.map((colRepo) => {
++                      if (rowRepo === colRepo) {
++                        return (
++                          <div
++                            key={`cell-${rowRepo}-${colRepo}`}
++                            className="h-6 w-6 rounded-sm border border-border-subtle/30 bg-void/40"
++                          />
++                        );
++                      }
++                      const p = pairIndex.get(`${rowRepo}::${colRepo}`);
++                      const isSelected =
++                        selected &&
++                        ((selected.a === rowRepo && selected.b === colRepo) ||
++                          (selected.a === colRepo && selected.b === rowRepo));
++                      return (
++                        <button
++                          key={`cell-${rowRepo}-${colRepo}`}
++                          type="button"
++                          onClick={() =>
++                            p && setSelectedPair({ a: rowRepo, b: colRepo })
++                          }
++                          className={`h-6 w-6 cursor-pointer rounded-sm border transition-all ${quadrantColor(p?.quadrant || '')} ${
++                            isSelected ? 'ring-2 ring-accent ring-offset-1 ring-offset-surface' : ''
++                          }`}
++                          title={
++                            p
++                              ? `${rowRepo} ↔ ${colRepo}\n${p.quadrant}\nstructural: ${fmtScore(p.structuralScore)} · temporal: ${fmtScore(p.temporalCoupling)}${p.warnings.length ? `\n⚠ ${p.warnings.join(' · ')}` : ''}`
++                              : 'no data'
++                          }
++                        >
++                          {p && p.warnings.length > 0 && (
++                            <ShieldAlert className="m-auto h-3 w-3 text-amber-200" />
++                          )}
++                        </button>
++                      );
++                    })}
++                  </div>
++                ))}
++              </div>
++
++              {/* Legend */}
++              <div className="mt-3 grid grid-cols-2 gap-x-2 gap-y-0.5 text-[9px] text-text-muted">
++                {Array.from(
++                  new Set(similarityData.pairs.map((p) => p.quadrant)),
++                ).map((q) => (
++                  <div key={q} className="flex items-center gap-1">
++                    <span className={`h-2 w-2 shrink-0 rounded-sm border ${quadrantColor(q)}`} />
++                    <span className="truncate" title={q}>
++                      {q}
++                    </span>
++                  </div>
++                ))}
++              </div>
++            </div>
++
++            {/* Pair drill-down */}
++            {selected && (
++              <div className="border-t border-border-subtle bg-elevated px-3 py-2 space-y-1.5">
++                <div className="flex items-center gap-2 text-[11px]">
++                  <span className="font-mono text-text-primary">{selected.a}</span>
++                  <span className="text-text-muted">↔</span>
++                  <span className="font-mono text-text-primary">{selected.b}</span>
++                </div>
++                <div className="flex items-center gap-2 text-[10px]">
++                  <span
++                    className={`rounded border px-1.5 py-0.5 font-mono font-semibold ${quadrantColor(selected.quadrant)}`}
++                  >
++                    {selected.quadrant}
++                  </span>
++                  {selected.recommendation && (
++                    <span className="text-text-secondary">→ {selected.recommendation}</span>
++                  )}
++                </div>
++                <div className="grid grid-cols-3 gap-1 font-mono text-[10px]">
++                  <div>
++                    <div className="text-text-muted">structural</div>
++                    <div className="text-text-primary">{fmtScore(selected.structuralScore)}</div>
++                  </div>
++                  <div>
++                    <div className="text-text-muted">semantic</div>
++                    <div className="text-text-primary">{fmtScore(selected.semanticScore)}</div>
++                  </div>
++                  <div>
++                    <div className="text-text-muted">temporal</div>
++                    <div className="text-text-primary">{fmtScore(selected.temporalCoupling)}</div>
++                  </div>
++                </div>
++                {selected.dominantFeatures.length > 0 && (
++                  <div className="text-[10px] text-text-muted">
++                    <span className="font-semibold">Dominant features:</span>{' '}
++                    {selected.dominantFeatures.map(dimLabel).join(', ')}
++                  </div>
++                )}
++                {selected.warnings.length > 0 && (
++                  <div className="space-y-0.5">
++                    {selected.warnings.map((w) => (
++                      <div
++                        key={w}
++                        className="flex items-start gap-1 rounded border border-amber-500/30 bg-amber-500/10 px-1.5 py-0.5 text-[10px] text-amber-200"
++                      >
++                        <ShieldAlert className="mt-0.5 h-3 w-3 shrink-0" />
++                        <span>{w}</span>
++                      </div>
++                    ))}
++                  </div>
++                )}
++                {selected.policyApplied && (
++                  <div className="rounded border border-slate-500/30 bg-slate-500/10 px-1.5 py-0.5 text-[10px] text-slate-200">
++                    <div className="font-semibold">
++                      Policy applied{selected.policyApplied.whitelisted ? ' (whitelisted)' : ''}
++                    </div>
++                    {selected.policyApplied.reasons?.map((r) => (
++                      <div key={r} className="text-text-muted">
++                        {r}
++                      </div>
++                    ))}
++                  </div>
++                )}
++              </div>
++            )}
++
++            {/* Identity vector table — collapsible-style, always shown but
++                compact so the user can ground intuition about what's
++                driving the scores. */}
++            <div className="border-t border-border-subtle px-3 py-2">
++              <div className="mb-1 text-[10px] font-semibold text-text-muted">
++                Identity vectors
++              </div>
++              <div className="overflow-x-auto">
++                <table className="w-full font-mono text-[10px]">
++                  <thead>
++                    <tr className="text-text-muted">
++                      <th className="text-left">repo</th>
++                      {similarityData.identityDims.map((d) => (
++                        <th key={d} className="px-1 text-right" title={dimLabel(d)}>
++                          {d.slice(0, 6)}
++                        </th>
++                      ))}
++                    </tr>
++                  </thead>
++                  <tbody>
++                    {similarityData.repos.map((r) => (
++                      <tr key={r.name} className="text-text-secondary">
++                        <td className="truncate pr-1" title={r.name}>
++                          {r.name}
++                          {r.policy?.isolation_required && (
++                            <span title="isolation_required">
++                              <ShieldAlert className="ml-1 inline h-2.5 w-2.5 text-slate-300" />
++                            </span>
++                          )}
++                        </td>
++                        {similarityData.identityDims.map((d) => (
++                          <td key={d} className="px-1 text-right">
++                            {(r.identityVector[d] ?? 0).toFixed(2)}
++                          </td>
++                        ))}
++                      </tr>
++                    ))}
++                  </tbody>
++                </table>
++              </div>
++            </div>
++          </div>
++        </>
++      )}
++    </div>
++  );
++};
 diff --git a/gitnexus-web/src/components/SnapshotsPanel.tsx b/gitnexus-web/src/components/SnapshotsPanel.tsx
 new file mode 100644
 index 0000000..5c77c1a
@@ -9092,10 +10121,10 @@ index 0000000..5c77c1a
 +}
 diff --git a/gitnexus-web/src/components/Timeline.tsx b/gitnexus-web/src/components/Timeline.tsx
 new file mode 100644
-index 0000000..049e15a
+index 0000000..0b67e49
 --- /dev/null
 +++ b/gitnexus-web/src/components/Timeline.tsx
-@@ -0,0 +1,592 @@
+@@ -0,0 +1,648 @@
 +import { useEffect, useMemo, useRef, useState } from 'react';
 +import {
 +  Play,
@@ -9110,6 +10139,7 @@ index 0000000..049e15a
 +  Users,
 +  Target,
 +  FlaskConical,
++  Network,
 +} from '@/lib/lucide-icons';
 +import { useAppState } from '../hooks/useAppState';
 +import { EntropyBadge } from './EntropyBadge';
@@ -9177,6 +10207,11 @@ index 0000000..049e15a
 +    dissonanceError,
 +    enterDissonanceMode,
 +    exitDissonanceMode,
++    similarityActive,
++    similarityLoading,
++    similarityError,
++    enterSimilarityMode,
++    exitSimilarityMode,
 +    whatIfPanelOpen,
 +    whatIfActive,
 +    whatIfMutations,
@@ -9393,6 +10428,7 @@ index 0000000..049e15a
 +          if (churnActive) exitChurnMode();
 +          if (ownershipActive) exitOwnershipMode();
 +          if (dissonanceActive) exitDissonanceMode();
++          if (similarityActive) exitSimilarityMode();
 +          if (whatIfPanelOpen || whatIfActive) exitWhatIfMode();
 +          await enterCouplingMode();
 +        }}
@@ -9513,6 +10549,7 @@ index 0000000..049e15a
 +          if (couplingActive) exitCouplingMode();
 +          if (ownershipActive) exitOwnershipMode();
 +          if (dissonanceActive) exitDissonanceMode();
++          if (similarityActive) exitSimilarityMode();
 +          // Reset to a clean queue so re-opening starts blank.
 +          setWhatIfMutations([]);
 +          setWhatIfPanelOpen(true);
@@ -9554,6 +10591,7 @@ index 0000000..049e15a
 +          }
 +          if (couplingActive) exitCouplingMode();
 +          if (dissonanceActive) exitDissonanceMode();
++          if (similarityActive) exitSimilarityMode();
 +          if (whatIfPanelOpen || whatIfActive) exitWhatIfMode();
 +          await enterOwnershipMode();
 +        }}
@@ -9596,6 +10634,7 @@ index 0000000..049e15a
 +          }
 +          if (couplingActive) exitCouplingMode();
 +          if (ownershipActive) exitOwnershipMode();
++          if (similarityActive) exitSimilarityMode();
 +          if (whatIfPanelOpen || whatIfActive) exitWhatIfMode();
 +          await enterDissonanceMode();
 +        }}
@@ -9626,6 +10665,52 @@ index 0000000..049e15a
 +          title={dissonanceError}
 +        >
 +          dissonance error (hover)
++        </div>
++      )}
++
++      {/* Cross-repo similarity — same top-right slot, mutex with the
++          other panels. Only meaningful when 2+ non-snapshot repos are
++          indexed; the panel itself surfaces the empty state otherwise. */}
++      <button
++        type="button"
++        onClick={async () => {
++          if (similarityActive) {
++            exitSimilarityMode();
++            return;
++          }
++          if (couplingActive) exitCouplingMode();
++          if (ownershipActive) exitOwnershipMode();
++          if (dissonanceActive) exitDissonanceMode();
++          if (whatIfPanelOpen || whatIfActive) exitWhatIfMode();
++          enterSimilarityMode();
++        }}
++        disabled={!!diffMode || similarityLoading}
++        className={`flex shrink-0 cursor-pointer items-center gap-1 rounded-md border px-1.5 py-0.5 text-[10px] font-medium transition-all disabled:cursor-not-allowed disabled:opacity-40 ${
++          similarityActive
++            ? 'border-cyan-500/40 bg-cyan-500/15 text-cyan-300'
++            : 'border-border-subtle bg-elevated text-text-secondary hover:bg-hover hover:text-text-primary'
++        }`}
++        title={
++          diffMode
++            ? 'Exit diff mode first'
++            : similarityActive
++              ? 'Hide similarity panel'
++              : 'Cross-repo similarity: structural × temporal cube + policy YAML'
++        }
++      >
++        {similarityLoading ? (
++          <Loader2 className="h-2.5 w-2.5 animate-spin" />
++        ) : (
++          <Network className="h-2.5 w-2.5" />
++        )}
++        Similarity
++      </button>
++      {similarityError && !similarityActive && (
++        <div
++          className="shrink-0 max-w-[280px] truncate text-[10px] text-red-400"
++          title={similarityError}
++        >
++          similarity error (hover)
 +        </div>
 +      )}
 +
@@ -10043,7 +11128,7 @@ index 0000000..a370295
 +  );
 +};
 diff --git a/gitnexus-web/src/hooks/useAppState.tsx b/gitnexus-web/src/hooks/useAppState.tsx
-index 25c5776..b803870 100644
+index 25c5776..1a2bddc 100644
 --- a/gitnexus-web/src/hooks/useAppState.tsx
 +++ b/gitnexus-web/src/hooks/useAppState.tsx
 @@ -8,7 +8,12 @@ import {
@@ -10099,7 +11184,7 @@ index 25c5776..b803870 100644
  
    // Graph data
    graph: KnowledgeGraph | null;
-@@ -192,6 +209,194 @@ interface AppState {
+@@ -192,6 +209,250 @@ interface AppState {
    clearAICodeReferences: () => void;
    clearCodeReferences: () => void;
    codeReferenceFocus: CodeReferenceFocus | null;
@@ -10172,6 +11257,20 @@ index 25c5776..b803870 100644
 +  dissonanceData: DissonanceData | null;
 +  enterDissonanceMode: () => Promise<void>;
 +  exitDissonanceMode: () => void;
++
++  // Cross-repo similarity (ROADMAP Tier 2.5). Aggregates entropy /
++  // ownership / lifespan / git activity across all indexed repos into
++  // a 5-dim identity vector per repo, then positions every pair in a
++  // structural × temporal plane (semantic axis deferred to v1.1).
++  similarityActive: boolean;
++  similarityLoading: boolean;
++  similarityError: string | null;
++  similarityData: SimilarityData | null;
++  similarityWindowDays: number;
++  setSimilarityWindowDays: (days: number) => void;
++  refreshSimilarity: (repos: string[]) => Promise<void>;
++  enterSimilarityMode: () => void;
++  exitSimilarityMode: () => void;
 +
 +  // Semantic labels (ROADMAP Tier 2.1). LLM-generated human-readable
 +  // labels for each detected Community. Auto-loaded from server cache
@@ -10291,10 +11390,52 @@ index 25c5776..b803870 100644
 +  perDomain: DissonancePerDomain[];
 +  misplaced: DissonanceMisplaced[];
 +  domainWithoutCommunity: { file: string; domain: string }[];
++}
++
++export interface SimilarityRepoStats {
++  nodes: number;
++  edges: number;
++  communities: number;
++  authorsCount: number;
++  busFactor: number;
++}
++
++export interface SimilarityRepo {
++  name: string;
++  identityVector: Record<string, number>;
++  stats: SimilarityRepoStats;
++  hasGit: boolean;
++  gitError: string | null;
++  licensePresent: boolean;
++  policy: { isolation_required: boolean; reason: string | null; allow_merge_with: string[] } | null;
++  lastCommitDate: string | null;
++}
++
++export interface SimilarityPair {
++  a: string;
++  b: string;
++  structuralScore: number;
++  semanticScore: number | null;
++  temporalCoupling: number;
++  quadrant: string;
++  recommendation: string | null;
++  warnings: string[];
++  dominantFeatures: string[];
++  policyApplied: { isolationRequired?: boolean; reasons?: string[]; whitelisted?: boolean } | null;
++}
++
++export interface SimilarityData {
++  repos: SimilarityRepo[];
++  pairs: SimilarityPair[];
++  thresholds: { structural: number; semantic: number; temporal: number };
++  windowDays: number;
++  identityDims: string[];
++  semanticAxisAvailable: boolean;
++  semanticAxisNote: string;
  }
  
  const AppStateContext = createContext<AppState | null>(null);
-@@ -205,6 +410,10 @@ export const AppStateProvider = ({ children }: { children: ReactNode }) => (
+@@ -205,6 +466,10 @@ export const AppStateProvider = ({ children }: { children: ReactNode }) => (
  const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
    // View state
    const [viewMode, setViewMode] = useState<ViewMode>('onboarding');
@@ -10305,7 +11446,7 @@ index 25c5776..b803870 100644
  
    const {
      graph,
-@@ -343,6 +552,74 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
+@@ -343,6 +608,81 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
    const [isCodePanelOpen, setCodePanelOpen] = useState(false);
    const [codeReferenceFocus, setCodeReferenceFocus] = useState<CodeReferenceFocus | null>(null);
  
@@ -10355,6 +11496,13 @@ index 25c5776..b803870 100644
 +  const [dissonanceError, setDissonanceError] = useState<string | null>(null);
 +  const [dissonanceData, setDissonanceData] = useState<DissonanceData | null>(null);
 +
++  // Cross-repo similarity state (ROADMAP Tier 2.5).
++  const [similarityActive, setSimilarityActive] = useState(false);
++  const [similarityLoading, setSimilarityLoading] = useState(false);
++  const [similarityError, setSimilarityError] = useState<string | null>(null);
++  const [similarityData, setSimilarityData] = useState<SimilarityData | null>(null);
++  const [similarityWindowDays, setSimilarityWindowDays] = useState(90);
++
 +  // Semantic labels state.
 +  const [semanticLabels, setSemanticLabels] = useState<Map<string, SemanticLabel>>(new Map());
 +  const [semanticLabelsLoading, setSemanticLabelsLoading] = useState(false);
@@ -10380,7 +11528,7 @@ index 25c5776..b803870 100644
    // Map of normalized file path → node ID for graph-based lookups
    const fileNodeByPath = useMemo(() => {
      if (!graph) return new Map<string, string>();
-@@ -1207,9 +1484,434 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
+@@ -1207,9 +1547,474 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
      setCodeReferenceFocus(null);
    }, []);
  
@@ -10680,6 +11828,46 @@ index 25c5776..b803870 100644
 +    setDissonanceActive(false);
 +  }, []);
 +
++  // Cross-repo similarity (Tier 2.5). Takes the eligible repo list
++  // from the caller (the panel knows the filter rule better than the
++  // hook does). The window-days knob is independent state so the panel
++  // can rebind it without re-rendering the whole hook.
++  const refreshSimilarity = useCallback(
++    async (repos: string[]) => {
++      if (repos.length < 2) {
++        setSimilarityError('Need at least 2 indexed repos for similarity analysis');
++        setSimilarityData(null);
++        return;
++      }
++      setSimilarityLoading(true);
++      setSimilarityError(null);
++      try {
++        const url = `/similarity?repos=${encodeURIComponent(repos.join(','))}&windowDays=${similarityWindowDays}`;
++        const resp = await fetch(url, { cache: 'no-store' });
++        if (!resp.ok) {
++          const body = await resp.json().catch(() => ({}));
++          throw new Error(body?.error || `HTTP ${resp.status}`);
++        }
++        const data = (await resp.json()) as SimilarityData;
++        setSimilarityData(data);
++      } catch (err) {
++        setSimilarityError(err instanceof Error ? err.message : 'Failed to compute similarity');
++        setSimilarityData(null);
++      } finally {
++        setSimilarityLoading(false);
++      }
++    },
++    [similarityWindowDays],
++  );
++
++  const enterSimilarityMode = useCallback(() => {
++    setSimilarityActive(true);
++  }, []);
++
++  const exitSimilarityMode = useCallback(() => {
++    setSimilarityActive(false);
++  }, []);
++
 +  // Semantic labels: read-only fetch (cheap, idempotent). Called
 +  // automatically when the active repo changes, and manually after a
 +  // generation pass completes.
@@ -10815,7 +12003,7 @@ index 25c5776..b803870 100644
      graph,
      setGraph,
      selectedNode,
-@@ -1293,6 +1995,73 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
+@@ -1293,6 +2098,83 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
      clearAICodeReferences,
      clearCodeReferences,
      codeReferenceFocus,
@@ -10869,6 +12057,16 @@ index 25c5776..b803870 100644
 +    dissonanceData,
 +    enterDissonanceMode,
 +    exitDissonanceMode,
++    // Cross-repo similarity (Tier 2.5)
++    similarityActive,
++    similarityLoading,
++    similarityError,
++    similarityData,
++    similarityWindowDays,
++    setSimilarityWindowDays,
++    refreshSimilarity,
++    enterSimilarityMode,
++    exitSimilarityMode,
 +    // Semantic labels
 +    semanticLabels,
 +    semanticLabelsLoading,
@@ -11170,7 +12368,7 @@ index 0000000..b1722fa
 +  };
 +}
 diff --git a/gitnexus-web/src/lib/lucide-icons.tsx b/gitnexus-web/src/lib/lucide-icons.tsx
-index 05676e5..a09f293 100644
+index 05676e5..8844aab 100644
 --- a/gitnexus-web/src/lib/lucide-icons.tsx
 +++ b/gitnexus-web/src/lib/lucide-icons.tsx
 @@ -42,6 +42,7 @@ import { forwardRef } from 'react';
@@ -11197,23 +12395,36 @@ index 05676e5..a09f293 100644
    Eye,
    EyeOff,
    FileArchive,
-@@ -69,6 +73,7 @@ export {
+@@ -69,8 +73,10 @@ export {
    Globe,
    Hash,
    Heart,
 +  History,
    HelpCircle,
    Home,
++  Info,
    Key,
-@@ -78,6 +83,7 @@ export {
+   Layers,
+   Lightbulb,
+@@ -78,7 +84,9 @@ export {
    List,
    Loader2,
    Maximize2,
 +  Minus,
    MousePointerClick,
++  Network,
    PanelLeft,
    PanelLeftClose,
-@@ -100,9 +106,12 @@ export {
+   PanelRightClose,
+@@ -91,6 +99,7 @@ export {
+   Send,
+   Server,
+   Settings,
++  ShieldAlert,
+   SkipForward,
+   Snail,
+   Sparkles,
+@@ -100,9 +109,12 @@ export {
    Target,
    Terminal,
    Trash2,

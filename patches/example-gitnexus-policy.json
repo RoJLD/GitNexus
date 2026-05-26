@@ -1,0 +1,7 @@
+{
+  "_comment": "Drop this at the root of a repo as `.gitnexus-policy.json` to tell the /similarity endpoint that this repo MUST remain isolated from others — typically for compliance, multi-tenant, freeze-legacy, or fork-OSS reasons. The file is OPTIONAL. When present and `isolation_required: true`, the cross-repo similarity 'Jumeaux actifs' / 'Jumeaux isolés' quadrants are rewritten to 'Jumeaux (isolation intentionnelle)' and the merge recommendation is suppressed.",
+
+  "isolation_required": true,
+  "reason": "PCI compliance — code identique mais doit rester séparé des repos non-PCI (audit logs, key handling).",
+  "allow_merge_with": []
+}

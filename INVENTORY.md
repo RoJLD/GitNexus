@@ -132,6 +132,7 @@ Fichiers à la racine du repo, qui rendent le setup reproductible sur poste Wind
 | `GET /semantic-labels` + `POST` | Cache des labels LLM par community (LLM appelé côté frontend) |
 | `GET /coupling/cross` | Couplage cross-repo via bucketing temporel sur `git log` multi-repo |
 | `GET /growth/cross` | Timeline union des snapshots avec counts par-repo (migration des centres de gravité) |
+| `GET /similarity` | Vecteur d'Identité 5-dim par repo + score structural × temporal par paire, lit `.gitnexus-policy.json` + auto warnings (LICENSE / age / auteurs) |
 | `GET /listdir` | Folder browser server-side |
 | `GET /export` + `POST /import` | Bundle ou index-only, register-only mode |
 | `?format=csv` partout | Serializer partagé `docker-server-csv.mjs` |
@@ -144,6 +145,7 @@ Fichiers à la racine du repo, qui rendent le setup reproductible sur poste Wind
 - `CouplingPanel` + `GrowthChart` ont un toggle interne **cross-repo** (Layers icon) → fetch `/coupling/cross` ou `/growth/cross`
 - `DissonancePanel.tsx` — purity score + misplaced files + bouton ✨ pour générer les labels LLM
 - `WhatIfPanel.tsx` — form rename/move/delete, file queue de mutations, preview qui réutilise le diff coloring
+- `SimilarityPanel.tsx` — matrice N×N color-coded par quadrant, drill-down par paire (scores/warnings/dominant features/policy), table des identity vectors (Tier 2.5a)
 - `SnapshotsPanel.tsx`, `BulkSnapshotModal.tsx`, `DiffBanner.tsx`
 - `Graph3DCanvas.tsx` (mode 3D via `react-force-graph-3d` + `three`)
 - `services/semantic-labeler.ts` — pipeline LLM (worker pool, abort-aware, MCP-via-frontend)
@@ -167,6 +169,7 @@ Fichiers à la racine du repo, qui rendent le setup reproductible sur poste Wind
 | [../CLAUDE.md](../CLAUDE.md) | Règle workspace : tests CI/CD si module en a déjà |
 | [patches/README.md](patches/README.md) | Comment ré-appliquer les patches sur un clone frais |
 | [patches/example-gitnexus-domains.json](patches/example-gitnexus-domains.json) | Template pour la feature Dissonance |
+| [patches/example-gitnexus-policy.json](patches/example-gitnexus-policy.json) | Template policy par-repo pour la feature Cross-repo similarity (isolation_required, allow_merge_with) |
 | [vscode-extension/README.md](vscode-extension/README.md) | Setup + scope de l'extension VSCode (Tier 2.4) |
 | [INVENTORY.md](INVENTORY.md) | Ce document |
 
@@ -190,6 +193,7 @@ Fichiers à la racine du repo, qui rendent le setup reproductible sur poste Wind
 - ✅ 2.2 Dissonance score (`/dissonance`, `DissonancePanel.tsx`, exemple `patches/example-gitnexus-domains.json`)
 - ✅ 2.3 What-if simulator (`services/mutation-engine.ts`, `WhatIfPanel.tsx`, frontend-only)
 - ✅ 2.4 VSCode extension v0.1 ([vscode-extension/](vscode-extension/) — status bar + 2 commandes)
+- ✅ 2.5a Cross-repo similarity v1 — plan structural × temporal (4 quadrants sur 8), identity vector 5-dim, policy JSON, warnings auto. v1.1 (axe sémantique LLM) + v1.2 (Galaxie UMAP) restent à faire.
 
 **Pending — Tier 2bis (plate-forme, ~3 semaines cumulées, à livrer avant le reste)** :
 - ⏳ 2bis.1 MCP exposure des analytics time-travel (3-5j)
@@ -199,8 +203,9 @@ Fichiers à la racine du repo, qui rendent le setup reproductible sur poste Wind
 - ⏳ 2bis.5 Repo ID stable (3-5j)
 
 **Pending — Tier 2 résiduel** :
-- ⏳ 2.5 Cross-repo similarity (Score de Correspondance, cube 2×2×2, Vecteur d'Identité v2) — requiert 2bis.4 + 2bis.5
-- ⏳ 2.6 Galaxie UMAP / Carte de l'écosystème — séparée de 2.5, requiert 2.5
+- ⏳ 2.5b Cross-repo similarity — axe sémantique (cube 2×2×2 complet via embeddings client-side des labels LLM) — requiert un client embeddings dans `semantic-labeler.ts`
+- ⏳ 2.5c Cross-repo similarity — Vecteur d'Identité v2 (entropie + growth_rate + churn_concentration + file_size_pareto + language_diversity + tree_depth)
+- ⏳ 2.6 Galaxie UMAP / Carte de l'écosystème — séparée de 2.5, requiert 2.5c
 
 **Pending — Tier 3 étendu (R&D + stratégique)** :
 - ⏳ 3.1 à 3.5 : voir [ROADMAP.md](ROADMAP.md) (inchangé)
