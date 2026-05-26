@@ -1,8 +1,8 @@
 diff --git a/Dockerfile.web b/Dockerfile.web
-index 7d20e09..fa63145 100644
+index 7d20e09..4eae7fd 100644
 --- a/Dockerfile.web
 +++ b/Dockerfile.web
-@@ -14,19 +14,45 @@ RUN npm run build --prefix gitnexus-shared
+@@ -14,19 +14,46 @@ RUN npm run build --prefix gitnexus-shared
  COPY gitnexus/package.json ./gitnexus/
  
  COPY gitnexus-web/package.json gitnexus-web/package-lock.json ./gitnexus-web/
@@ -46,6 +46,7 @@ index 7d20e09..fa63145 100644
 +COPY docker-server-lifespan.mjs ./docker-server-lifespan.mjs
 +COPY docker-server-entropy.mjs ./docker-server-entropy.mjs
 +COPY docker-server-ownership.mjs ./docker-server-ownership.mjs
++COPY docker-server-dissonance.mjs ./docker-server-dissonance.mjs
 +COPY docker-server-csv.mjs ./docker-server-csv.mjs
  
  RUN chown -R node:node /app
@@ -563,6 +564,367 @@ index 0000000..d9de47e
 + */
 +export function safeFilename(s) {
 +  return String(s).replace(/[^A-Za-z0-9._-]/g, '_').slice(0, 80) || 'export';
++}
+diff --git a/docker-server-dissonance.mjs b/docker-server-dissonance.mjs
+new file mode 100644
+index 0000000..53700ab
+--- /dev/null
++++ b/docker-server-dissonance.mjs
+@@ -0,0 +1,355 @@
++/**
++ * Dissonance analytics — ROADMAP Tier 2.2.
++ *
++ * Endpoint:
++ *   GET /dissonance?repo=<baseRepoName>[&format=csv]
++ *
++ * Reads `<repoPath>/.gitnexus-domains.json` (a user-curated mapping of
++ * domain names to file-path globs) and compares the *declared* domain
++ * partition with gitnexus's *detected* community partition. Returns:
++ *
++ *   - per-file rows showing its declared domain, its dominant community,
++ *     and whether the two agree
++ *   - a contingency matrix domain × community (counts of files)
++ *   - a global "domain purity" score in [0,1]:
++ *       purity = Σ_d max_c |files(d) ∩ files(c)| / total_files
++ *     A purity of 1 means each domain lives entirely in one community —
++ *     architectural code-to-domain alignment. Lower = more leaky.
++ *   - a "misplaced" list: files whose community doesn't match the
++ *     majority community of their declared domain. These are the
++ *     candidates for refactoring or for re-categorisation.
++ *
++ * --- Why this design ---
++ *
++ * gitnexus's community detection runs on CALLS edges, so communities
++ * primarily group Functions/Classes/Methods. We climb back to the
++ * owning file via DEFINES (single hop), then pick the community that
++ * "wins" for each file by symbol count. Files with no defined symbols
++ * (configs, docs) have no community attribution — we list them
++ * separately so the user can decide whether to ignore them or extend
++ * their domain definition.
++ *
++ * --- The .gitnexus-domains.json format ---
++ *
++ * Lives at the repo root. JSON because Node has no YAML in stdlib and
++ * pulling a parser for one config file isn't worth it.
++ *
++ *   {
++ *     "domains": {
++ *       "auth":    ["src/auth/**", "src/middleware/auth*.py"],
++ *       "billing": ["src/billing/**", "tests/billing/**"],
++ *       "data":    ["src/db/**", "src/models/**"]
++ *     }
++ *   }
++ *
++ * Globs support `**` (any subpath including empty), `*` (any path
++ * segment, no slashes), and literal characters. First match wins —
++ * order domains from most specific to least specific in your file.
++ */
++
++import { readFile, stat } from 'node:fs/promises';
++import { join } from 'node:path';
++import { findRepoByName } from './docker-server-snapshots.mjs';
++import { toCsv, writeCsv, safeFilename } from './docker-server-csv.mjs';
++
++const DOMAINS_FILENAME = '.gitnexus-domains.json';
++
++/**
++ * Convert a glob with `**` and `*` into a RegExp. Anchored at both
++ * ends. Doesn't try to be a full minimatch — supports just what the
++ * config format actually uses.
++ */
++function globToRegex(glob) {
++  // Escape regex metacharacters first.
++  let re = glob.replace(/[.+^$(){}|[\]\\]/g, '\\$&');
++  // Then translate ** → any (including empty + slashes) and * → no slash
++  // We use placeholders to avoid the single-* substitution catching the
++  // chars we just emitted for **.
++  re = re.replace(/\*\*/g, 'XGLOBSTARX').replace(/\*/g, 'XSTARX');
++  re = re.replace(/XGLOBSTARX/g, '.*').replace(/XSTARX/g, '[^/]*');
++  return new RegExp('^' + re + '$');
++}
++
++function loadDomains(jsonText) {
++  let parsed;
++  try {
++    parsed = JSON.parse(jsonText);
++  } catch (err) {
++    throw new Error(`Invalid JSON in ${DOMAINS_FILENAME}: ${err.message}`);
++  }
++  const domains = parsed?.domains;
++  if (!domains || typeof domains !== 'object' || Array.isArray(domains)) {
++    throw new Error(`${DOMAINS_FILENAME} must have a top-level "domains" object`);
++  }
++  // Compile globs once.
++  const out = [];
++  for (const [name, patterns] of Object.entries(domains)) {
++    if (!Array.isArray(patterns)) {
++      throw new Error(`Domain "${name}" must be an array of glob strings`);
++    }
++    out.push({ name, patterns, regexes: patterns.map(globToRegex) });
++  }
++  return out;
++}
++
++function classifyFile(filePath, domains) {
++  // First-match-wins, matching the user's mental model: explicit ordering
++  // in the config file controls which domain claims overlapping files.
++  for (const d of domains) {
++    for (const re of d.regexes) {
++      if (re.test(filePath)) return d.name;
++    }
++  }
++  return null;
++}
++
++/**
++ * For each file, find the community where it has the most defined
++ * symbols. Returns Map<filePath, { communityId, label, symbolCount }>.
++ *
++ * Files with no symbol-bearing children (e.g. README.md, mkdocs.yml)
++ * are absent from the map — we surface them in the "unclassified"
++ * bucket of the response.
++ */
++async function fetchFileCommunities(repoName, api) {
++  // The relationship is stored as a generic `CodeRelation` with a `type`
++  // property. We pull file + community + a count of symbols per file
++  // per community in one go, then pick the majority per file in JS.
++  const cypher = `
++    MATCH (f:File)-[:CodeRelation {type: 'DEFINES'}]->(s)
++          -[:CodeRelation {type: 'MEMBER_OF'}]->(c:Community)
++    RETURN f.filePath AS file, c.id AS community, c.heuristicLabel AS label, count(s) AS cnt
++  `;
++  const resp = await fetch(`${api}/api/query`, {
++    method: 'POST',
++    headers: { 'Content-Type': 'application/json' },
++    body: JSON.stringify({ cypher, repo: repoName }),
++  });
++  if (!resp.ok) {
++    throw new Error(`cypher failed for ${repoName}: ${resp.status}`);
++  }
++  const data = await resp.json();
++  const rows = data?.result || data?.rows || [];
++
++  // Bucket by file, then pick the row with the highest cnt.
++  const perFile = new Map(); // file → [{community, label, cnt}, ...]
++  for (const row of rows) {
++    const file = row.file ?? row['f.filePath'];
++    const community = row.community ?? row['c.id'];
++    const label = row.label ?? row['c.heuristicLabel'] ?? null;
++    const cnt = Number(row.cnt ?? row['count(s)'] ?? 0);
++    if (typeof file !== 'string' || typeof community !== 'string') continue;
++    const arr = perFile.get(file) || [];
++    arr.push({ community, label, cnt });
++    perFile.set(file, arr);
++  }
++
++  const dominant = new Map();
++  for (const [file, arr] of perFile) {
++    arr.sort((a, b) => b.cnt - a.cnt);
++    const top = arr[0];
++    dominant.set(file, {
++      communityId: top.community,
++      label: top.label,
++      symbolCount: top.cnt,
++      // Confidence = winner share. 1 = unambiguous owner; 0.5 = split.
++      confidence: arr.reduce((s, x) => s + x.cnt, 0)
++        ? top.cnt / arr.reduce((s, x) => s + x.cnt, 0)
++        : 0,
++    });
++  }
++  return dominant;
++}
++
++async function handleDissonance(url, res, opts) {
++  const repoName = url.searchParams.get('repo');
++  if (!repoName) {
++    res.writeHead(400, { 'Content-Type': 'application/json' });
++    res.end(JSON.stringify({ error: 'missing repo' }));
++    return;
++  }
++  const baseRepo = repoName.split('@')[0];
++  const repo = await findRepoByName(baseRepo, opts.api);
++  if (!repo) {
++    res.writeHead(404, { 'Content-Type': 'application/json' });
++    res.end(JSON.stringify({ error: `repo not found: ${baseRepo}` }));
++    return;
++  }
++  const repoPath = repo.repoPath || repo.path;
++  const domainsPath = join(repoPath, DOMAINS_FILENAME);
++
++  let domainsText;
++  try {
++    domainsText = await readFile(domainsPath, 'utf8');
++  } catch (err) {
++    if (err && err.code === 'ENOENT') {
++      res.writeHead(404, { 'Content-Type': 'application/json' });
++      res.end(
++        JSON.stringify({
++          error: `No ${DOMAINS_FILENAME} at ${repoPath}. Create one to enable dissonance analysis.`,
++          example: {
++            domains: {
++              auth: ['src/auth/**', 'src/middleware/auth*.py'],
++              data: ['src/db/**', 'src/models/**'],
++            },
++          },
++        }),
++      );
++      return;
++    }
++    throw err;
++  }
++
++  let domains;
++  try {
++    domains = loadDomains(domainsText);
++  } catch (err) {
++    res.writeHead(400, { 'Content-Type': 'application/json' });
++    res.end(JSON.stringify({ error: err.message }));
++    return;
++  }
++
++  // Get the file→community map. If gitnexus has no communities for this
++  // repo (e.g. it hasn't been analyzed with that phase), we still emit
++  // a sensible response with everything in "unclassified".
++  let fileToCommunity;
++  try {
++    fileToCommunity = await fetchFileCommunities(baseRepo, opts.api);
++  } catch (err) {
++    res.writeHead(502, { 'Content-Type': 'application/json' });
++    res.end(JSON.stringify({ error: `community lookup failed: ${err.message}` }));
++    return;
++  }
++
++  // Collect all files involved (declared OR community-assigned). We need
++  // every file even if it has only a domain (so we can flag "domain
++  // declared but no symbols/community").
++  const allFiles = new Set();
++  for (const f of fileToCommunity.keys()) allFiles.add(f);
++  // For the declared side, we don't enumerate files — instead we apply
++  // globs against the set we already have. That keeps the response
++  // bounded to files gitnexus actually knows about.
++
++  // Per-file rows + contingency.
++  const rows = [];
++  const contingency = {}; // domain → { community → count }
++  const filesByDomain = {}; // domain → string[]
++  const filesByCommunity = {}; // communityId → string[]
++  let totalAttributed = 0;
++  let totalDomainAttributed = 0;
++
++  for (const file of allFiles) {
++    const domain = classifyFile(file, domains);
++    const comm = fileToCommunity.get(file) || null;
++    rows.push({
++      file,
++      domain: domain ?? null,
++      communityId: comm?.communityId ?? null,
++      communityLabel: comm?.label ?? null,
++      confidence: comm?.confidence ?? null,
++      symbolCount: comm?.symbolCount ?? 0,
++    });
++    if (domain && comm) {
++      contingency[domain] ??= {};
++      contingency[domain][comm.communityId] = (contingency[domain][comm.communityId] || 0) + 1;
++      filesByDomain[domain] ??= [];
++      filesByDomain[domain].push(file);
++      filesByCommunity[comm.communityId] ??= [];
++      filesByCommunity[comm.communityId].push(file);
++      totalAttributed++;
++    }
++    if (domain) totalDomainAttributed++;
++  }
++
++  // Per-domain majority community + purity contribution.
++  const perDomain = [];
++  let weightedPuritySum = 0;
++  for (const [domain, byComm] of Object.entries(contingency)) {
++    const total = Object.values(byComm).reduce((s, c) => s + c, 0);
++    const ranked = Object.entries(byComm)
++      .map(([cid, cnt]) => ({ communityId: cid, count: cnt, share: cnt / total }))
++      .sort((a, b) => b.count - a.count);
++    const dominant = ranked[0];
++    perDomain.push({
++      domain,
++      filesTotal: total,
++      dominantCommunity: dominant.communityId,
++      dominantShare: dominant.share,
++      communitiesTouched: ranked.length,
++      breakdown: ranked,
++    });
++    weightedPuritySum += dominant.count;
++  }
++  const purity = totalAttributed > 0 ? weightedPuritySum / totalAttributed : 0;
++
++  // Misplaced files: file is in a community that's not its domain's
++  // dominant community. Surfaces the concrete refactor candidates.
++  const dominantByDomain = Object.fromEntries(
++    perDomain.map((d) => [d.domain, d.dominantCommunity]),
++  );
++  const misplaced = [];
++  for (const r of rows) {
++    if (!r.domain || !r.communityId) continue;
++    const expected = dominantByDomain[r.domain];
++    if (expected && r.communityId !== expected) {
++      misplaced.push({
++        file: r.file,
++        domain: r.domain,
++        actualCommunity: r.communityId,
++        actualCommunityLabel: r.communityLabel,
++        expectedCommunity: expected,
++        confidence: r.confidence,
++      });
++    }
++  }
++  misplaced.sort((a, b) => a.domain.localeCompare(b.domain) || a.file.localeCompare(b.file));
++
++  // Files with a domain but no community signal (typical for configs /
++  // docs). Surfaced separately so users can decide between extending
++  // their domain definition vs ignoring them.
++  const domainWithoutCommunity = rows
++    .filter((r) => r.domain && !r.communityId)
++    .map((r) => ({ file: r.file, domain: r.domain }));
++
++  // CSV branch: long-format per-file rows.
++  if (url.searchParams.get('format') === 'csv') {
++    const csv = toCsv(rows, [
++      { key: 'file' },
++      { key: 'domain' },
++      { key: 'communityId' },
++      { key: 'communityLabel' },
++      { key: 'symbolCount' },
++      { key: 'confidence' },
++    ]);
++    writeCsv(res, `${safeFilename(baseRepo)}-dissonance.csv`, csv);
++    return;
++  }
++
++  res.writeHead(200, { 'Content-Type': 'application/json' });
++  res.end(
++    JSON.stringify({
++      repo: baseRepo,
++      totals: {
++        filesKnown: allFiles.size,
++        filesWithDomain: totalDomainAttributed,
++        filesAttributed: totalAttributed, // both domain AND community
++        domainsDeclared: domains.length,
++        communitiesSeen: Object.keys(filesByCommunity).length,
++      },
++      purity,
++      dissonance: 1 - purity,
++      perDomain,
++      misplaced,
++      domainWithoutCommunity,
++      contingency,
++    }),
++  );
++}
++
++export async function handleDissonanceRoute(req, url, res, opts) {
++  if (url.pathname === '/dissonance' && req.method === 'GET') {
++    await handleDissonance(url, res, opts);
++    return true;
++  }
++  return false;
 +}
 diff --git a/docker-server-entropy.mjs b/docker-server-entropy.mjs
 new file mode 100644
@@ -2098,10 +2460,10 @@ index 0000000..f6f693f
 +  return false;
 +}
 diff --git a/docker-server.mjs b/docker-server.mjs
-index adf84a0..938c2f1 100644
+index adf84a0..a8ba3cb 100644
 --- a/docker-server.mjs
 +++ b/docker-server.mjs
-@@ -1,12 +1,45 @@
+@@ -1,12 +1,46 @@
 -import { createReadStream } from 'node:fs';
 -import { stat } from 'node:fs/promises';
 +import { createReadStream, createWriteStream } from 'node:fs';
@@ -2119,6 +2481,7 @@ index adf84a0..938c2f1 100644
 +import { handleLifespanRoute } from './docker-server-lifespan.mjs';
 +import { handleEntropyRoute } from './docker-server-entropy.mjs';
 +import { handleOwnershipRoute } from './docker-server-ownership.mjs';
++import { handleDissonanceRoute } from './docker-server-dissonance.mjs';
  
  const host = '0.0.0.0';
  const port = Number(process.env.PORT || '4173');
@@ -2150,7 +2513,7 @@ index adf84a0..938c2f1 100644
  const contentTypes = {
    '.css': 'text/css; charset=utf-8',
    '.html': 'text/html; charset=utf-8',
-@@ -34,8 +67,468 @@ function resolvePath(urlPath) {
+@@ -34,8 +68,472 @@ function resolvePath(urlPath) {
    return candidate;
  }
  
@@ -2614,6 +2977,10 @@ index adf84a0..938c2f1 100644
 +  }
 +  // Ownership / bus factor (ROADMAP Tier 1.1)
 +  if (await handleOwnershipRoute(req, url, res, { api: GITNEXUS_API })) {
++    return;
++  }
++  // Dissonance / code-vs-domain alignment (ROADMAP Tier 2.2)
++  if (await handleDissonanceRoute(req, url, res, { api: GITNEXUS_API })) {
 +    return;
 +  }
 +
@@ -3168,10 +3535,10 @@ index 836bad7..4c2f756 100644
      "@vitejs/plugin-react": "^5.1.4",
      "@vitest/coverage-v8": "^4.1.5",
 diff --git a/gitnexus-web/src/App.tsx b/gitnexus-web/src/App.tsx
-index 2ee3569..9774ba8 100644
+index 2ee3569..478cf3a 100644
 --- a/gitnexus-web/src/App.tsx
 +++ b/gitnexus-web/src/App.tsx
-@@ -1,9 +1,16 @@
+@@ -1,9 +1,17 @@
  import { useCallback, useEffect, useRef, useState } from 'react';
  import { AppStateProvider, useAppState } from './hooks/useAppState';
  import { DropZone } from './components/DropZone';
@@ -3180,6 +3547,7 @@ index 2ee3569..9774ba8 100644
 +import { GrowthChart } from './components/GrowthChart';
 +import { LifespanPanel } from './components/LifespanPanel';
 +import { OwnershipPanel } from './components/OwnershipPanel';
++import { DissonancePanel } from './components/DissonancePanel';
  import { LoadingOverlay } from './components/LoadingOverlay';
  import { Header } from './components/Header';
 +import { Timeline } from './components/Timeline';
@@ -3188,7 +3556,7 @@ index 2ee3569..9774ba8 100644
  import { RightPanel } from './components/RightPanel';
  import { SettingsPanel } from './components/SettingsPanel';
  import { StatusBar } from './components/StatusBar';
-@@ -45,6 +52,7 @@ const AppContent = () => {
+@@ -45,6 +53,7 @@ const AppContent = () => {
      setAvailableRepos,
      switchRepo,
      setCurrentRepo,
@@ -3196,7 +3564,7 @@ index 2ee3569..9774ba8 100644
    } = useAppState();
  
    const graphCanvasRef = useRef<GraphCanvasHandle>(null);
-@@ -194,6 +202,21 @@ const AppContent = () => {
+@@ -194,6 +203,21 @@ const AppContent = () => {
      initializeAgent();
    }, [refreshLLMSettings, initializeAgent]);
  
@@ -3218,7 +3586,7 @@ index 2ee3569..9774ba8 100644
    // ── Server heartbeat: detect when server goes down while exploring ────────
    // Uses SSE (EventSource) for instant detection — no polling delay.
    // On disconnect: show a reconnecting banner instead of resetting to onboarding.
-@@ -250,22 +273,84 @@ const AppContent = () => {
+@@ -250,22 +274,84 @@ const AppContent = () => {
            // Retry once after 1s if the repo isn't found yet (server may still
            // be reinitializing after the worker completed).
            const url = serverBaseUrl ?? 'http://localhost:4747';
@@ -3304,7 +3672,7 @@ index 2ee3569..9774ba8 100644
                fetchRepos()
                  .then((repos) => setAvailableRepos(repos))
                  .catch(() => {});
-@@ -281,7 +366,26 @@ const AppContent = () => {
+@@ -281,7 +367,30 @@ const AppContent = () => {
  
          {/* Graph area - takes remaining space */}
          <div className="relative min-w-0 flex-1">
@@ -3329,10 +3697,14 @@ index 2ee3569..9774ba8 100644
 +              CouplingPanel because both occupy the same slot. The
 +              Timeline toggles handle the exclusion at state level. */}
 +          <OwnershipPanel />
++
++          {/* Dissonance panel — top-right, same slot as Coupling and
++              Ownership. Mutex enforced by the Timeline toggle handlers. */}
++          <DissonancePanel />
  
            {/* Code References Panel (overlay) - does NOT resize the graph, it overlaps on top */}
            {isCodePanelOpen && (codeReferences.length > 0 || !!selectedNode) && (
-@@ -295,6 +399,11 @@ const AppContent = () => {
+@@ -295,6 +404,11 @@ const AppContent = () => {
          {isRightPanelOpen && <RightPanel />}
        </main>
  
@@ -4089,6 +4461,342 @@ index 0000000..f315205
 +    <span className="font-mono font-semibold text-text-primary">{count}</span>
 +  </span>
 +);
+diff --git a/gitnexus-web/src/components/DissonancePanel.tsx b/gitnexus-web/src/components/DissonancePanel.tsx
+new file mode 100644
+index 0000000..475306a
+--- /dev/null
++++ b/gitnexus-web/src/components/DissonancePanel.tsx
+@@ -0,0 +1,330 @@
++import { useMemo, useState } from 'react';
++import {
++  X,
++  Loader2,
++  AlertCircle,
++  Download,
++  Target,
++  ChevronRight,
++  ChevronDown,
++} from '@/lib/lucide-icons';
++import { useAppState } from '../hooks/useAppState';
++
++/**
++ * Dissonance panel — Tier 2.2.
++ *
++ * Header: purity score (0..1, higher = code matches declared domains)
++ * with a colored gauge, plus the totals (declared domains, files
++ * involved, communities seen).
++ *
++ * Body:
++ *   - Per-domain sections (collapsible) showing which communities the
++ *     domain spans, plus its dominant community and confidence.
++ *   - A flat "Misplaced files" list (the ones whose community ≠ their
++ *     domain's dominant). Click a file to highlight it in the live
++ *     graph — these are the refactor candidates.
++ *   - A small "domain declared but no symbols" section so the user
++ *     knows which paths their globs cover that gitnexus can't pin to
++ *     a community (typical for docs/configs).
++ *
++ * Position: top-right, same slot as Coupling/Ownership. Mutually
++ * exclusive with both via Timeline toggles. The data is essentially
++ * static for the current live graph — no point sharing the slot.
++ */
++
++const PANEL_WIDTH_PX = 420;
++
++function purityColor(p: number): string {
++  if (p >= 0.85) return 'text-emerald-300 bg-emerald-500/15 border-emerald-500/30';
++  if (p >= 0.6) return 'text-amber-300 bg-amber-500/15 border-amber-500/30';
++  return 'text-red-300 bg-red-500/15 border-red-500/30';
++}
++
++export const DissonancePanel = () => {
++  const {
++    projectName,
++    dissonanceActive,
++    dissonanceLoading,
++    dissonanceError,
++    dissonanceData,
++    graph,
++    setHighlightedNodeIds,
++    exitDissonanceMode,
++  } = useAppState();
++  const baseRepo = (projectName || '').split('@')[0];
++  const [search, setSearch] = useState('');
++  const [openDomains, setOpenDomains] = useState<Set<string>>(new Set());
++  const [showMisplaced, setShowMisplaced] = useState(true);
++  const [showOrphans, setShowOrphans] = useState(false);
++
++  const fileIdByPath = useMemo(() => {
++    const m = new Map<string, string>();
++    if (!graph) return m;
++    for (const n of graph.nodes) {
++      if (n.label === 'File' && n.properties.filePath) {
++        m.set(n.properties.filePath, n.id);
++      }
++    }
++    return m;
++  }, [graph]);
++
++  const filteredMisplaced = useMemo(() => {
++    if (!dissonanceData) return [];
++    const q = search.trim().toLowerCase();
++    if (!q) return dissonanceData.misplaced;
++    return dissonanceData.misplaced.filter(
++      (m) =>
++        m.file.toLowerCase().includes(q) ||
++        m.domain.toLowerCase().includes(q) ||
++        (m.actualCommunityLabel || '').toLowerCase().includes(q),
++    );
++  }, [dissonanceData, search]);
++
++  if (!dissonanceActive && !dissonanceLoading && !dissonanceError) return null;
++
++  return (
++    <div
++      className="pointer-events-auto absolute top-3 right-3 z-30 flex flex-col overflow-hidden rounded-xl border border-border-subtle bg-surface/95 shadow-xl backdrop-blur"
++      style={{ width: PANEL_WIDTH_PX, maxHeight: 'calc(100% - 1.5rem)' }}
++    >
++      <div className="flex shrink-0 items-center gap-2 border-b border-border-subtle px-3 py-2">
++        <Target className="h-3.5 w-3.5 text-violet-300" />
++        <span className="text-xs font-semibold text-text-primary">Dissonance</span>
++        {dissonanceData && (
++          <a
++            href={`/dissonance?repo=${encodeURIComponent(baseRepo)}&format=csv`}
++            download
++            className="ml-auto shrink-0 cursor-pointer rounded p-1 text-text-muted transition-colors hover:bg-hover hover:text-text-primary"
++            title="Download per-file dissonance as CSV"
++          >
++            <Download className="h-3.5 w-3.5" />
++          </a>
++        )}
++        <button
++          type="button"
++          onClick={() => exitDissonanceMode()}
++          className={`${dissonanceData ? '' : 'ml-auto'} shrink-0 cursor-pointer rounded p-1 text-text-muted transition-colors hover:bg-hover hover:text-text-primary`}
++          title="Close panel"
++        >
++          <X className="h-3.5 w-3.5" />
++        </button>
++      </div>
++
++      {dissonanceLoading && (
++        <div className="flex items-center justify-center gap-2 py-6 text-xs text-text-muted">
++          <Loader2 className="h-3.5 w-3.5 animate-spin" />
++          Computing dissonance…
++        </div>
++      )}
++      {dissonanceError && (
++        <div className="flex items-start gap-2 px-3 py-3 text-xs text-red-400 whitespace-pre-wrap font-mono">
++          <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
++          <span className="break-all">{dissonanceError}</span>
++        </div>
++      )}
++
++      {dissonanceData && !dissonanceLoading && (
++        <>
++          {/* Header strip: purity score + counts */}
++          <div className="space-y-1.5 border-b border-border-subtle bg-elevated px-3 py-2">
++            <div className="flex items-center gap-2 text-[11px]">
++              <span className="text-text-muted">Purity:</span>
++              <span
++                className={`rounded border px-1.5 py-0.5 font-mono font-semibold ${purityColor(dissonanceData.purity)}`}
++                title="1 = each domain lives in one community. Lower = scattered."
++              >
++                {(dissonanceData.purity * 100).toFixed(1)}%
++              </span>
++              <span className="text-text-muted">
++                · dissonance {(dissonanceData.dissonance * 100).toFixed(1)}%
++              </span>
++            </div>
++            <div className="text-[10px] text-text-muted">
++              {dissonanceData.totals.domainsDeclared} domains ·{' '}
++              {dissonanceData.totals.filesAttributed}/{dissonanceData.totals.filesKnown} files
++              attributed · {dissonanceData.totals.communitiesSeen} communities
++            </div>
++          </div>
++
++          {/* Search */}
++          <div className="shrink-0 border-b border-border-subtle px-3 py-2">
++            <input
++              type="text"
++              value={search}
++              onChange={(e) => setSearch(e.target.value)}
++              placeholder="Filter misplaced files…"
++              className="w-full rounded-md border border-border-default bg-void px-2 py-1 font-mono text-[11px] text-text-primary outline-none placeholder:text-text-muted focus:border-accent/40"
++              spellCheck={false}
++              autoComplete="off"
++            />
++          </div>
++
++          <div className="flex-1 overflow-y-auto">
++            {/* Per-domain breakdown */}
++            <div className="border-b border-border-subtle">
++              {dissonanceData.perDomain.map((d) => {
++                const isOpen = openDomains.has(d.domain);
++                return (
++                  <div key={d.domain} className="border-b border-border-subtle">
++                    <button
++                      type="button"
++                      onClick={() =>
++                        setOpenDomains((prev) => {
++                          const next = new Set(prev);
++                          if (next.has(d.domain)) next.delete(d.domain);
++                          else next.add(d.domain);
++                          return next;
++                        })
++                      }
++                      className="flex w-full items-center gap-2 px-3 py-1.5 text-left transition-colors hover:bg-hover cursor-pointer"
++                    >
++                      {isOpen ? (
++                        <ChevronDown className="h-3 w-3 shrink-0 text-text-muted" />
++                      ) : (
++                        <ChevronRight className="h-3 w-3 shrink-0 text-text-muted" />
++                      )}
++                      <span className="text-[11px] font-semibold text-text-primary">
++                        {d.domain}
++                      </span>
++                      <span className="font-mono text-[10px] text-text-muted">
++                        {d.filesTotal} files · {d.communitiesTouched} clusters · dominant{' '}
++                        {(d.dominantShare * 100).toFixed(0)}%
++                      </span>
++                    </button>
++                    {isOpen && (
++                      <div className="space-y-0.5 px-3 pb-2">
++                        {d.breakdown.map((b) => (
++                          <div
++                            key={b.communityId}
++                            className="flex items-center gap-2 font-mono text-[10px] text-text-secondary"
++                            title={`Community ${b.communityId}`}
++                          >
++                            <span className="w-32 truncate">{b.communityId}</span>
++                            <div className="h-1 flex-1 overflow-hidden rounded bg-elevated">
++                              <div
++                                className="h-full bg-accent"
++                                style={{ width: `${b.share * 100}%` }}
++                              />
++                            </div>
++                            <span className="w-10 text-right">
++                              {(b.share * 100).toFixed(0)}%
++                            </span>
++                            <span className="w-8 text-right text-text-muted">
++                              {b.count}
++                            </span>
++                          </div>
++                        ))}
++                      </div>
++                    )}
++                  </div>
++                );
++              })}
++            </div>
++
++            {/* Misplaced */}
++            <div>
++              <button
++                type="button"
++                onClick={() => setShowMisplaced((v) => !v)}
++                className="flex w-full items-center gap-2 border-b border-border-subtle bg-elevated px-3 py-1.5 text-left transition-colors hover:bg-hover cursor-pointer"
++              >
++                {showMisplaced ? (
++                  <ChevronDown className="h-3 w-3 shrink-0 text-text-muted" />
++                ) : (
++                  <ChevronRight className="h-3 w-3 shrink-0 text-text-muted" />
++                )}
++                <span className="text-[11px] font-semibold text-red-300">Misplaced files</span>
++                <span className="font-mono text-[10px] text-text-muted">
++                  {filteredMisplaced.length}
++                  {filteredMisplaced.length !== dissonanceData.misplaced.length &&
++                    ` of ${dissonanceData.misplaced.length}`}
++                </span>
++              </button>
++              {showMisplaced &&
++                (filteredMisplaced.length === 0 ? (
++                  <div className="px-3 py-2 text-[10px] italic text-text-muted">
++                    {dissonanceData.misplaced.length === 0
++                      ? 'None — every file matches its domain\'s dominant community. ✓'
++                      : 'No matches for current filter.'}
++                  </div>
++                ) : (
++                  filteredMisplaced.map((m) => {
++                    const fileId = fileIdByPath.get(m.file);
++                    const canHighlight = !!fileId;
++                    return (
++                      <button
++                        key={m.file}
++                        type="button"
++                        onClick={() => {
++                          if (!canHighlight) return;
++                          setHighlightedNodeIds(new Set([fileId!]));
++                        }}
++                        disabled={!canHighlight}
++                        className="flex w-full flex-col gap-0.5 border-b border-border-subtle px-3 py-2 text-left transition-colors hover:bg-hover disabled:cursor-not-allowed disabled:opacity-50"
++                        title={
++                          canHighlight
++                            ? `Highlight ${m.file} in the graph`
++                            : 'File no longer exists in the live graph'
++                        }
++                      >
++                        <div className="flex min-w-0 items-center gap-2 font-mono text-[11px]">
++                          <span className="shrink-0 rounded border border-violet-500/30 bg-violet-500/15 px-1.5 py-0 font-semibold text-violet-300">
++                            {m.domain}
++                          </span>
++                          <span className="truncate text-text-primary">{m.file}</span>
++                        </div>
++                        <div className="truncate font-mono text-[10px] text-text-muted">
++                          actual: {m.actualCommunityLabel || m.actualCommunity} · expected:{' '}
++                          {m.expectedCommunity}
++                          {m.confidence != null && ` · conf ${Math.round(m.confidence * 100)}%`}
++                        </div>
++                      </button>
++                    );
++                  })
++                ))}
++            </div>
++
++            {/* Domain-declared-but-no-community */}
++            {dissonanceData.domainWithoutCommunity.length > 0 && (
++              <div>
++                <button
++                  type="button"
++                  onClick={() => setShowOrphans((v) => !v)}
++                  className="flex w-full items-center gap-2 border-b border-border-subtle bg-elevated px-3 py-1.5 text-left transition-colors hover:bg-hover cursor-pointer"
++                >
++                  {showOrphans ? (
++                    <ChevronDown className="h-3 w-3 shrink-0 text-text-muted" />
++                  ) : (
++                    <ChevronRight className="h-3 w-3 shrink-0 text-text-muted" />
++                  )}
++                  <span className="text-[11px] font-semibold text-amber-300">
++                    Declared but no community
++                  </span>
++                  <span className="font-mono text-[10px] text-text-muted">
++                    {dissonanceData.domainWithoutCommunity.length}
++                  </span>
++                </button>
++                {showOrphans &&
++                  dissonanceData.domainWithoutCommunity.slice(0, 200).map((o) => (
++                    <div
++                      key={o.file}
++                      className="flex min-w-0 items-center gap-2 border-b border-border-subtle px-3 py-1 font-mono text-[10px] text-text-muted"
++                      title="No symbols → no community attribution. Typical for configs/docs."
++                    >
++                      <span className="shrink-0 rounded bg-elevated px-1 py-0">{o.domain}</span>
++                      <span className="truncate text-text-secondary">{o.file}</span>
++                    </div>
++                  ))}
++                {dissonanceData.domainWithoutCommunity.length > 200 && (
++                  <div className="px-3 py-1 text-[10px] italic text-text-muted">
++                    Showing 200 of {dissonanceData.domainWithoutCommunity.length}.
++                  </div>
++                )}
++              </div>
++            )}
++          </div>
++        </>
++      )}
++    </div>
++  );
++};
 diff --git a/gitnexus-web/src/components/DropZone.tsx b/gitnexus-web/src/components/DropZone.tsx
 index f268eb6..4b02417 100644
 --- a/gitnexus-web/src/components/DropZone.tsx
@@ -7157,10 +7865,10 @@ index 0000000..5c77c1a
 +}
 diff --git a/gitnexus-web/src/components/Timeline.tsx b/gitnexus-web/src/components/Timeline.tsx
 new file mode 100644
-index 0000000..0828669
+index 0000000..5471c0c
 --- /dev/null
 +++ b/gitnexus-web/src/components/Timeline.tsx
-@@ -0,0 +1,488 @@
+@@ -0,0 +1,540 @@
 +import { useEffect, useMemo, useRef, useState } from 'react';
 +import {
 +  Play,
@@ -7173,6 +7881,7 @@ index 0000000..0828669
 +  TrendingUp,
 +  History,
 +  Users,
++  Target,
 +} from '@/lib/lucide-icons';
 +import { useAppState } from '../hooks/useAppState';
 +import { EntropyBadge } from './EntropyBadge';
@@ -7235,6 +7944,11 @@ index 0000000..0828669
 +    ownershipError,
 +    enterOwnershipMode,
 +    exitOwnershipMode,
++    dissonanceActive,
++    dissonanceLoading,
++    dissonanceError,
++    enterDissonanceMode,
++    exitDissonanceMode,
 +  } = useAppState();
 +  const [snapshots, setSnapshots] = useState<
 +    Array<{
@@ -7444,6 +8158,7 @@ index 0000000..0828669
 +          if (diffMode) await exitDiffMode();
 +          if (churnActive) exitChurnMode();
 +          if (ownershipActive) exitOwnershipMode();
++          if (dissonanceActive) exitDissonanceMode();
 +          await enterCouplingMode();
 +        }}
 +        disabled={!!diffMode || couplingLoading}
@@ -7561,6 +8276,7 @@ index 0000000..0828669
 +            return;
 +          }
 +          if (couplingActive) exitCouplingMode();
++          if (dissonanceActive) exitDissonanceMode();
 +          await enterOwnershipMode();
 +        }}
 +        disabled={!!diffMode || ownershipLoading}
@@ -7587,6 +8303,50 @@ index 0000000..0828669
 +      {ownershipError && !ownershipActive && (
 +        <div className="shrink-0 truncate text-[10px] text-red-400" title={ownershipError}>
 +          {ownershipError}
++        </div>
++      )}
++
++      {/* Dissonance — same top-right slot as Coupling and Ownership.
++          Reads .gitnexus-domains.json from the live repo, so it works
++          regardless of snapshot count. Useful even on day 1. */}
++      <button
++        type="button"
++        onClick={async () => {
++          if (dissonanceActive) {
++            exitDissonanceMode();
++            return;
++          }
++          if (couplingActive) exitCouplingMode();
++          if (ownershipActive) exitOwnershipMode();
++          await enterDissonanceMode();
++        }}
++        disabled={!!diffMode || dissonanceLoading}
++        className={`flex shrink-0 cursor-pointer items-center gap-1 rounded-md border px-1.5 py-0.5 text-[10px] font-medium transition-all disabled:cursor-not-allowed disabled:opacity-40 ${
++          dissonanceActive
++            ? 'border-violet-500/40 bg-violet-500/15 text-violet-300'
++            : 'border-border-subtle bg-elevated text-text-secondary hover:bg-hover hover:text-text-primary'
++        }`}
++        title={
++          diffMode
++            ? 'Exit diff mode first'
++            : dissonanceActive
++              ? 'Hide dissonance panel'
++              : 'Compare declared domains (.gitnexus-domains.json) vs detected communities'
++        }
++      >
++        {dissonanceLoading ? (
++          <Loader2 className="h-2.5 w-2.5 animate-spin" />
++        ) : (
++          <Target className="h-2.5 w-2.5" />
++        )}
++        Dissonance
++      </button>
++      {dissonanceError && !dissonanceActive && (
++        <div
++          className="shrink-0 max-w-[280px] truncate text-[10px] text-red-400"
++          title={dissonanceError}
++        >
++          dissonance error (hover)
 +        </div>
 +      )}
 +
@@ -7650,7 +8410,7 @@ index 0000000..0828669
 +  );
 +};
 diff --git a/gitnexus-web/src/hooks/useAppState.tsx b/gitnexus-web/src/hooks/useAppState.tsx
-index 25c5776..8c03f4b 100644
+index 25c5776..10ffc83 100644
 --- a/gitnexus-web/src/hooks/useAppState.tsx
 +++ b/gitnexus-web/src/hooks/useAppState.tsx
 @@ -8,7 +8,12 @@ import {
@@ -7700,7 +8460,7 @@ index 25c5776..8c03f4b 100644
  
    // Graph data
    graph: KnowledgeGraph | null;
-@@ -192,6 +203,126 @@ interface AppState {
+@@ -192,6 +203,169 @@ interface AppState {
    clearAICodeReferences: () => void;
    clearCodeReferences: () => void;
    codeReferenceFocus: CodeReferenceFocus | null;
@@ -7762,6 +8522,17 @@ index 25c5776..8c03f4b 100644
 +  ownershipData: OwnershipData | null;
 +  enterOwnershipMode: () => Promise<void>;
 +  exitOwnershipMode: () => void;
++
++  // Dissonance (ROADMAP Tier 2.2). Compares the user-declared domains
++  // from `.gitnexus-domains.json` with gitnexus's detected communities.
++  // Surfaces files whose community doesn't match their domain's
++  // dominant cluster — the refactor candidates.
++  dissonanceActive: boolean;
++  dissonanceLoading: boolean;
++  dissonanceError: string | null;
++  dissonanceData: DissonanceData | null;
++  enterDissonanceMode: () => Promise<void>;
++  exitDissonanceMode: () => void;
 +}
 +
 +export interface CouplingPair {
@@ -7824,10 +8595,42 @@ index 25c5776..8c03f4b 100644
 +  repoBusFactor: number;
 +  repoAuthors: OwnershipAuthor[];
 +  truncated?: number;
++}
++
++export interface DissonanceMisplaced {
++  file: string;
++  domain: string;
++  actualCommunity: string;
++  actualCommunityLabel: string | null;
++  expectedCommunity: string;
++  confidence: number | null;
++}
++export interface DissonancePerDomain {
++  domain: string;
++  filesTotal: number;
++  dominantCommunity: string;
++  dominantShare: number;
++  communitiesTouched: number;
++  breakdown: { communityId: string; count: number; share: number }[];
++}
++export interface DissonanceData {
++  repo: string;
++  totals: {
++    filesKnown: number;
++    filesWithDomain: number;
++    filesAttributed: number;
++    domainsDeclared: number;
++    communitiesSeen: number;
++  };
++  purity: number;
++  dissonance: number;
++  perDomain: DissonancePerDomain[];
++  misplaced: DissonanceMisplaced[];
++  domainWithoutCommunity: { file: string; domain: string }[];
  }
  
  const AppStateContext = createContext<AppState | null>(null);
-@@ -205,6 +336,10 @@ export const AppStateProvider = ({ children }: { children: ReactNode }) => (
+@@ -205,6 +379,10 @@ export const AppStateProvider = ({ children }: { children: ReactNode }) => (
  const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
    // View state
    const [viewMode, setViewMode] = useState<ViewMode>('onboarding');
@@ -7838,7 +8641,7 @@ index 25c5776..8c03f4b 100644
  
    const {
      graph,
-@@ -343,6 +478,46 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
+@@ -343,6 +521,52 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
    const [isCodePanelOpen, setCodePanelOpen] = useState(false);
    const [codeReferenceFocus, setCodeReferenceFocus] = useState<CodeReferenceFocus | null>(null);
  
@@ -7882,10 +8685,16 @@ index 25c5776..8c03f4b 100644
 +  const [ownershipError, setOwnershipError] = useState<string | null>(null);
 +  const [ownershipData, setOwnershipData] = useState<OwnershipData | null>(null);
 +
++  // Dissonance state.
++  const [dissonanceActive, setDissonanceActive] = useState(false);
++  const [dissonanceLoading, setDissonanceLoading] = useState(false);
++  const [dissonanceError, setDissonanceError] = useState<string | null>(null);
++  const [dissonanceData, setDissonanceData] = useState<DissonanceData | null>(null);
++
    // Map of normalized file path → node ID for graph-based lookups
    const fileNodeByPath = useMemo(() => {
      if (!graph) return new Map<string, string>();
-@@ -1207,9 +1382,271 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
+@@ -1207,9 +1431,308 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
      setCodeReferenceFocus(null);
    }, []);
  
@@ -8148,6 +8957,43 @@ index 25c5776..8c03f4b 100644
 +    setOwnershipActive(false);
 +  }, []);
 +
++  // Dissonance: reads .gitnexus-domains.json from the live repo and
++  // contrasts it with gitnexus's auto-detected communities.
++  const enterDissonanceMode = useCallback(async () => {
++    if (!projectName) return;
++    const baseRepo = projectName.split('@')[0];
++    setDissonanceLoading(true);
++    setDissonanceError(null);
++    try {
++      const resp = await fetch(`/dissonance?repo=${encodeURIComponent(baseRepo)}`, {
++        cache: 'no-store',
++      });
++      if (!resp.ok) {
++        const body = await resp.json().catch(() => ({}));
++        // The "no domains file" 404 carries an example payload — pull
++        // it out for a friendlier message than just "404".
++        if (resp.status === 404 && body?.example) {
++          throw new Error(
++            `${body.error}\n\nExample .gitnexus-domains.json:\n${JSON.stringify(body.example, null, 2)}`,
++          );
++        }
++        throw new Error(body?.error || `HTTP ${resp.status}`);
++      }
++      const data = await resp.json();
++      setDissonanceData(data);
++      setDissonanceActive(true);
++    } catch (err) {
++      setDissonanceError(err instanceof Error ? err.message : 'Failed to compute dissonance');
++      setDissonanceActive(false);
++    } finally {
++      setDissonanceLoading(false);
++    }
++  }, [projectName]);
++
++  const exitDissonanceMode = useCallback(() => {
++    setDissonanceActive(false);
++  }, []);
++
    const value: AppState = {
      viewMode,
      setViewMode,
@@ -8157,7 +9003,7 @@ index 25c5776..8c03f4b 100644
      graph,
      setGraph,
      selectedNode,
-@@ -1293,6 +1730,49 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
+@@ -1293,6 +1816,56 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
      clearAICodeReferences,
      clearCodeReferences,
      codeReferenceFocus,
@@ -8204,6 +9050,13 @@ index 25c5776..8c03f4b 100644
 +    ownershipData,
 +    enterOwnershipMode,
 +    exitOwnershipMode,
++    // Dissonance
++    dissonanceActive,
++    dissonanceLoading,
++    dissonanceError,
++    dissonanceData,
++    enterDissonanceMode,
++    exitDissonanceMode,
    };
  
    return <AppStateContext.Provider value={value}>{children}</AppStateContext.Provider>;

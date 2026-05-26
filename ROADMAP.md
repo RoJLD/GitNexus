@@ -28,6 +28,7 @@ un nom marketing — et son premier pas concret.
 | 12 | **Entropy / structural health badge** dans la Timeline (densité + trend) | `/entropy`, `EntropyBadge.tsx` |
 | 13 | **CSV export** sur churn/coupling/growth/lifespan/entropy/ownership | `?format=csv` partout, `docker-server-csv.mjs` |
 | 14 | **Ownership / bus factor** (per-file commit-share + repo-level summary) | `/ownership`, `OwnershipPanel.tsx` |
+| 15 | **Dissonance** (declared domains vs detected communities, purity score, misplaced files) | `/dissonance`, `DissonancePanel.tsx`, `patches/example-gitnexus-domains.json` |
 
 Toutes les analytics ci-dessus marchent dans un seul repo. La granularité
 est le node gitnexus (File, Function, Class, Section, …).
@@ -121,7 +122,7 @@ cypher, génère un label, écrit dans une nouvelle table ou en cache.
 **UI** : affichage du label au-dessus des clusters sur le graph, et
 overlay dans le panneau Filters existant.
 
-### 2.2 — Dissonance score
+### 2.2 — Dissonance score ✅
 **Promesse** : compare le découpage *automatique* du code (Communities
 gitnexus + labels LLM) avec le découpage *déclaré* du business (que tu
 fournis comme YAML : `{ "auth": ["src/auth/**", "src/login/**"], … }`).

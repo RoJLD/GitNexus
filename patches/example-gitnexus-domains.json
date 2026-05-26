@@ -1,0 +1,34 @@
+{
+  "_comment": "Example .gitnexus-domains.json for hmm_studio. Copy to <repo>/.gitnexus-domains.json and tweak. Globs support ** (any path), * (no slashes), and literals. First match wins, so order most-specific first.",
+  "domains": {
+    "hmm-core": [
+      "src/hmm_core/**",
+      "tests/test_*.py"
+    ],
+    "studio-server": [
+      "src/hmm_studio/server/**",
+      "tests/studio/**"
+    ],
+    "studio-cli": [
+      "src/hmm_studio/cli.py",
+      "src/hmm_studio/__init__.py"
+    ],
+    "studio-frontend": [
+      "src/hmm_studio/frontend/src/**"
+    ],
+    "examples": [
+      "examples/**"
+    ],
+    "docs": [
+      "docs/**",
+      "README.md",
+      "AGENTS.md",
+      "CLAUDE.md"
+    ],
+    "infra": [
+      "pyproject.toml",
+      "mkdocs.yml",
+      "CITATION.cff"
+    ]
+  }
+}
