@@ -266,3 +266,53 @@ CORE total revised : **3.5 j** (vs 2-3 j initial).
 ### Sous-spec ajoutée par cette Update
 
 [`2026-05-26-roadmap-predictive-cleanup-and-connectors-design.md`](2026-05-26-roadmap-predictive-cleanup-and-connectors-design.md) — cleanup à expiration + multi-tool connector (Plane primary). 6ème sub-spec de la série.
+
+---
+
+## Update 2026-05-26 — Shipped
+
+CORE livré (plan : [`docs/superpowers/plans/2026-05-26-roadmap-predictive-core.md`](../plans/2026-05-26-roadmap-predictive-core.md)). Notes de livraison :
+
+### Tâches exécutées (21 + 1 Update injection)
+
+- Tasks 1-5 : pures fns `parseRoadmap` (tables + Tier sections), `renderRoadmapYml` (déterministe, expectedBy émis), `matchExpectedLinks` (suffix + glob), `computeStatus` + `parseTargetDate` (lifecycle declared-wins + auto-match + expired après `expectedBy + 30j`).
+- Task 6 : I/O wrapper `syncGhostsForRepo` / `syncGhostsForSnapshot` / `readLatestGhosts` / `readSnapshotGhosts`.
+- **Task 6.5 (Update 2 injection)** : `registerGhostSource()` plugin-aware registry. Builtin `roadmap-md` toujours présent (protégé contre remplacement), externes mergent par id avec builtin-wins. Pré-câblage Tier 3.10 sans bloquer le CORE lean. Code-review fix-up : `_fetchAndMergeDeclaredGhostsForTests` exporté pour tester le merge, validation `assertValidSource` assouplie (accepte toute fn retournant un Promise, pas que `async function`), bootstrap module-load idempotent.
+- Tasks 7-8 : `handleGhostsRoute(req, url, res, opts)` (3 handlers privés) + registration dans `docker-server.mjs`. Refactor `readSnapshotGhosts(snapshotDir)` — signature monoargumentale alignée avec le path réellement écrit par `syncGhostsForSnapshot`.
+- Tasks 9+10 : auto-sync wired dans `createSnapshot` — couvre les **4 entry points** (`/snapshot`, `/snapshot/bulk`, `/snapshot/auto`, `/snapshot/from-pr`) car tous funnel-through `createSnapshot`. Pas de duplication.
+- Task 11 : `scripts/sync-ghosts.mjs` CLI wrapper.
+- Task 12 : **skipped** — pas de `package.json` à la racine de gitnexus ; le user invoque directement `node scripts/sync-ghosts.mjs <repo>`.
+- Task 13 : fixture `sample-repo` reçoit un commit 11 ajoutant un mini-`ROADMAP.md` (2 table rows + 3 Tier sections = 5 ghosts).
+- Tasks 14-17 : 4 tests d'intégration (sync idempotent, get 404/200, at historical, snapshot auto-sync écrit par dir).
+- Tasks 18-21 : docs — `/ghosts*` dans smoke loop CLAUDE.md, row 37 dans ROADMAP "Déjà livré", section dans INVENTORY (endpoints + fichiers + Update 4 manifest path note), 9 nouveaux fichiers de test inventoriés dans `tests/README.md`.
+
+### Updates de la review externe Gemini, appliqués
+
+- (a) `expectedBy` warning-on-missing : `warnMissingExpectedBy()` exporté côté core, émet warning stderr. Status `expired` implémenté avec grace 30j default (configurable via `.gitnexus.yaml > ghosts.grace_period_days` quand 2bis.4 sera étendu).
+- (b) `registerGhostSource()` registry : livré Task 6.5.
+- (c) Granularité node-only : clarifié dans le parser, ghosts au niveau **node** (file/endpoint/component) ; groupement via `dependsOn[]`. Pas de Ghost Cluster.
+- (d) Manifest path v0 → v1 : v0 = `roadmap.yml` distinct, livré. v1 cible = section `roadmap:` dans `.gitnexus.json` (futur, dépendance Tier 2bis.4).
+
+### Choix de design notables
+
+- **Granularité de Pass A/B du parser** : 2 passes parallèles sur les mêmes lignes (table + Tier sections), pas de state-machine unifiée. Plus simple à raisonner.
+- **`extractExpectedLinks`** : tokens backtick-quotés extraits ; classifiés `path` si `/` présent ou extension fichier connue OU commence par `?` (cas query-string `?format=csv`), sinon `label`. Le matcher ignore les `label` (open question 4 résolue comme prévu).
+- **`renderRoadmapYml`** : sérializer hand-rolled (pas de dépendance js-yaml), tri stable par id, échappement single-quote pour caractères ambigus. Output déterministe bit-à-bit.
+- **`safeSnapshotKey(commit.shortHash)`** comme clé de snapshot dir : le handler `/ghosts/at` accepte donc le short hash (matches `handleListSnapshots` convention). Plein SHA non supporté en v1 — peut être ajouté par canonicalisation `getCommitInfo` si nécessaire.
+- **`roadmap.yml` non auto-committé** (open question 3) : la CLI rappelle au user de committer le fichier. Pas d'effet de bord git invisible.
+- **Backfill historique de `plannedAt`** : hors-scope (sous-spec Audit). Première sync = `plannedAt: { commit: HEAD, date: HEAD-date }`.
+
+### Tests : runtime bloqué localement (Node 21), validé sur CI Node 22
+
+Local : `node --check` + smoke `node -e "import(...)..."` à chaque tâche. CI Linux Node 22 exercera vitest 4.x au prochain run du workflow GHA (Phase 1b dépend de [`2026-05-26-defer-node22-upgrade.md`](../decisions/2026-05-26-defer-node22-upgrade.md)).
+
+### Limitations connues
+
+1. **Auto-match false positives** : si un commit touche un fichier listé dans `expectedLinks` d'un ghost `planned`, il sera upgradé à `materialized`. Mitigation : marquer ✅ manuellement dans ROADMAP.md dès qu'on shippe ; declared status gagne toujours sur auto-match.
+2. **Tests d'intégration runtime-blocked** : 4 tests vitest écrits, exécution locale impossible (Node 21). Validés en CI Node 22.
+3. **`/ghosts/at` exige short hash** : pas de canonicalisation full→short pour l'instant.
+4. **Manifest v0** : 2 fichiers de config (`.gitnexus.json` pour le reste, `roadmap.yml` pour les ghosts) — sera unifié en v1.
+
+### Suite
+
+Les sub-specs Audit / Augmented graph / Cleanup+connectors / Gantt / Brainstorm-hook restent à exécuter dans cet ordre (cf [IDEAS-PARKING-roadmap-predictive.md](IDEAS-PARKING-roadmap-predictive.md)). Brainstorms déjà faits pour Audit / Augmented / Gantt / Cleanup ; à brainstormer encore : Brainstorm-hook + SysML (bonus).
