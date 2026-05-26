@@ -1,3 +1,23 @@
+# Test stack for GitNexus integration tests.
+#
+# LIFECYCLE — DO NOT `docker compose up` THIS FILE STANDALONE.
+# The bind mount under projects requires the host path to exist with the
+# extracted fixture. The orchestration is handled by tests/integration/
+# helpers/stack.mjs which:
+#   1. Extracts tests/fixtures/sample-repo.tar.gz to a tmp dir (or to
+#      $TEST_PROJECTS_ROOT if set)
+#   2. Sets the env var, then runs `docker compose -f
+#      docker-compose.test.yml up -d --build`
+#   3. Polls /health via wait-ready.mjs
+#   4. Runs the tests
+#   5. `docker compose down -v` on teardown
+#
+# DEV vs TEST isolation: this compose uses globally-named volumes
+# (gitnexus-test-*) bypassing the compose-project prefix, so the dev
+# stack's gitnexus-data / gitnexus-hf-cache volumes are untouched.
+# Port defaults (4747, 4173) collide with the dev stack — override
+# TEST_PORT and TEST_WEB_PORT if both stacks need to run simultaneously.
+
 name: gitnexus-test
 services:
   gitnexus-server-test:
@@ -6,7 +26,7 @@ services:
       dockerfile: Dockerfile.cli
     image: gitnexus-cli-test:local
     container_name: gitnexus-test
-    restart: unless-stopped
+    restart: "no"
     ports:
       - "${TEST_PORT:-4747}:4747"
     environment:
@@ -29,13 +49,16 @@ services:
       dockerfile: Dockerfile.web
     image: gitnexus-web-test:local
     container_name: gitnexus-web-test
-    restart: unless-stopped
+    restart: "no"
     ports:
       - "${TEST_WEB_PORT:-4173}:4173"
     depends_on:
       gitnexus-server-test:
         condition: service_healthy
     environment:
+      # URL baked into the browser bundle. `localhost` here = the host
+      # machine's loopback (where the browser runs), NOT the container's.
+      # The browser reaches the server via the host-mapped port.
       - VITE_GITNEXUS_BACKEND_URL=http://localhost:${TEST_PORT:-4747}
 
 volumes:
