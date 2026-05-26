@@ -2672,10 +2672,10 @@ index 0000000..71f15da
 +}
 diff --git a/docker-server-ghosts.mjs b/docker-server-ghosts.mjs
 new file mode 100644
-index 0000000..2c0f1d0
+index 0000000..a202dda
 --- /dev/null
 +++ b/docker-server-ghosts.mjs
-@@ -0,0 +1,297 @@
+@@ -0,0 +1,301 @@
 +/**
 + * I/O wrapper + route handlers for the roadmap-predictive CORE.
 + * Imports pure fns from docker-server-ghosts-core.mjs.
@@ -2713,12 +2713,7 @@ index 0000000..2c0f1d0
 +    throw new TypeError('registerGhostSource: source.name must be a non-empty string');
 +  }
 +  if (typeof source.fetchGhosts !== 'function') {
-+    throw new TypeError('registerGhostSource: source.fetchGhosts must be an async function');
-+  }
-+  if (source.fetchGhosts.constructor?.name !== 'AsyncFunction') {
-+    throw new TypeError(
-+      `registerGhostSource: source.fetchGhosts must be declared async (got ${source.fetchGhosts.constructor?.name || 'function'})`,
-+    );
++    throw new TypeError('registerGhostSource: source.fetchGhosts must be a function returning a Promise');
 +  }
 +}
 +
@@ -2770,7 +2765,10 @@ index 0000000..2c0f1d0
 +
 +// Register the builtin at module load. Must come before any consumer can
 +// import this module — that's why this block lives at the top of the file.
-+registerBuiltinGhostSource();
++// Idempotency guard : safe against future hot-reload / re-import scenarios.
++if (!ghostSources.has(BUILTIN_GHOST_SOURCE_NAME)) {
++  registerBuiltinGhostSource();
++}
 +
 +/**
 + * Internal : iterate all registered sources, fetch their declared ghosts and
@@ -2812,6 +2810,12 @@ index 0000000..2c0f1d0
 +  }
 +  return [...byId.values()];
 +}
++
++// Test-only re-export of the internal merge helper. Lets the unit suite assert
++// the real "builtin-wins / first-non-builtin-wins" semantic without standing
++// up a git repo. Production code MUST NOT import this — call the public sync
++// functions instead.
++export { fetchAndMergeDeclaredGhosts as _fetchAndMergeDeclaredGhostsForTests };
 +
 +async function fileExists(p) {
 +  try { await access(p); return true; } catch { return false; }

@@ -18,6 +18,7 @@ import {
   registerGhostSource,
   listGhostSources,
   _resetGhostSourcesForTests,
+  _fetchAndMergeDeclaredGhostsForTests,
 } from '../../upstream/docker-server-ghosts.mjs';
 
 const BUILTIN = 'roadmap-md';
@@ -61,13 +62,15 @@ describe('ghost-source registry', () => {
       expect(() => registerGhostSource({ name: 'plane', fetchGhosts: 'not-a-fn' })).toThrow(/fetchGhosts/);
     });
 
-    it('rejects sources whose fetchGhosts is not declared async', () => {
-      // A plain (non-async) function — even if it returns a promise — is
-      // rejected to keep the contract loud : the spec says "async".
+    it('rejects sources whose fetchGhosts is not a function', () => {
+      // We accept any function (including transpiled / wrapped / promisified
+      // ones) that returns a Promise — the contract is "callable returning a
+      // Promise", not "syntactically async". A non-function value is still
+      // rejected loudly.
       expect(() => registerGhostSource({
         name: 'plane',
-        fetchGhosts: function () { return Promise.resolve([]); },
-      })).toThrow(/async/);
+        fetchGhosts: 'not a function',
+      })).toThrow(/fetchGhosts/);
     });
 
     it('accepts a valid source and lists it', () => {
@@ -125,34 +128,53 @@ describe('ghost-source registry', () => {
     });
   });
 
-  describe('merge precedence (builtin wins on id collision)', () => {
-    // We exercise this at a *unit* level by directly invoking the registered
-    // fetchGhosts handlers and asserting on what the registry would feed
-    // downstream. The full I/O path lives in the integration suite, but the
-    // shape contract — builtin shadows externals by id — is tested here so
-    // a regression on it fails fast in the unit tier.
-    it('builtin shadows external sources when ids collide', async () => {
-      // Custom source declaring an id that the builtin will *also* declare —
-      // we simulate that by injecting both via the registry (the builtin
-      // fetcher reads a real file, so for this unit test we re-register a
-      // stub builtin via _reset + a fake external + a fake "second" builtin
-      // pattern would defeat the protection). Instead we assert the
-      // documented behaviour by reading the merged output of a fresh
-      // registry with an external whose id WOULD collide if the builtin
-      // had no ROADMAP.md to read.
-
-      // With no ROADMAP.md in process.cwd(), the builtin returns []. Our
-      // external is the only contributor — proving it ran. The shadowing
-      // direction is tested in the integration suite where a real
-      // ROADMAP.md collision is staged.
+  describe('merge precedence (first non-builtin wins among externals)', () => {
+    // We exercise the real merge helper here so the test's name matches what
+    // it actually checks. The builtin's fetcher reads ROADMAP.md at the given
+    // repoPath; we pass a non-existent path so it returns [] (parseRoadmap('')
+    // yields no ghosts). That leaves the externals as the only contributors,
+    // and lets us assert the "first non-builtin wins on id collision among
+    // externals" semantic that the registry actually implements.
+    //
+    // The "builtin wins over externals" direction requires a real ROADMAP.md
+    // collision and lives in the integration suite (needs git + filesystem).
+    it('first registered external wins on id collision; uniques from both survive; source field is stamped', async () => {
       registerGhostSource({
         name: 'plane',
-        fetchGhosts: async () => [{ id: 'shared-id', title: 'From Plane', status: 'planned', expectedLinks: [] }],
+        fetchGhosts: async () => [
+          { id: 'shared-id', title: 'From Plane', status: 'planned', expectedLinks: [] },
+          { id: 'plane-only', title: 'Plane Only', status: 'planned', expectedLinks: [] },
+        ],
       });
-      // Smoke : the external is callable through the registry and returns
-      // its declared shape.
-      const names = listGhostSources();
-      expect(names).toContain('plane');
+      registerGhostSource({
+        name: 'linear',
+        fetchGhosts: async () => [
+          { id: 'shared-id', title: 'From Linear', status: 'planned', expectedLinks: [] },
+          { id: 'linear-only', title: 'Linear Only', status: 'planned', expectedLinks: [] },
+        ],
+      });
+
+      const merged = await _fetchAndMergeDeclaredGhostsForTests('/nonexistent-path-for-builtin');
+
+      // Colliding id appears exactly once and is claimed by the first
+      // non-builtin registered (= 'plane').
+      const collisions = merged.filter(g => g.id === 'shared-id');
+      expect(collisions).toHaveLength(1);
+      expect(collisions[0].source).toBe('plane');
+      expect(collisions[0].title).toBe('From Plane');
+
+      // Unique ids from both sources survive.
+      const planeOnly = merged.find(g => g.id === 'plane-only');
+      expect(planeOnly).toBeDefined();
+      expect(planeOnly.source).toBe('plane');
+
+      const linearOnly = merged.find(g => g.id === 'linear-only');
+      expect(linearOnly).toBeDefined();
+      expect(linearOnly.source).toBe('linear');
+
+      // Builtin emitted nothing (no ROADMAP.md at the fake path), so no
+      // ghost carries source === 'roadmap-md' here.
+      expect(merged.some(g => g.source === BUILTIN)).toBe(false);
     });
   });
 });
