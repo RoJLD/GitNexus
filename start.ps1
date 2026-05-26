@@ -1,8 +1,22 @@
-# GitNexus launcher (idempotent). Builds the derived image if needed, starts
+# GitNexus launcher (idempotent). Builds the derived images if needed, starts
 # the containers via Rancher Desktop's Docker engine, waits for the API to be
 # healthy, then opens the UI in the default browser.
+#
+# Stale-detection strategy : always run `docker compose build` for both
+# services (Docker layer cache makes it fast if nothing changed), then
+# compare image SHAs before and after. If either changed, containers are
+# recreated. If unchanged AND containers are up, just open the browser.
+#
+# Both gitnexus (derived from upstream :1.6.5 + Dockerfile.cli patches) AND
+# gitnexus-web (built from upstream/Dockerfile.web with React-side patches)
+# are local builds, so the previous `compose pull gitnexus-web` step was a
+# no-op and has been removed.
 
-$ErrorActionPreference = "Stop"
+# NOTE : we do NOT set $ErrorActionPreference = "Stop" globally because under
+# Windows PowerShell that turns every native-command stderr write into a
+# NativeCommandError (e.g. `docker info` emits "WARNING: No swap limit
+# support" on Linux daemons → script aborts). Each step below checks
+# $LASTEXITCODE explicitly instead.
 Set-Location -Path $PSScriptRoot
 
 # --- 1. .env present? ---
@@ -17,7 +31,7 @@ if (-not (Test-Path ".env")) {
 
 # --- 2. Docker daemon reachable? Try to auto-start Rancher / Docker Desktop. ---
 function Test-Docker {
-    $null = docker info 2>&1
+    docker info *>$null
     return ($LASTEXITCODE -eq 0)
 }
 
@@ -57,7 +71,7 @@ if (-not (Test-Docker)) {
     Write-Host "Docker is up." -ForegroundColor Green
 }
 
-# --- 2. Release container names from a previous compose project, if any ---
+# --- 3. Release container names from a previous compose project, if any ---
 # Old setup may have left "gitnexus" / "gitnexus-web" containers labeled with
 # a different compose-project (e.g. the experiment repo). Names are unique on
 # the daemon, so we must release them before our compose can recreate them.
@@ -67,28 +81,126 @@ foreach ($name in @("gitnexus", "gitnexus-web")) {
         $project = docker inspect $name --format '{{ index .Config.Labels "com.docker.compose.project" }}' 2>$null
         if ($project -and $project -ne "gitnexus") {
             Write-Host "Releasing $name from previous compose project ($project)..." -ForegroundColor Yellow
-            docker rm -f $name 2>&1 | Out-Null
+            docker rm -f $name *>$null
         }
     }
 }
 
-# --- 3. Ensure images are current ---
-Write-Host "Building derived image (no-op if unchanged)..." -ForegroundColor Cyan
-docker compose build gitnexus 2>&1 | Out-Null
+# --- 4. Refresh images. Layer cache makes this fast when nothing changed. ---
+function Get-ImageId([string]$tag) {
+    return (docker images -q $tag 2>$null | Select-Object -First 1)
+}
 
-Write-Host "Pulling upstream gitnexus-web..." -ForegroundColor Cyan
-docker compose pull gitnexus-web 2>&1 | Out-Null
+# Source-file -> rebuild reason mapping. Helps the user understand WHY a
+# rebuild was triggered (vs an opaque "image rebuilt" message).
+function Get-RebuildReason([string]$service) {
+    $sourcePaths = @{
+        "gitnexus" = @(
+            "Dockerfile.cli",
+            "scripts"
+        )
+        "gitnexus-web" = @(
+            "upstream/Dockerfile.web",
+            "upstream/gitnexus-web/src",
+            "upstream/docker-server.mjs",
+            "upstream/package.json"
+        )
+    }
+    $imageTag = if ($service -eq "gitnexus") { "gitnexus-derived:1.6.5-patched" } else { "gitnexus-web-derived:1.6.5-patched" }
+    $imgCreated = docker image inspect $imageTag --format '{{.Created}}' 2>$null
+    if (-not $imgCreated) { return $null }
+    $imgDate = Get-Date $imgCreated
 
-# --- 4. Start services ---
+    $newest = $null
+    foreach ($path in $sourcePaths[$service]) {
+        if (-not (Test-Path $path)) { continue }
+        $item = Get-Item $path
+        if ($item.PSIsContainer) {
+            $files = Get-ChildItem -Path $path -Recurse -File -ErrorAction SilentlyContinue
+        } else {
+            $files = @($item)
+        }
+        foreach ($f in $files) {
+            if ($null -eq $newest -or $f.LastWriteTime -gt $newest.LastWriteTime) {
+                $newest = $f
+            }
+        }
+    }
+    if ($null -ne $newest -and $newest.LastWriteTime -gt $imgDate) {
+        return (Resolve-Path -Path $newest.FullName -Relative)
+    }
+    return $null
+}
+
+Write-Host "Checking image freshness..." -ForegroundColor Cyan
+$beforeIds = @{
+    "gitnexus" = Get-ImageId "gitnexus-derived:1.6.5-patched"
+    "gitnexus-web" = Get-ImageId "gitnexus-web-derived:1.6.5-patched"
+}
+$reasons = @{
+    "gitnexus" = Get-RebuildReason "gitnexus"
+    "gitnexus-web" = Get-RebuildReason "gitnexus-web"
+}
+foreach ($svc in @("gitnexus", "gitnexus-web")) {
+    if ($reasons[$svc]) {
+        Write-Host "  $svc : will rebuild ($($reasons[$svc]) newer than image)" -ForegroundColor Yellow
+    }
+}
+
+docker compose build *>$null
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "  docker compose build failed. Run 'docker compose build' for details." -ForegroundColor Red
+    Read-Host "Press Enter to exit"
+    exit 1
+}
+
+$afterIds = @{
+    "gitnexus" = Get-ImageId "gitnexus-derived:1.6.5-patched"
+    "gitnexus-web" = Get-ImageId "gitnexus-web-derived:1.6.5-patched"
+}
+
+$anyImageChanged = $false
+foreach ($svc in @("gitnexus", "gitnexus-web")) {
+    if ($beforeIds[$svc] -ne $afterIds[$svc]) {
+        $anyImageChanged = $true
+        if (-not $beforeIds[$svc]) {
+            Write-Host "  $svc : built $($afterIds[$svc]) for the first time." -ForegroundColor Yellow
+        } else {
+            Write-Host "  $svc : rebuilt $($beforeIds[$svc]) -> $($afterIds[$svc])." -ForegroundColor Yellow
+        }
+    } else {
+        Write-Host "  $svc : unchanged ($($afterIds[$svc]))." -ForegroundColor DarkGray
+    }
+}
+
+# --- 5. Already running with the current images? Just open the browser. ---
+$runningCount = (docker ps -q --filter "name=^gitnexus$" --filter "status=running" 2>$null |
+    Measure-Object).Count
+$runningWebCount = (docker ps -q --filter "name=^gitnexus-web$" --filter "status=running" 2>$null |
+    Measure-Object).Count
+$bothRunning = ($runningCount -gt 0 -and $runningWebCount -gt 0)
+
+if ($bothRunning -and -not $anyImageChanged) {
+    Write-Host "GitNexus is already running on the current images. Opening UI..." -ForegroundColor Green
+    Start-Process "http://localhost:4173"
+    exit 0
+}
+
+if ($bothRunning -and $anyImageChanged) {
+    Write-Host "Recreating containers on the new images..." -ForegroundColor Yellow
+    docker compose down *>$null
+}
+
+# --- 6. Start services ---
 Write-Host "Starting services..." -ForegroundColor Cyan
-docker compose up -d 2>&1 | Out-Null
+docker compose up -d *>$null
 if ($LASTEXITCODE -ne 0) {
     Write-Host "  docker compose up failed. Check 'docker compose logs' for details." -ForegroundColor Red
     Read-Host "Press Enter to exit"
     exit 1
 }
 
-# --- 5. Wait for API health ---
+# --- 7. Wait for API health ---
 Write-Host "Waiting for GitNexus API on http://localhost:4747 ..." -ForegroundColor Cyan
 $timeoutSec = 60
 $start = Get-Date
@@ -108,7 +220,7 @@ if (-not $ready) {
     exit 1
 }
 
-# --- 6. Open the UI ---
+# --- 8. Open the UI ---
 Write-Host ""
 Write-Host "  GitNexus is up." -ForegroundColor Green
 Write-Host "  API:  http://localhost:4747" -ForegroundColor Green
