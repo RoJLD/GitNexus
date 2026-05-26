@@ -1,5 +1,7 @@
 # GitNexus — local deployment
 
+[![tests](https://github.com/RoJLD/GitNexus/actions/workflows/test.yml/badge.svg?branch=deployment)](https://github.com/RoJLD/GitNexus/actions/workflows/test.yml)
+
 Standalone Docker Compose setup for [GitNexus](https://github.com/abhigyanpatwari/gitnexus)
 (graph code-intelligence MCP server), independent of any specific project.
 
