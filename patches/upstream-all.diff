@@ -2672,10 +2672,10 @@ index 0000000..71f15da
 +}
 diff --git a/docker-server-ghosts.mjs b/docker-server-ghosts.mjs
 new file mode 100644
-index 0000000..a202dda
+index 0000000..408f442
 --- /dev/null
 +++ b/docker-server-ghosts.mjs
-@@ -0,0 +1,301 @@
+@@ -0,0 +1,435 @@
 +/**
 + * I/O wrapper + route handlers for the roadmap-predictive CORE.
 + * Imports pure fns from docker-server-ghosts-core.mjs.
@@ -2687,6 +2687,7 @@ index 0000000..a202dda
 +import { promisify } from 'node:util';
 +import { join } from 'node:path';
 +import { parseRoadmap, renderRoadmapYml, computeStatus } from './docker-server-ghosts-core.mjs';
++import { findRepoByName, safeSnapshotKey, SNAPSHOTS_ROOT } from './docker-server-snapshots.mjs';
 +
 +const execFileP = promisify(execFile);
 +
@@ -2971,11 +2972,144 @@ index 0000000..a202dda
 +
 +/**
 + * Public : read a snapshot's ghosts.json.
++ *
++ * Takes the snapshot's storage directory (the same `snapshotDir` that
++ * `syncGhostsForSnapshot` writes to — typically
++ * `SNAPSHOTS_ROOT/<repoKey>/<shortHash>`) and reads `<snapshotDir>/ghosts.json`.
++ * Returns the parsed runtime object, or null if the file is absent.
 + */
-+export async function readSnapshotGhosts(repoPath, sha) {
-+  const path = join(repoPath, '.gitnexus', 'snapshots', sha, 'ghosts.json');
++export async function readSnapshotGhosts(snapshotDir) {
++  const path = join(snapshotDir, 'ghosts.json');
 +  if (!(await fileExists(path))) return null;
 +  return JSON.parse(await readFile(path, 'utf8'));
++}
++
++// ---------------------------------------------------------------------------
++// HTTP route handlers (Task 7 of the roadmap-predictive CORE plan).
++//
++// Three routes, all dispatched by `handleGhostsRoute`:
++//   POST /ghosts/sync?repo=<name>           run syncGhostsForRepo
++//   GET  /ghosts?repo=<name>                read .gitnexus/ghosts.json
++//   GET  /ghosts/at?repo=<name>&commit=<sha> read a snapshot's ghosts.json
++//
++// Wired into `docker-server.mjs` by Task 8.
++// ---------------------------------------------------------------------------
++
++async function handleGhostsSync(url, res, opts) {
++  const repoName = url.searchParams.get('repo');
++  if (!repoName) {
++    res.writeHead(400, { 'Content-Type': 'application/json' });
++    res.end(JSON.stringify({ error: 'missing repo' }));
++    return;
++  }
++  try {
++    const repo = await findRepoByName(repoName, opts.api);
++    if (!repo) {
++      res.writeHead(400, { 'Content-Type': 'application/json' });
++      res.end(JSON.stringify({ error: `repo not found: ${repoName}` }));
++      return;
++    }
++    const repoPath = repo.repoPath || repo.path;
++    const runtime = await syncGhostsForRepo(repoPath);
++    res.writeHead(200, { 'Content-Type': 'application/json' });
++    res.end(JSON.stringify({ synced: true, ...runtime }));
++  } catch (err) {
++    console.error('[ghosts] sync failed:', err);
++    res.writeHead(500, { 'Content-Type': 'application/json' });
++    res.end(JSON.stringify({ error: err.message }));
++  }
++}
++
++async function handleGhostsGet(url, res, opts) {
++  const repoName = url.searchParams.get('repo');
++  if (!repoName) {
++    res.writeHead(400, { 'Content-Type': 'application/json' });
++    res.end(JSON.stringify({ error: 'missing repo' }));
++    return;
++  }
++  try {
++    const repo = await findRepoByName(repoName, opts.api);
++    if (!repo) {
++      res.writeHead(400, { 'Content-Type': 'application/json' });
++      res.end(JSON.stringify({ error: `repo not found: ${repoName}` }));
++      return;
++    }
++    const repoPath = repo.repoPath || repo.path;
++    const runtime = await readLatestGhosts(repoPath);
++    if (!runtime) {
++      res.writeHead(404, { 'Content-Type': 'application/json' });
++      res.end(JSON.stringify({ error: 'No ghosts.json — run POST /ghosts/sync first.' }));
++      return;
++    }
++    res.writeHead(200, { 'Content-Type': 'application/json' });
++    res.end(JSON.stringify(runtime));
++  } catch (err) {
++    console.error('[ghosts] get failed:', err);
++    res.writeHead(500, { 'Content-Type': 'application/json' });
++    res.end(JSON.stringify({ error: err.message }));
++  }
++}
++
++async function handleGhostsAt(url, res, opts) {
++  const repoName = url.searchParams.get('repo');
++  if (!repoName) {
++    res.writeHead(400, { 'Content-Type': 'application/json' });
++    res.end(JSON.stringify({ error: 'missing repo' }));
++    return;
++  }
++  const commitKey = url.searchParams.get('commit');
++  if (!commitKey) {
++    res.writeHead(400, { 'Content-Type': 'application/json' });
++    res.end(JSON.stringify({ error: 'missing commit' }));
++    return;
++  }
++  try {
++    const repo = await findRepoByName(repoName, opts.api);
++    if (!repo) {
++      res.writeHead(400, { 'Content-Type': 'application/json' });
++      res.end(JSON.stringify({ error: `repo not found: ${repoName}` }));
++      return;
++    }
++    const snapshotDir = join(
++      SNAPSHOTS_ROOT,
++      safeSnapshotKey(repoName),
++      safeSnapshotKey(commitKey),
++    );
++    const runtime = await readSnapshotGhosts(snapshotDir);
++    if (!runtime) {
++      res.writeHead(404, { 'Content-Type': 'application/json' });
++      res.end(JSON.stringify({ error: `No ghosts.json for snapshot ${commitKey}.` }));
++      return;
++    }
++    res.writeHead(200, { 'Content-Type': 'application/json' });
++    res.end(JSON.stringify(runtime));
++  } catch (err) {
++    console.error('[ghosts] at failed:', err);
++    res.writeHead(500, { 'Content-Type': 'application/json' });
++    res.end(JSON.stringify({ error: err.message }));
++  }
++}
++
++/**
++ * Public dispatcher : returns true if the request matches one of the
++ * three ghost routes (and is fully handled), false otherwise.
++ *
++ * Registered in `docker-server.mjs` next to the snapshot dispatcher.
++ */
++export async function handleGhostsRoute(req, url, res, opts) {
++  if (url.pathname === '/ghosts/sync' && req.method === 'POST') {
++    await handleGhostsSync(url, res, opts);
++    return true;
++  }
++  if (url.pathname === '/ghosts' && req.method === 'GET') {
++    await handleGhostsGet(url, res, opts);
++    return true;
++  }
++  if (url.pathname === '/ghosts/at' && req.method === 'GET') {
++    await handleGhostsAt(url, res, opts);
++    return true;
++  }
++  return false;
 +}
 diff --git a/docker-server-growth-cross.mjs b/docker-server-growth-cross.mjs
 new file mode 100644
