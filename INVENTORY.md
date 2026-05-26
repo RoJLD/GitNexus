@@ -191,10 +191,29 @@ Fichiers à la racine du repo, qui rendent le setup reproductible sur poste Wind
 - ✅ 2.3 What-if simulator (`services/mutation-engine.ts`, `WhatIfPanel.tsx`, frontend-only)
 - ✅ 2.4 VSCode extension v0.1 ([vscode-extension/](vscode-extension/) — status bar + 2 commandes)
 
-**Pending** :
-- ⏳ 2.5 Cross-repo similarity (Score de Correspondance + Vecteur d'Identité) — ajouté au ROADMAP, pas démarré
+**Pending — Tier 2bis (plate-forme, ~3 semaines cumulées, à livrer avant le reste)** :
+- ⏳ 2bis.1 MCP exposure des analytics time-travel (3-5j)
+- ⏳ 2bis.2 Commit-level entropy delta (1 semaine)
+- ⏳ 2bis.3 Alerting continu (watch + webhook) (1-2 semaines)
+- ⏳ 2bis.4 Unified `.gitnexus.yaml` (2-3j)
+- ⏳ 2bis.5 Repo ID stable (3-5j)
 
-**Tier 3** : voir [ROADMAP.md](ROADMAP.md), à valider avant attaque.
+**Pending — Tier 2 résiduel** :
+- ⏳ 2.5 Cross-repo similarity (Score de Correspondance, cube 2×2×2, Vecteur d'Identité v2) — requiert 2bis.4 + 2bis.5
+- ⏳ 2.6 Galaxie UMAP / Carte de l'écosystème — séparée de 2.5, requiert 2.5
+
+**Pending — Tier 3 étendu (R&D + stratégique)** :
+- ⏳ 3.1 à 3.5 : voir [ROADMAP.md](ROADMAP.md) (inchangé)
+- ⏳ 3.6 Architectural CI (concurrence Akon Labs commercial)
+- ⏳ 3.7 AI-guided tour / Architect's Copilot (requiert 2bis.1)
+- ⏳ 3.8 Domain-specific AST extractors (requiert 3.10)
+- ⏳ 3.9 Public reference dataset / industry baselines (Chemin C)
+- ⏳ 3.10 Plugin architecture pour analytics (lève le goulot horizontal)
+
+**Aussi dans ROADMAP** :
+- 🛠️ Section "Optimisations d'existant à programmer" — 8 items (storage, cache, bundle, smoke tests, perf metrics, etc.)
+- 🎯 Section "Vision architecturale — trois chemins" — A (Architectural CI) / B (Architect's Copilot, recommandé) / C (Galaxie OSS)
+- 🚨 Section "Refactos structurels à surveiller" — 7 issues identifiées dans la revue 2026-05-26
 
 ---
 
