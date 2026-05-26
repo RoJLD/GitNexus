@@ -31,6 +31,11 @@ Pré-requis local : Rancher Desktop running, **Node ≥ 22 LTS**. CI : `.github/
 | Entropy math | `unit/entropy-math.test.mjs` | `density`, `modularityRatio`, `entropyForSnapshot` |
 | Bus factor | `unit/ownership-bus-factor.test.mjs` | `busFactor`, `topAuthors` |
 | Dissonance overlap | `unit/dissonance-overlap.test.mjs` | `clusterPurity`, `misplacedFiles` |
+| Ghost parser | `unit/ghosts-parser.test.mjs` | `parseRoadmap` (tables + Tier sections + `warnMissingExpectedBy`) |
+| Ghost YAML | `unit/ghosts-yaml.test.mjs` | `renderRoadmapYml` deterministic + `expectedBy` emit |
+| Ghost matching | `unit/ghosts-matching.test.mjs` | `matchExpectedLinks` suffix + glob |
+| Ghost lifecycle | `unit/ghosts-lifecycle.test.mjs` | `computeStatus` + `parseTargetDate` + expired |
+| Ghost registry | `unit/ghosts-registry.test.mjs` | `registerGhostSource` (Update 2 plugin registry) |
 
 ### Components React (unit)
 | Test | Fichier | Couvre |
@@ -69,6 +74,10 @@ Pré-requis local : Rancher Desktop running, **Node ≥ 22 LTS**. CI : `.github/
 | Semantic labels | `integration/endpoints/semantic-labels.test.mjs` | `/semantic-labels` GET + POST |
 | CSV format universel | `integration/endpoints/csv-format.test.mjs` | `?format=csv` sur 7 routes |
 | Export / Import | `integration/endpoints/export-import.test.mjs` | `/export` bundle + indexOnly |
+| Ghosts sync | `integration/endpoints/ghosts-sync.test.mjs` | `POST /ghosts/sync` idempotent |
+| Ghosts read | `integration/endpoints/ghosts.test.mjs` | `GET /ghosts` 404/200 |
+| Ghosts at commit | `integration/endpoints/ghosts-at.test.mjs` | `GET /ghosts/at` historical snapshot |
+| Ghosts in snapshot | `integration/endpoints/ghosts-snapshot.test.mjs` | snapshot auto-sync writes ghosts.json per dir |
 
 ### UI flows e2e
 | Test | Fichier | Couvre |
