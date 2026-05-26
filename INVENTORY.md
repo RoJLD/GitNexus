@@ -174,6 +174,7 @@ Fichiers à la racine du repo, qui rendent le setup reproductible sur poste Wind
 | [patches/example-gitnexus-domains.json](patches/example-gitnexus-domains.json) | Template pour la feature Dissonance |
 | [patches/example-gitnexus-policy.json](patches/example-gitnexus-policy.json) | Template policy par-repo pour la feature Cross-repo similarity (isolation_required, allow_merge_with) |
 | [vscode-extension/README.md](vscode-extension/README.md) | Setup + scope de l'extension VSCode (Tier 2.4) |
+| [mcp-server/README.md](mcp-server/README.md) | Setup + protocole du sidecar MCP analytics (Tier 2bis.1) — 12 tools stdio JSON-RPC 2.0 zéro-dep, à brancher dans `~/.claude.json > mcpServers` |
 | [INVENTORY.md](INVENTORY.md) | Ce document |
 
 ### B.4 Mapping ROADMAP ↔ État de livraison
@@ -202,6 +203,9 @@ Fichiers à la racine du repo, qui rendent le setup reproductible sur poste Wind
 - ✅ 2.5c Cross-repo similarity v1.c — Identity Vector v2 (10 dims : v1 + growthRate, churnConcentration, fileSizePareto, languageDiversity, treeDepth), opt-out `?identityVersion=1` pour rétrocompat.
 - ✅ 2.6 Galaxy view — projection 2D PCA pure JS (power iteration + deflation, zéro dep) ajoutée à la réponse `/similarity` (`galaxyXY` par repo + `galaxyProjection`), `SimilarityPanel` toggle Matrix/Galaxy avec SVG scatter (edges proportionnels à la force, click-to-nearest-pair).
 - ✅ 2.6.bis Galaxy UMAP — toggle PCA/UMAP dans le GalaxyView, calcul client-side (dynamic import `umap-js` → out-of-bundle pour les users qui n'ouvrent pas la galaxy), seed mulberry32 keyé sur le repo-set pour stabilité au refetch, nNeighbors adaptatif min(15, N-1). Tier 2 100% complet.
+
+**Livré (Tier 2bis — plate-forme)** :
+- ✅ 2bis.1 MCP analytics sidecar — [`mcp-server/`](mcp-server/) — serveur stdio JSON-RPC 2.0 pure Node zéro-dep, 12 tools wrappant `/api/repos` + tous les endpoints analytics REST. Coexiste avec `npx gitnexus mcp` upstream (pas de patch dans `upstream/`). Smoke 6/6 ✓ (`mcp-server/smoke.mjs`).
 
 **Pending — Tier 2bis (plate-forme, ~3 semaines cumulées, à livrer avant le reste)** :
 - ⏳ 2bis.1 MCP exposure des analytics time-travel (3-5j)

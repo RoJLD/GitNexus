@@ -1,7 +1,7 @@
 # GitNexus — Roadmap
 
 État vivant des fonctionnalités déjà livrées et des prochaines pistes.
-Dernière mise à jour : 2026-05-26 (Tier 2.6.bis livré : UMAP client-side via umap-js + toggle PCA/UMAP dans GalaxyView — Tier 2 100% complet).
+Dernière mise à jour : 2026-05-26 (Tier 2bis.1 livré : MCP stdio sidecar exposant 12 tools — analytics queryables par Claude Code / Cursor / Windsurf en langage naturel).
 
 > 📋 **Voir aussi** [INVENTORY.md](INVENTORY.md) — état des lieux complet :
 > features upstream + nos ajouts + distance avec upstream. À utiliser
@@ -44,6 +44,7 @@ un nom marketing — et son premier pas concret.
 | 24 | **Cross-repo similarity v1.c** : Identity Vector v2 (10 dims = v1 + `growthRate`, `churnConcentration`, `fileSizePareto`, `languageDiversity`, `treeDepth`), opt-out via `?identityVersion=1` | `/similarity?identityVersion=…`, badge "v2 · 10 dims" dans le panel |
 | 25 | **Galaxy view (Tier 2.6)** : projection 2D PCA des identity vectors (SVG scatter avec edges pour les paires fortes, click-to-select-nearest-pair). Power-iteration pure JS, zéro dep | `/similarity` (`galaxyXY[]`, `galaxyProjection`), `SimilarityPanel` `<GalaxyView>` + toggle Matrix/Galaxy |
 | 26 | **Galaxy UMAP (Tier 2.6.bis)** : toggle PCA/UMAP dans le panel, calcul client-side (dynamic import de `umap-js` → out-of-bundle pour les users qui n'ouvrent jamais la galaxy), seed mulberry32 keyé sur le repo-set pour stabilité, nNeighbors adaptatif | dep `umap-js@^1.4.0` ajoutée, GalaxyView `setMethod('pca' \| 'umap')` |
+| 27 | **MCP analytics sidecar (Tier 2bis.1)** : serveur stdio JSON-RPC 2.0 pure Node zéro-dep, 12 tools wrappant les endpoints REST (`list_repos`, `entropy`, `churn`, `coupling`, `growth`, `lifespan`, `ownership`, `dissonance`, `semantic_labels`, `coupling_cross`, `growth_cross`, `similarity`). Sibling de `npx gitnexus mcp` upstream. Smoke 6/6 ✓ contre la stack live | `mcp-server/server.mjs`, `mcp-server/README.md`, `mcp-server/smoke.mjs` |
 
 Toutes les analytics ci-dessus marchent dans un seul repo. La granularité
 est le node gitnexus (File, Function, Class, Section, …).
@@ -338,7 +339,20 @@ séparée. AST-fingerprint = 3.8.
 > Chacune rend les features suivantes plus rapides à produire et plus
 > utilisables via les agents IA. Effort cumulé ~3 semaines, ROI permanent.
 
-### 2bis.1 — MCP exposure des analytics time-travel
+### 2bis.1 — MCP exposure des analytics time-travel ✅ LIVRÉ
+**État** : livré 2026-05-26 sous forme de **sidecar stdio** dans
+`mcp-server/` (hors `upstream/`, survit aux bumps). 12 tools exposés
+en JSON-RPC 2.0 pure Node zéro-dep, transport stdio MCP 2024-11-05
+(matches `@modelcontextprotocol/sdk@1.0.0` upstream). Smoke 6/6 ✓
+contre la stack live, dont `gitnexus_list_repos` (6 repos) +
+`gitnexus_entropy` (1 timeline point). Installation = une entrée
+dans `~/.claude.json > mcpServers` (cf `mcp-server/README.md`).
+**Choix sidecar vs patch upstream** : modifier
+`upstream/gitnexus/src/mcp/*.ts` aurait introduit du merge work à
+chaque bump upstream (v1.6.3→v1.6.5 a déjà touché ces fichiers). Le
+sidecar coexiste avec `npx gitnexus mcp`, l'utilisateur l'ajoute à sa
+config MCP comme une 2e entrée.
+
 **Promesse** : chaque endpoint backend devient un tool MCP. Claude
 (ou tout agent compatible) peut interroger `/churn`, `/entropy`,
 `/ownership`, `/similarity`, etc. en langage naturel — sans curl ni
@@ -806,7 +820,7 @@ fin. Tout ce qui suit s'appuie sur Tier 1 + Tier 2.1-2.4 ✅ déjà livrés.
 - ✅ Tier 2.1 (semantic labels), 2.2 (dissonance), 2.3 (what-if), 2.4 (VSCode MVP)
 
 ### Phase 1 — Plate-forme (avant toute nouvelle feature horizontale)
-1. **2bis.1 MCP exposure** — débloque l'agent-driven usage et 3.7. ~3-5j.
+1. ✅ **2bis.1 MCP exposure** — livré sous forme sidecar `mcp-server/`. 12 tools, smoke 6/6.
 2. **2bis.4 Unified `.gitnexus.yaml`** — avant que les configs explosent. ~2-3j.
 3. **2bis.5 Repo ID stable** — pré-requis cross-repo robuste. ~3-5j.
 

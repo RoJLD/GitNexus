@@ -1,0 +1,18 @@
+{
+  "name": "gitnexus-mcp-analytics",
+  "version": "0.1.0",
+  "private": true,
+  "description": "MCP stdio server exposing the gitnexus deployment's time-travel + cross-repo analytics as tools for Claude Code / Cursor / Windsurf / OpenCode.",
+  "type": "module",
+  "main": "server.mjs",
+  "bin": {
+    "gitnexus-mcp-analytics": "./server.mjs"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "start": "node server.mjs",
+    "smoke": "node smoke.mjs"
+  }
+}
