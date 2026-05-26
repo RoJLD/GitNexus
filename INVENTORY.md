@@ -1,7 +1,7 @@
 # GitNexus — État des lieux
 
-**Snapshot daté : 2026-05-26**
-**Base upstream : `v1.6.3`** (commit `247b1bd5`, 2026-04-24)
+**Snapshot daté : 2026-05-26 (post-bump v1.6.5)**
+**Base upstream : `v1.6.5`** (commit `42d4fcaf`, 2026-05-16)
 **Fork interne : [github.com/RoJLD/GitNexus](https://github.com/RoJLD/GitNexus) → branche `deployment`**
 
 Document figé dans le temps, vocation : servir de base de brainstorming
@@ -229,14 +229,20 @@ Fichiers à la racine du repo, qui rendent le setup reproductible sur poste Wind
 
 | Référence upstream | Date | Commits devant nous |
 |---|---|---|
-| `v1.6.3` (notre base) | 2026-04-24 | 0 — point de départ |
-| `v1.6.5` (dernier stable) | 2026-05-16 | **+211 commits** |
-| `origin/main` HEAD | 2026-05-22 | **+275 commits** |
+| `v1.6.5` (notre base actuelle) | 2026-05-16 | 0 — point de départ |
+| `origin/main` HEAD | 2026-05-22 | **+64 commits** (depuis v1.6.5) |
 | `v1.6.6-rc.67` (RC en cours) | 2026-05-22+ | ≈ même |
 
-> Note : "ahead/behind" git pur ne s'applique pas car les historiques sont sans ancêtre commun (notre branche `deployment` a 2 commits "snapshot", pas une vraie dérivation). Le chiffre ci-dessus est : "depuis le tag `v1.6.3` que nous avons pris comme base, combien de commits sont arrivés upstream".
+> Note : "ahead/behind" git pur ne s'applique pas car les historiques sont sans ancêtre commun (notre branche `deployment` a 2+ commits "snapshot", pas une vraie dérivation). Le chiffre ci-dessus est : "depuis le tag `v1.6.5` que nous avons pris comme base, combien de commits sont arrivés upstream".
 
-Côté nous : **2 commits** sur `deployment` (initial + Tier 1) qui contiennent tout le travail listé en partie B.
+**Bump v1.6.3 → v1.6.5 effectué le 2026-05-26** (commit suivant celui-ci). Détails :
+- 4 conflits hard résolus : `Dockerfile.web` (alpine → bookworm-slim, apt syntax), `docker-server.mjs` (CodeQL inline path containment), `gitnexus-web/package.json` (versions bumpées), `package-lock.json` (régen via `npm install`).
+- Bug upstream #1502 (install-duckdb-extension.mjs missing in runtime) **fixé en v1.6.5** → suppression de `scripts/install-duckdb-extension.mjs` + 1 ligne COPY dans `Dockerfile.cli`.
+- Bug upstream "stale lbug connection in REST adapter" **toujours présent** → notre patch `scripts/patch-lbug-staleness.mjs` continue à s'appliquer et le script self-validant confirme que `ensureLbugInitialized` n'a pas changé.
+- Peer deps non-déclarées de `react-force-graph-3d` → `three-render-objects` ajoutées : `polished`, `accessor-fn`, `float-tooltip`, `kapsule` (vite/rolldown plus strict en v1.6.5).
+- Bug du script `apply-upstream-patches.mjs` corrigé (chemin relatif `patches/...` → `../patches/...` quand cwd=upstream/, et clone full-history pour `git apply --3way` fonctionne).
+
+Côté nous : ≥15 commits sur `deployment` qui contiennent tout le travail listé en partie B.
 
 ---
 

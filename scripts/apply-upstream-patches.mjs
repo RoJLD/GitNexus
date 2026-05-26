@@ -15,7 +15,7 @@ import { fileURLToPath } from 'node:url';
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, '..');
 const UPSTREAM = join(ROOT, 'upstream');
-const TAG = process.env.GITNEXUS_VERSION || 'v1.6.3';
+const TAG = process.env.GITNEXUS_VERSION || 'v1.6.5';
 
 function sh(cmd, opts = {}) {
   console.log(`$ ${cmd}`);
@@ -33,7 +33,11 @@ if (existsSync(UPSTREAM)) {
   rmSync(UPSTREAM, { recursive: true, force: true });
 }
 
-sh(`git clone --depth 50 --branch ${TAG} https://github.com/abhigyanpatwari/gitnexus.git upstream`);
-sh(`git apply --3way --whitespace=fix patches/upstream-all.diff`, { cwd: UPSTREAM });
+// Full history clone (no --depth) so `git apply --3way` has the blobs it
+// needs to do a proper 3-way merge for the inevitable conflicts when bumping
+// across upstream versions. Shallow clones force a fallback to direct apply,
+// which fails noisily on every diverged file.
+sh(`git clone --branch ${TAG} https://github.com/abhigyanpatwari/gitnexus.git upstream`);
+sh(`git apply --3way --whitespace=fix ../patches/upstream-all.diff`, { cwd: UPSTREAM });
 
 console.log(`\nupstream/ ready at ${TAG} with patches applied.`);

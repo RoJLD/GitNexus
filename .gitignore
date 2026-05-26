@@ -16,3 +16,6 @@ Thumbs.db
 
 # Local logs
 *.log
+
+# Superpowers brainstorming visual companion (per-session, ephemeral)
+.superpowers/

@@ -1,16 +1,12 @@
-# Derived image that fixes three upstream bugs in
-# ghcr.io/abhigyanpatwari/gitnexus:1.6.3 without re-vendoring the full source
+# Derived image that fixes two upstream bugs in
+# ghcr.io/abhigyanpatwari/gitnexus:1.6.5 without re-vendoring the full source
 # tree. See notes/decisions.md (2026-05-07 REVERSAL entry) for the rationale.
 #
-# The three upstream bugs:
+# The two remaining upstream bugs (as of v1.6.5):
 #   1. /data/hf-cache is never created with the right ownership, so USER node
 #      can't write the HuggingFace embedding cache (EACCES at first analyze
 #      run with --embeddings).
-#   2. The runtime stage COPYs gitnexus/{dist,vendor,node_modules,package.json}
-#      but skips scripts/. install-duckdb-extension.mjs is invoked at runtime
-#      to install DuckDB FTS+VECTOR extensions; without it the analyzer runs
-#      but persists 0 embeddings (MODULE_NOT_FOUND).
-#   3. The REST API caches LadybugDB connections by path
+#   2. The REST API caches LadybugDB connections by path
 #      (lbug-adapter.ts ensureLbugInitialized line 267) and never evicts
 #      them when the analyze worker (a child process) rewrites the lbug
 #      file. After a re-analyze, /api/graph and /api/query keep returning
@@ -19,16 +15,18 @@
 #      (mcp/local/local-backend.ts line 439); we add the same staleness
 #      check to the REST adapter via scripts/patch-lbug-staleness.mjs.
 #
-# All three fixes are minimal layers on top of the upstream image — no
+# Note: bug #3 from the v1.6.3 era (install-duckdb-extension.mjs missing
+# from runtime stage) is FIXED upstream as of v1.6.5 — we no longer need
+# to vendor the script.
+#
+# Both remaining fixes are minimal layers on top of the upstream image — no
 # rebuild of gitnexus from source.
 
-FROM ghcr.io/abhigyanpatwari/gitnexus:1.6.3
+FROM ghcr.io/abhigyanpatwari/gitnexus:1.6.5
 
 USER root
 
 RUN mkdir -p /data/hf-cache && chown -R node:node /data
-
-COPY --chown=node:node scripts/install-duckdb-extension.mjs /app/gitnexus/scripts/install-duckdb-extension.mjs
 
 # Apply the lbug staleness patch. The script is idempotent and verifies the
 # target shape — if a future upstream release changes ensureLbugInitialized

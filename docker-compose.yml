@@ -24,13 +24,15 @@
 name: gitnexus
 
 services:
-  # GitNexus API server. Derived image: upstream :1.6.3 + two Dockerfile.cli patches
-  # (mkdir /data/hf-cache, COPY scripts/install-duckdb-extension.mjs).
+  # GitNexus API server. Derived image: upstream :1.6.5 + one Dockerfile.cli patch
+  # (mkdir /data/hf-cache; lbug-staleness REST adapter patch).
+  # Upstream bug #1502 (install-duckdb-extension.mjs missing in runtime stage)
+  # was fixed in v1.6.5, so we no longer vendor that script.
   gitnexus:
     build:
       context: .
       dockerfile: Dockerfile.cli
-    image: gitnexus-derived:1.6.3-patched
+    image: gitnexus-derived:1.6.5-patched
     container_name: gitnexus
     environment:
       HF_HOME: /data/hf-cache
@@ -46,7 +48,7 @@ services:
       - gitnexus-hf-cache:/data/hf-cache
     restart: unless-stopped
 
-  # Web UI built from local upstream/ checkout (gitnexus@v1.6.3) so we can patch
+  # Web UI built from local upstream/ checkout (gitnexus@v1.6.5) so we can patch
   # the React source. Patches:
   #   - gitnexus-web/src/components/DropZone.tsx: visible progress bar on the
   #     loading card.
@@ -71,7 +73,7 @@ services:
     build:
       context: ./upstream
       dockerfile: Dockerfile.web
-    image: gitnexus-web-derived:1.6.3-patched
+    image: gitnexus-web-derived:1.6.5-patched
     container_name: gitnexus-web
     ports:
       - "4173:4173"

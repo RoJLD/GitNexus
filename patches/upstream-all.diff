@@ -1,8 +1,8 @@
 diff --git a/Dockerfile.web b/Dockerfile.web
-index 7d20e09..ec1d85e 100644
+index b102a70..4f74bf0 100644
 --- a/Dockerfile.web
 +++ b/Dockerfile.web
-@@ -14,19 +14,50 @@ RUN npm run build --prefix gitnexus-shared
+@@ -21,7 +21,10 @@ RUN npm run build --prefix gitnexus-shared
  COPY gitnexus/package.json ./gitnexus/
  
  COPY gitnexus-web/package.json gitnexus-web/package-lock.json ./gitnexus-web/
@@ -14,18 +14,22 @@ index 7d20e09..ec1d85e 100644
  
  COPY gitnexus-web ./gitnexus-web
  RUN npm run build --prefix gitnexus-web
+@@ -29,15 +32,43 @@ RUN npm run build --prefix gitnexus-web
+ # node:22-bookworm-slim
+ FROM node:22-bookworm-slim@sha256:9f6d5975c7dca860947d3915877f85607946403fc55349f39b4bc3688448bb6e AS runtime
  
- FROM node:22-alpine AS runtime
- 
--RUN apk add --no-cache curl
+-RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/* \
 +# Runtime utilities used by docker-server.mjs:
 +#   - zip/unzip: export/import archive streams (~150 KB combined)
 +#   - git: snapshot endpoint clones the source repo and checks out a target
 +#     commit before triggering a gitnexus analyze, so we can index any past
 +#     point in time (Phase 1 of the time-travel feature). Adds ~10 MB but
 +#     keeps everything in one container — no docker.sock or sidecar needed.
-+RUN apk add --no-cache curl zip unzip git
-+
++RUN apt-get update && apt-get install -y --no-install-recommends curl zip unzip git && rm -rf /var/lib/apt/lists/* \
+     && rm -rf /usr/local/lib/node_modules/npm \
+     && rm -rf /usr/local/lib/node_modules/corepack \
+     && rm -f /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack
+ 
 +# Disable git's safe-directory protection — required because the host's
 +# project folder is bind-mounted into the container, so the on-disk UID
 +# (Windows host) doesn't match the in-container user. We trust the mount
@@ -33,7 +37,7 @@ index 7d20e09..ec1d85e 100644
 +# is safe in our deployment context. Without this, every snapshot fails
 +# with "fatal: detected dubious ownership".
 +RUN git config --system --add safe.directory '*'
- 
++
  WORKDIR /app
  
  COPY --from=builder /app/gitnexus-web/dist ./dist
@@ -2544,10 +2548,10 @@ index 0000000..254682a
 +}
 diff --git a/docker-server-similarity.mjs b/docker-server-similarity.mjs
 new file mode 100644
-index 0000000..3dc5174
+index 0000000..f63b16a
 --- /dev/null
 +++ b/docker-server-similarity.mjs
-@@ -0,0 +1,946 @@
+@@ -0,0 +1,1064 @@
 +/**
 + * Cross-repo similarity — ROADMAP Tier 2.5 (a + b).
 + *
@@ -2887,6 +2891,109 @@ index 0000000..3dc5174
 +    authors.set(currentAuthor, (authors.get(currentAuthor) || 0) + 1);
 +  }
 +  return { authors, perBucketActivity, lastCommitDate, filesTouched, perFileTouches };
++}
++
++// 2D PCA projection of an N×D matrix → array of [x, y] per row.
++// Tier 2.6 — used by the Galaxy view to lay repos out in 2D where
++// distance ≈ structural similarity.
++//
++// Why PCA and not UMAP: this codebase has zero embedded-vector deps,
++// and UMAP-js would add ~50 KB to the bundle (or be a server-side
++// dep). For 5-10 repos, PCA captures enough of the variance to be
++// useful — UMAP's local-neighborhood preservation only pays off at
++// hundreds of points. Honest framing: this is "Galaxy v1 = PCA". If
++// we ever index hundreds of repos, 2.6.bis swaps in UMAP.
++//
++// Power-iteration approach (no SVD library needed):
++//   1. center the matrix (subtract column means)
++//   2. compute the D×D covariance matrix
++//   3. find the top 2 eigenvectors by deflated power iteration
++//   4. project: rows × top-2-eigvecs → N×2
++//
++// Edge cases: N<2 → returns null (can't project a single point).
++// N=2 → returns a horizontal line at y=0, points spaced by distance.
++function pcaProject2D(matrix) {
++  const N = matrix.length;
++  if (N < 2) return null;
++  const D = matrix[0].length;
++  if (D === 0) return null;
++  // For N=2, PCA degenerates — just project onto the line connecting them.
++  if (N === 2) {
++    let dot = 0;
++    for (let d = 0; d < D; d++) dot += (matrix[0][d] - matrix[1][d]) ** 2;
++    const dist = Math.sqrt(dot);
++    return [
++      [-dist / 2, 0],
++      [dist / 2, 0],
++    ];
++  }
++  // 1. Centre
++  const mean = new Array(D).fill(0);
++  for (const row of matrix) for (let d = 0; d < D; d++) mean[d] += row[d];
++  for (let d = 0; d < D; d++) mean[d] /= N;
++  const centred = matrix.map((row) => row.map((v, d) => v - mean[d]));
++  // 2. Covariance D×D
++  const cov = Array.from({ length: D }, () => new Array(D).fill(0));
++  for (const row of centred) {
++    for (let i = 0; i < D; i++) {
++      for (let j = i; j < D; j++) {
++        const v = row[i] * row[j];
++        cov[i][j] += v;
++        if (i !== j) cov[j][i] += v;
++      }
++    }
++  }
++  for (let i = 0; i < D; i++) for (let j = 0; j < D; j++) cov[i][j] /= N - 1;
++  // 3. Top-2 eigenvectors via power iteration with deflation
++  const pc1 = topEigenvector(cov, 200);
++  const cov2 = deflate(cov, pc1);
++  const pc2 = topEigenvector(cov2, 200);
++  // 4. Project
++  return centred.map((row) => [dotProd(row, pc1), dotProd(row, pc2)]);
++}
++
++function topEigenvector(matrix, iterations) {
++  const D = matrix.length;
++  // Deterministic seed to make the projection stable across requests —
++  // a random init would rotate the galaxy each refresh, which is
++  // disorienting. Start with a tilted unit vector that's never
++  // orthogonal to the data.
++  let v = new Array(D).fill(0).map((_, i) => Math.cos(i + 1));
++  v = normalize(v);
++  for (let k = 0; k < iterations; k++) {
++    const next = new Array(D).fill(0);
++    for (let i = 0; i < D; i++) {
++      for (let j = 0; j < D; j++) next[i] += matrix[i][j] * v[j];
++    }
++    const norm = Math.sqrt(next.reduce((s, x) => s + x * x, 0));
++    if (norm < 1e-12) return v;
++    for (let i = 0; i < D; i++) next[i] /= norm;
++    // Convergence check: dot ≈ 1 means we've stopped rotating.
++    if (Math.abs(dotProd(next, v)) > 1 - 1e-9) return next;
++    v = next;
++  }
++  return v;
++}
++
++function deflate(matrix, eigvec) {
++  // λ ≈ vᵀMv (Rayleigh quotient on the converged eigvec)
++  const Mv = new Array(eigvec.length).fill(0);
++  for (let i = 0; i < eigvec.length; i++) {
++    for (let j = 0; j < eigvec.length; j++) Mv[i] += matrix[i][j] * eigvec[j];
++  }
++  const lambda = dotProd(eigvec, Mv);
++  return matrix.map((row, i) => row.map((v, j) => v - lambda * eigvec[i] * eigvec[j]));
++}
++
++function dotProd(a, b) {
++  let s = 0;
++  for (let i = 0; i < a.length; i++) s += a[i] * b[i];
++  return s;
++}
++
++function normalize(v) {
++  const norm = Math.sqrt(v.reduce((s, x) => s + x * x, 0));
++  return norm > 0 ? v.map((x) => x / norm) : v.slice();
 +}
 +
 +// Gini coefficient on a numeric distribution. Returns 0 for perfect
@@ -3409,7 +3516,17 @@ index 0000000..3dc5174
 +  // Slice the identity vector to the selected version's dims. v1
 +  // callers should not see the v2 dims even if they're computed.
 +  const sliceVec = (v) => Object.fromEntries(dims.map((k) => [k, Number(v[k]) || 0]));
-+  const repos = snapshots.map((s) => ({
++
++  // 2D Galaxy projection (Tier 2.6). PCA on the sliced identity
++  // matrix. Computed even if no one asked for it — N×D=80×10 is
++  // microseconds. Lets the frontend toggle matrix↔galaxy view without
++  // a second round-trip.
++  const projectionMatrix = snapshots.map((s) =>
++    dims.map((k) => Number(s.identityVector[k]) || 0),
++  );
++  const projection2D = pcaProject2D(projectionMatrix);
++
++  const repos = snapshots.map((s, i) => ({
 +    name: s.name,
 +    identityVector: roundVector(sliceVec(s.identityVector), 4),
 +    stats: s.rawStats,
@@ -3421,6 +3538,7 @@ index 0000000..3dc5174
 +    semanticLabelsCount: s.semanticLabelsCount,
 +    semanticEmbeddingsCount: s.semanticEmbeddingsCount,
 +    hasLabelCentroid: !!s.labelCentroid,
++    galaxyXY: projection2D ? [roundN(projection2D[i][0], 4), roundN(projection2D[i][1], 4)] : null,
 +  }));
 +
 +  // Semantic axis is "available" if at least one pair could use it.
@@ -3455,6 +3573,10 @@ index 0000000..3dc5174
 +      windowDays,
 +      identityVersion,
 +      identityDims: dims,
++      // Galaxy 2D projection (Tier 2.6) — PCA on the identity matrix.
++      // null when N<2 (can't project). Coordinates are in a centred,
++      // scale-free space; frontend normalizes to its viewport.
++      galaxyProjection: projection2D ? { method: 'pca', dim: 2 } : null,
 +      semanticAxisAvailable,
 +      semanticAxisMode,
 +      reposWithLabels,
@@ -4157,7 +4279,7 @@ index 0000000..f6f693f
 +  return false;
 +}
 diff --git a/docker-server.mjs b/docker-server.mjs
-index adf84a0..3c59a6a 100644
+index 8143eb4..d999d95 100644
 --- a/docker-server.mjs
 +++ b/docker-server.mjs
 @@ -1,12 +1,50 @@
@@ -4166,9 +4288,9 @@ index adf84a0..3c59a6a 100644
 +import { createReadStream, createWriteStream } from 'node:fs';
 +import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
  import { createServer } from 'node:http';
--import { extname, join, normalize, sep } from 'node:path';
+-import { extname, isAbsolute, normalize, relative, resolve } from 'node:path';
 +import { tmpdir } from 'node:os';
-+import { basename, dirname, extname, join, normalize, resolve as resolvePath_, sep } from 'node:path';
++import { basename, dirname, extname, isAbsolute, join, normalize, relative, resolve, sep } from 'node:path';
 +import { spawn } from 'node:child_process';
 +import { handleSnapshotRoute } from './docker-server-snapshots.mjs';
 +import { handleSnapshotBulkRoute } from './docker-server-snapshots-bulk.mjs';
@@ -4186,7 +4308,7 @@ index adf84a0..3c59a6a 100644
  
  const host = '0.0.0.0';
  const port = Number(process.env.PORT || '4173');
- const root = join(process.cwd(), 'dist');
+ const root = resolve(process.cwd(), 'dist');
  
 +// Root for the server-side directory browser. Must match the Docker mount in
 +// docker-compose.yml — the host VScode folder is mounted read-only at this
@@ -4214,16 +4336,16 @@ index adf84a0..3c59a6a 100644
  const contentTypes = {
    '.css': 'text/css; charset=utf-8',
    '.html': 'text/html; charset=utf-8',
-@@ -34,8 +72,488 @@ function resolvePath(urlPath) {
-   return candidate;
- }
+@@ -20,6 +58,416 @@ const contentTypes = {
+   '.woff2': 'font/woff2',
+ };
  
 +// Validate a browse-target path: must resolve to BROWSE_ROOT or a descendant.
 +// Rejects path-traversal attempts (.., absolute paths outside the root, etc.).
 +function resolveBrowsePath(requested) {
 +  if (typeof requested !== 'string' || !requested) return null;
 +  if (requested.includes('\0')) return null;
-+  const abs = resolvePath_(requested);
++  const abs = resolve(requested);
 +  if (abs !== BROWSE_ROOT && !abs.startsWith(BROWSE_ROOT + '/')) return null;
 +  return abs;
 +}
@@ -4389,11 +4511,11 @@ index adf84a0..3c59a6a 100644
 +  const archivePath = join(stage, 'upload.zip');
 +
 +  try {
-+    await new Promise((resolve, reject) => {
++    await new Promise((resolveProm, rejectProm) => {
 +      const out = createWriteStream(archivePath);
-+      req.on('error', reject);
-+      out.on('error', reject);
-+      out.on('finish', resolve);
++      req.on('error', rejectProm);
++      out.on('error', rejectProm);
++      out.on('finish', resolveProm);
 +      req.pipe(out);
 +    });
 +
@@ -4565,16 +4687,16 @@ index adf84a0..3c59a6a 100644
 +}
 +
 +function runCmd(cmd, args, opts = {}) {
-+  return new Promise((resolve, reject) => {
++  return new Promise((resolveProm, rejectProm) => {
 +    const child = spawn(cmd, args, opts);
 +    let stdout = '';
 +    let stderr = '';
 +    child.stdout?.on('data', (d) => (stdout += d.toString()));
 +    child.stderr?.on('data', (d) => (stderr += d.toString()));
-+    child.on('error', reject);
++    child.on('error', rejectProm);
 +    child.on('close', (code) => {
-+      if (code === 0) resolve(stdout);
-+      else reject(new Error(`${cmd} exited ${code}: ${stderr.trim()}`));
++      if (code === 0) resolveProm(stdout);
++      else rejectProm(new Error(`${cmd} exited ${code}: ${stderr.trim()}`));
 +    });
 +  });
 +}
@@ -4628,110 +4750,69 @@ index adf84a0..3c59a6a 100644
 +  );
 +}
 +
+ // Static asset server for the gitnexus-web Docker image.
+ //
+ // Path-injection containment: the request handler is intentionally a single
+@@ -39,8 +487,53 @@ const contentTypes = {
+ // the request handler's reassignment paths in vanilla JS. The inline-at-sink
+ // shape below is the documented analyzer-friendly idiom.
  const server = createServer(async (req, res) => {
--  const requestPath = req.url?.split('?')[0] || '/';
-+  const url = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
-+  const requestPath = url.pathname;
+-  const urlPath = req.url?.split('?')[0] || '/';
++  const reqUrl = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
++  const urlPath = reqUrl.pathname;
 +
-+  if (requestPath === '/listdir') {
-+    await handleListDir(url, res);
++  // ── Our custom routes (handle before static-asset serving) ────────────
++  if (urlPath === '/listdir') {
++    await handleListDir(reqUrl, res);
 +    return;
 +  }
 +
-+  if (requestPath === '/export' && req.method === 'GET') {
-+    await handleExport(url, res);
++  if (urlPath === '/export' && req.method === 'GET') {
++    await handleExport(reqUrl, res);
 +    return;
 +  }
 +
-+  if (requestPath === '/import' && req.method === 'POST') {
-+    await handleImport(url, req, res);
++  if (urlPath === '/import' && req.method === 'POST') {
++    await handleImport(reqUrl, req, res);
 +    return;
 +  }
 +
 +  // Snapshot endpoints (Phase 1 of time-travel) — see docker-server-snapshots.mjs
-+  if (await handleSnapshotRoute(req, url, res, { api: GITNEXUS_API })) {
-+    return;
-+  }
++  if (await handleSnapshotRoute(req, reqUrl, res, { api: GITNEXUS_API })) return;
 +  // Bulk snapshot endpoints (Phase 2) — see docker-server-snapshots-bulk.mjs
-+  if (await handleSnapshotBulkRoute(req, url, res, { api: GITNEXUS_API })) {
-+    return;
-+  }
++  if (await handleSnapshotBulkRoute(req, reqUrl, res, { api: GITNEXUS_API })) return;
 +  // Churn analytics (Phase 4A) — see docker-server-churn.mjs
-+  if (await handleChurnRoute(req, url, res, { api: GITNEXUS_API })) {
-+    return;
-+  }
++  if (await handleChurnRoute(req, reqUrl, res, { api: GITNEXUS_API })) return;
 +  // Coupling analytics (Phase 4B) — see docker-server-coupling.mjs
-+  if (await handleCouplingRoute(req, url, res, { api: GITNEXUS_API })) {
-+    return;
-+  }
++  if (await handleCouplingRoute(req, reqUrl, res, { api: GITNEXUS_API })) return;
 +  // Growth analytics (Phase 4D) — see docker-server-growth.mjs
-+  if (await handleGrowthRoute(req, url, res, { api: GITNEXUS_API })) {
-+    return;
-+  }
++  if (await handleGrowthRoute(req, reqUrl, res, { api: GITNEXUS_API })) return;
 +  // Lifespan analytics (Phase 4C) — see docker-server-lifespan.mjs
-+  if (await handleLifespanRoute(req, url, res, { api: GITNEXUS_API })) {
-+    return;
-+  }
++  if (await handleLifespanRoute(req, reqUrl, res, { api: GITNEXUS_API })) return;
 +  // Entropy / health metrics (ROADMAP Tier 1.4)
-+  if (await handleEntropyRoute(req, url, res, { api: GITNEXUS_API })) {
-+    return;
-+  }
++  if (await handleEntropyRoute(req, reqUrl, res, { api: GITNEXUS_API })) return;
 +  // Ownership / bus factor (ROADMAP Tier 1.1)
-+  if (await handleOwnershipRoute(req, url, res, { api: GITNEXUS_API })) {
-+    return;
-+  }
++  if (await handleOwnershipRoute(req, reqUrl, res, { api: GITNEXUS_API })) return;
 +  // Dissonance / code-vs-domain alignment (ROADMAP Tier 2.2)
-+  if (await handleDissonanceRoute(req, url, res, { api: GITNEXUS_API })) {
-+    return;
-+  }
++  if (await handleDissonanceRoute(req, reqUrl, res, { api: GITNEXUS_API })) return;
 +  // Semantic labels cache (ROADMAP Tier 2.1) — LLM call is frontend-side
-+  if (await handleSemanticLabelsRoute(req, url, res, { api: GITNEXUS_API })) {
-+    return;
-+  }
++  if (await handleSemanticLabelsRoute(req, reqUrl, res, { api: GITNEXUS_API })) return;
 +  // Cross-repo coupling (ROADMAP Tier 1.2)
-+  if (await handleCouplingCrossRoute(req, url, res, { api: GITNEXUS_API })) {
-+    return;
-+  }
++  if (await handleCouplingCrossRoute(req, reqUrl, res, { api: GITNEXUS_API })) return;
 +  // Cross-repo growth (ROADMAP Tier 1.3)
-+  if (await handleGrowthCrossRoute(req, url, res, { api: GITNEXUS_API })) {
-+    return;
-+  }
++  if (await handleGrowthCrossRoute(req, reqUrl, res, { api: GITNEXUS_API })) return;
 +  // Cross-repo similarity (ROADMAP Tier 2.5)
-+  if (await handleSimilarityRoute(req, url, res, { api: GITNEXUS_API })) {
-+    return;
-+  }
-+
-   let filePath = resolvePath(requestPath);
++  if (await handleSimilarityRoute(req, reqUrl, res, { api: GITNEXUS_API })) return;
  
-   if (!filePath) {
++  // ── Static asset serving (v1.6.5 CodeQL-compliant pipeline) ───────────
+   let decoded;
+   try {
+     decoded = decodeURIComponent(urlPath);
 diff --git a/gitnexus-web/package-lock.json b/gitnexus-web/package-lock.json
-index 1214e61..bedb6e6 100644
+index cf69e10..8beb5aa 100644
 --- a/gitnexus-web/package-lock.json
 +++ b/gitnexus-web/package-lock.json
-@@ -34,12 +34,14 @@
-         "pandemonium": "^2.4.0",
-         "react": "^18.3.1",
-         "react-dom": "^18.3.1",
-+        "react-force-graph-3d": "^1.27.2",
-         "react-markdown": "^10.1.0",
-         "react-syntax-highlighter": "^16.1.0",
-         "react-zoom-pan-pinch": "^3.7.0",
-         "remark-gfm": "^4.0.1",
-         "sigma": "^3.0.2",
-         "tailwindcss": "^4.2.4",
-+        "three": "^0.169.0",
-         "uuid": "^13.0.0",
-         "zod": "^3.25.76"
-       },
-@@ -54,6 +56,7 @@
-         "@types/react": "^18.3.5",
-         "@types/react-dom": "^18.3.0",
-         "@types/react-syntax-highlighter": "^15.5.13",
-+        "@types/three": "^0.169.0",
-         "@vercel/node": "^5.5.16",
-         "@vitejs/plugin-react": "^5.1.4",
-         "@vitest/coverage-v8": "^4.1.5",
-@@ -2480,6 +2483,12 @@
+@@ -2411,6 +2411,12 @@
        "dev": true,
        "license": "MIT"
      },
@@ -4744,7 +4825,7 @@ index 1214e61..bedb6e6 100644
      "node_modules/@tybys/wasm-util": {
        "version": "0.10.1",
        "resolved": "https://registry.npmjs.org/@tybys/wasm-util/-/wasm-util-0.10.1.tgz",
-@@ -2936,6 +2945,28 @@
+@@ -2861,6 +2867,28 @@
          "@types/react": "*"
        }
      },
@@ -4773,7 +4854,7 @@ index 1214e61..bedb6e6 100644
      "node_modules/@types/trusted-types": {
        "version": "2.0.7",
        "resolved": "https://registry.npmjs.org/@types/trusted-types/-/trusted-types-2.0.7.tgz",
-@@ -2949,6 +2980,13 @@
+@@ -2874,6 +2902,13 @@
        "integrity": "sha512-ko/gIFJRv177XgZsZcBwnqJN5x/Gien8qNOn0D5bQU/zAzVf9Zt3BlcUiLqhV9y4ARk0GbT3tnUiPNgnTXzc/Q==",
        "license": "MIT"
      },
@@ -4787,7 +4868,7 @@ index 1214e61..bedb6e6 100644
      "node_modules/@ungap/structured-clone": {
        "version": "1.3.0",
        "resolved": "https://registry.npmjs.org/@ungap/structured-clone/-/structured-clone-1.3.0.tgz",
-@@ -3257,6 +3295,54 @@
+@@ -3182,6 +3217,54 @@
          "url": "https://opencollective.com/vitest"
        }
      },
@@ -4842,7 +4923,7 @@ index 1214e61..bedb6e6 100644
      "node_modules/abbrev": {
        "version": "3.0.1",
        "resolved": "https://registry.npmjs.org/abbrev/-/abbrev-3.0.1.tgz",
-@@ -3267,6 +3353,15 @@
+@@ -3192,6 +3275,15 @@
          "node": "^18.17.0 || >=20.5.0"
        }
      },
@@ -4858,7 +4939,7 @@ index 1214e61..bedb6e6 100644
      "node_modules/acorn": {
        "version": "8.15.0",
        "resolved": "https://registry.npmjs.org/acorn/-/acorn-8.15.0.tgz",
-@@ -3949,6 +4044,12 @@
+@@ -3846,6 +3938,12 @@
          "node": ">=12"
        }
      },
@@ -4871,7 +4952,7 @@ index 1214e61..bedb6e6 100644
      "node_modules/d3-brush": {
        "version": "3.0.0",
        "resolved": "https://registry.npmjs.org/d3-brush/-/d3-brush-3.0.0.tgz",
-@@ -4092,6 +4193,22 @@
+@@ -3989,6 +4087,22 @@
          "node": ">=12"
        }
      },
@@ -4894,7 +4975,7 @@ index 1214e61..bedb6e6 100644
      "node_modules/d3-format": {
        "version": "3.1.2",
        "resolved": "https://registry.npmjs.org/d3-format/-/d3-format-3.1.2.tgz",
-@@ -4134,6 +4251,12 @@
+@@ -4031,6 +4145,12 @@
          "node": ">=12"
        }
      },
@@ -4907,7 +4988,7 @@ index 1214e61..bedb6e6 100644
      "node_modules/d3-path": {
        "version": "3.1.0",
        "resolved": "https://registry.npmjs.org/d3-path/-/d3-path-3.1.0.tgz",
-@@ -4338,6 +4461,18 @@
+@@ -4235,6 +4355,18 @@
          "lodash-es": "^4.17.21"
        }
      },
@@ -4926,7 +5007,7 @@ index 1214e61..bedb6e6 100644
      "node_modules/data-urls": {
        "version": "7.0.0",
        "resolved": "https://registry.npmjs.org/data-urls/-/data-urls-7.0.0.tgz",
-@@ -4832,6 +4967,13 @@
+@@ -4739,6 +4871,13 @@
          }
        }
      },
@@ -4940,28 +5021,7 @@ index 1214e61..bedb6e6 100644
      "node_modules/file-uri-to-path": {
        "version": "1.0.0",
        "resolved": "https://registry.npmjs.org/file-uri-to-path/-/file-uri-to-path-1.0.0.tgz",
-@@ -4852,6 +4994,20 @@
-         "node": ">=8"
-       }
-     },
-+    "node_modules/float-tooltip": {
-+      "version": "1.7.5",
-+      "resolved": "https://registry.npmjs.org/float-tooltip/-/float-tooltip-1.7.5.tgz",
-+      "integrity": "sha512-/kXzuDnnBqyyWyhDMH7+PfP8J/oXiAavGzcRxASOMRHFuReDtofizLLJsf7nnDLAfEaMW4pVWaXrAjtnglpEkg==",
-+      "license": "MIT",
-+      "dependencies": {
-+        "d3-selection": "2 - 3",
-+        "kapsule": "^1.16",
-+        "preact": "10"
-+      },
-+      "engines": {
-+        "node": ">=12"
-+      }
-+    },
-     "node_modules/follow-redirects": {
-       "version": "1.15.11",
-       "resolved": "https://registry.npmjs.org/follow-redirects/-/follow-redirects-1.15.11.tgz",
-@@ -5464,6 +5620,15 @@
+@@ -5371,6 +5510,15 @@
          "node": ">=8"
        }
      },
@@ -4977,7 +5037,7 @@ index 1214e61..bedb6e6 100644
      "node_modules/jiti": {
        "version": "2.6.1",
        "resolved": "https://registry.npmjs.org/jiti/-/jiti-2.6.1.tgz",
-@@ -5642,6 +5807,18 @@
+@@ -5550,6 +5698,18 @@
          "node": ">=6"
        }
      },
@@ -4996,21 +5056,7 @@ index 1214e61..bedb6e6 100644
      "node_modules/katex": {
        "version": "0.16.27",
        "resolved": "https://registry.npmjs.org/katex/-/katex-0.16.27.tgz",
-@@ -6518,6 +6695,13 @@
-         "uuid": "dist/esm/bin/uuid"
-       }
-     },
-+    "node_modules/meshoptimizer": {
-+      "version": "0.18.1",
-+      "resolved": "https://registry.npmjs.org/meshoptimizer/-/meshoptimizer-0.18.1.tgz",
-+      "integrity": "sha512-ZhoIoL7TNV4s5B6+rx5mC//fw8/POGyNxS/DZyCJeiZ12ScLfVwRE/GfsxwiTkMYYD5DmK2/JXnEVXqL4rF+Sw==",
-+      "dev": true,
-+      "license": "MIT"
-+    },
-     "node_modules/micromark": {
-       "version": "4.0.2",
-       "resolved": "https://registry.npmjs.org/micromark/-/micromark-4.0.2.tgz",
-@@ -7265,6 +7449,44 @@
+@@ -7139,6 +7299,44 @@
          "node": "^10 || ^12 || ^13.7 || ^14 || >=15.0.1"
        }
      },
@@ -5055,7 +5101,7 @@ index 1214e61..bedb6e6 100644
      "node_modules/node-fetch": {
        "version": "2.6.9",
        "resolved": "https://registry.npmjs.org/node-fetch/-/node-fetch-2.6.9.tgz",
-@@ -7321,6 +7543,15 @@
+@@ -7195,6 +7393,15 @@
          "node": "^18.17.0 || >=20.5.0"
        }
      },
@@ -5071,26 +5117,7 @@ index 1214e61..bedb6e6 100644
      "node_modules/obliterator": {
        "version": "2.0.5",
        "resolved": "https://registry.npmjs.org/obliterator/-/obliterator-2.0.5.tgz",
-@@ -7626,6 +7857,18 @@
-         "points-on-curve": "0.2.0"
-       }
-     },
-+    "node_modules/polished": {
-+      "version": "4.3.1",
-+      "resolved": "https://registry.npmjs.org/polished/-/polished-4.3.1.tgz",
-+      "integrity": "sha512-OBatVyC/N7SCW/FaDHrSd+vn0o5cS855TOmYi4OkdWUMSJCET/xip//ch8xGUvtr3i44X9LVyWwQlRMTN3pwSA==",
-+      "license": "MIT",
-+      "dependencies": {
-+        "@babel/runtime": "^7.17.8"
-+      },
-+      "engines": {
-+        "node": ">=10"
-+      }
-+    },
-     "node_modules/postcss": {
-       "version": "8.5.10",
-       "resolved": "https://registry.npmjs.org/postcss/-/postcss-8.5.10.tgz",
-@@ -7654,6 +7897,16 @@
+@@ -7528,6 +7735,16 @@
          "node": "^10 || ^12 || >=14"
        }
      },
@@ -5107,7 +5134,7 @@ index 1214e61..bedb6e6 100644
      "node_modules/pretty-format": {
        "version": "27.5.1",
        "resolved": "https://registry.npmjs.org/pretty-format/-/pretty-format-27.5.1.tgz",
-@@ -7695,6 +7948,23 @@
+@@ -7569,6 +7786,23 @@
          "node": ">=6"
        }
      },
@@ -5131,31 +5158,7 @@ index 1214e61..bedb6e6 100644
      "node_modules/property-information": {
        "version": "7.1.0",
        "resolved": "https://registry.npmjs.org/property-information/-/property-information-7.1.0.tgz",
-@@ -7770,6 +8040,23 @@
-         "react": "^18.3.1"
-       }
-     },
-+    "node_modules/react-force-graph-3d": {
-+      "version": "1.29.1",
-+      "resolved": "https://registry.npmjs.org/react-force-graph-3d/-/react-force-graph-3d-1.29.1.tgz",
-+      "integrity": "sha512-5Vp+PGpYnO+zLwgK2NvNqdXHvsWLrFzpDfJW1vUA1twjo9SPvXqfUYQrnRmAbD+K2tOxkZw1BkbH31l5b4TWHg==",
-+      "license": "MIT",
-+      "dependencies": {
-+        "3d-force-graph": "^1.79",
-+        "prop-types": "15",
-+        "react-kapsule": "^2.5"
-+      },
-+      "engines": {
-+        "node": ">=12"
-+      },
-+      "peerDependencies": {
-+        "react": "*"
-+      }
-+    },
-     "node_modules/react-is": {
-       "version": "17.0.2",
-       "resolved": "https://registry.npmjs.org/react-is/-/react-is-17.0.2.tgz",
-@@ -7778,6 +8065,21 @@
+@@ -7648,6 +7882,21 @@
        "license": "MIT",
        "peer": true
      },
@@ -5177,7 +5180,7 @@ index 1214e61..bedb6e6 100644
      "node_modules/react-markdown": {
        "version": "10.1.0",
        "resolved": "https://registry.npmjs.org/react-markdown/-/react-markdown-10.1.0.tgz",
-@@ -8284,6 +8586,36 @@
+@@ -8151,6 +8400,36 @@
          "node": ">=18"
        }
      },
@@ -5214,7 +5217,7 @@ index 1214e61..bedb6e6 100644
      "node_modules/time-span": {
        "version": "4.0.0",
        "resolved": "https://registry.npmjs.org/time-span/-/time-span-4.0.0.tgz",
-@@ -8307,6 +8639,12 @@
+@@ -8174,6 +8453,12 @@
        "dev": true,
        "license": "MIT"
      },
@@ -5228,24 +5231,31 @@ index 1214e61..bedb6e6 100644
        "version": "1.0.2",
        "resolved": "https://registry.npmjs.org/tinyexec/-/tinyexec-1.0.2.tgz",
 diff --git a/gitnexus-web/package.json b/gitnexus-web/package.json
-index 836bad7..4c2f756 100644
+index 211bb65..1d4b971 100644
 --- a/gitnexus-web/package.json
 +++ b/gitnexus-web/package.json
-@@ -44,9 +44,11 @@
+@@ -41,12 +41,18 @@
+     "lucide-react": "^1.14.0",
+     "mermaid": "^11.15.0",
+     "mnemonist": "^0.39.0",
++    "accessor-fn": "^1",
++    "float-tooltip": "^1",
++    "kapsule": "^1",
      "pandemonium": "^2.4.0",
-     "react": "^18.3.1",
-     "react-dom": "^18.3.1",
++    "polished": "^4.3.1",
+     "react": "^19.2.5",
+     "react-dom": "^19.2.6",
 +    "react-force-graph-3d": "^1.27.2",
      "react-markdown": "^10.1.0",
      "react-syntax-highlighter": "^16.1.0",
-     "react-zoom-pan-pinch": "^3.7.0",
+     "react-zoom-pan-pinch": "^4.0.3",
 +    "three": "^0.169.0",
      "remark-gfm": "^4.0.1",
      "sigma": "^3.0.2",
      "tailwindcss": "^4.2.4",
-@@ -64,6 +66,7 @@
-     "@types/react": "^18.3.5",
-     "@types/react-dom": "^18.3.0",
+@@ -64,6 +70,7 @@
+     "@types/react": "^19.2.14",
+     "@types/react-dom": "^19.2.3",
      "@types/react-syntax-highlighter": "^15.5.13",
 +    "@types/three": "^0.169.0",
      "@vercel/node": "^5.5.16",
@@ -9856,10 +9866,10 @@ index 5781d26..ad64bcf 100644
          <div className="flex items-center gap-3">
 diff --git a/gitnexus-web/src/components/SimilarityPanel.tsx b/gitnexus-web/src/components/SimilarityPanel.tsx
 new file mode 100644
-index 0000000..8b8a8bd
+index 0000000..1f2c83b
 --- /dev/null
 +++ b/gitnexus-web/src/components/SimilarityPanel.tsx
-@@ -0,0 +1,601 @@
+@@ -0,0 +1,837 @@
 +import { useEffect, useMemo, useState } from 'react';
 +import {
 +  X,
@@ -9910,6 +9920,7 @@ index 0000000..8b8a8bd
 +  semanticLabelsCount: number;
 +  semanticEmbeddingsCount: number;
 +  hasLabelCentroid: boolean;
++  galaxyXY: [number, number] | null;
 +};
 +
 +type SimilarityPair = {
@@ -9938,6 +9949,7 @@ index 0000000..8b8a8bd
 +  reposWithLabels: number;
 +  reposWithCentroid: number;
 +  semanticAxisNote: string;
++  galaxyProjection: { method: 'pca'; dim: 2 } | null;
 +};
 +
 +// Quadrant → tailwind color tokens. The 4 v1 quadrants get distinct
@@ -9962,6 +9974,178 @@ index 0000000..8b8a8bd
 +function fmtScore(n: number | null): string {
 +  if (n === null) return '—';
 +  return n.toFixed(2);
++}
++
++// ── Galaxy view (Tier 2.6) ──────────────────────────────────────────
++//
++// PCA-projected 2D scatter of repos. Points colored by their dominant
++// pairwise quadrant (most-frequent quadrant they appear in). Edges
++// drawn for pairs with strong total similarity (struct + sem + temp
++// average above a threshold) so the user sees "constellation".
++//
++// SVG over Canvas: <=8 repos fit happily, SVG is more accessible
++// (hover titles, no manual hit-testing) and re-renders without state.
++
++const GALAXY_WIDTH = 420;
++const GALAXY_HEIGHT = 280;
++const GALAXY_PADDING = 24;
++const GALAXY_EDGE_THRESHOLD = 0.6; // avg of 3 normalized axes
++const GALAXY_DOT_RADIUS = 6;
++
++type GalaxyProps = {
++  repos: SimilarityRepo[];
++  pairs: SimilarityPair[];
++  selectedPair: SimilarityPair | null;
++  baseRepo: string;
++  onSelectRepo: (name: string) => void;
++};
++
++function quadrantHex(q: string): string {
++  // Stand-alone hex colors matching the Tailwind classes used in the
++  // matrix. SVG fill doesn't pick up class-based vars cleanly.
++  if (q.startsWith('Jumeaux actifs')) return '#34d399';        // emerald-400
++  if (q.startsWith('Jumeaux isolés')) return '#fbbf24';        // amber-400
++  if (q.startsWith('Jumeaux (isolation')) return '#94a3b8';    // slate-400
++  if (q === 'Patterns + collision') return '#fb923c';          // orange-400
++  if (q === 'Patterns partagés') return '#38bdf8';             // sky-400
++  if (q === 'Collision réelle') return '#f87171';              // red-400
++  if (q === 'Domaines parallèles') return '#a5b4fc';           // indigo-300
++  if (q === 'Couplage caché') return '#e879f9';                // fuchsia-400
++  return '#6b7280';                                            // gray-500 fallback
++}
++
++function GalaxyView({ repos, pairs, selectedPair, baseRepo, onSelectRepo }: GalaxyProps) {
++  // Normalize PCA coordinates to viewport.
++  const pts = repos.filter((r) => r.galaxyXY).map((r) => ({
++    name: r.name,
++    x: r.galaxyXY![0],
++    y: r.galaxyXY![1],
++    repo: r,
++  }));
++  if (pts.length === 0) return null;
++  const xs = pts.map((p) => p.x);
++  const ys = pts.map((p) => p.y);
++  const xMin = Math.min(...xs);
++  const xMax = Math.max(...xs);
++  const yMin = Math.min(...ys);
++  const yMax = Math.max(...ys);
++  // Pad ranges by 5% on each side; avoid division-by-zero by giving
++  // degenerate axes a tiny synthetic range.
++  const xRange = Math.max(xMax - xMin, 1e-6);
++  const yRange = Math.max(yMax - yMin, 1e-6);
++  const project = (x: number, y: number) => ({
++    cx: GALAXY_PADDING + ((x - xMin) / xRange) * (GALAXY_WIDTH - 2 * GALAXY_PADDING),
++    // SVG y is inverted; flip so up = positive PC2.
++    cy: GALAXY_HEIGHT - GALAXY_PADDING - ((y - yMin) / yRange) * (GALAXY_HEIGHT - 2 * GALAXY_PADDING),
++  });
++
++  // Per-repo dominant quadrant — what quadrant does this repo MOST
++  // frequently appear in across its pairs. Colors the point.
++  const dominantQuadrant = new Map<string, string>();
++  for (const p of pts) {
++    const counts = new Map<string, number>();
++    for (const pair of pairs) {
++      if (pair.a !== p.name && pair.b !== p.name) continue;
++      counts.set(pair.quadrant, (counts.get(pair.quadrant) || 0) + 1);
++    }
++    const top = [...counts.entries()].sort((a, b) => b[1] - a[1])[0];
++    dominantQuadrant.set(p.name, top ? top[0] : 'Indépendants');
++  }
++
++  // Edges for "strong" pairs (avg of normalized scores above threshold).
++  const edges = pairs
++    .map((pair) => {
++      const a = pts.find((p) => p.name === pair.a);
++      const b = pts.find((p) => p.name === pair.b);
++      if (!a || !b) return null;
++      const sem = pair.semanticScore ?? 0;
++      const strength = (pair.structuralScore + sem + pair.temporalCoupling) / 3;
++      if (strength < GALAXY_EDGE_THRESHOLD) return null;
++      return { a, b, strength, pair };
++    })
++    .filter(Boolean) as { a: typeof pts[0]; b: typeof pts[0]; strength: number; pair: SimilarityPair }[];
++
++  return (
++    <div className="px-3 py-2">
++      <svg
++        width="100%"
++        height={GALAXY_HEIGHT}
++        viewBox={`0 0 ${GALAXY_WIDTH} ${GALAXY_HEIGHT}`}
++        className="rounded border border-border-subtle bg-void"
++      >
++        {/* Edges below dots so dots draw on top. */}
++        {edges.map(({ a, b, strength, pair }, idx) => {
++          const { cx: ax, cy: ay } = project(a.x, a.y);
++          const { cx: bx, cy: by } = project(b.x, b.y);
++          const isSelected =
++            selectedPair &&
++            ((selectedPair.a === a.name && selectedPair.b === b.name) ||
++              (selectedPair.a === b.name && selectedPair.b === a.name));
++          return (
++            <line
++              key={`edge-${idx}`}
++              x1={ax}
++              y1={ay}
++              x2={bx}
++              y2={by}
++              stroke={isSelected ? '#22d3ee' : '#475569'}
++              strokeWidth={isSelected ? 2 : 0.5 + (strength - GALAXY_EDGE_THRESHOLD) * 4}
++              strokeOpacity={isSelected ? 0.9 : 0.4}
++            >
++              <title>
++                {a.name} ↔ {b.name}: {pair.quadrant} (avg strength {strength.toFixed(2)})
++              </title>
++            </line>
++          );
++        })}
++        {/* Dots + labels */}
++        {pts.map((p) => {
++          const { cx, cy } = project(p.x, p.y);
++          const color = quadrantHex(dominantQuadrant.get(p.name) || '');
++          const isBase = p.name === baseRepo;
++          const isSelected =
++            selectedPair && (selectedPair.a === p.name || selectedPair.b === p.name);
++          return (
++            <g
++              key={p.name}
++              onClick={() => onSelectRepo(p.name)}
++              style={{ cursor: 'pointer' }}
++            >
++              <circle
++                cx={cx}
++                cy={cy}
++                r={isSelected ? GALAXY_DOT_RADIUS + 2 : GALAXY_DOT_RADIUS}
++                fill={color}
++                stroke={isBase ? '#ffffff' : isSelected ? '#22d3ee' : '#1e293b'}
++                strokeWidth={isBase ? 2 : isSelected ? 2 : 1}
++                opacity={0.9}
++              >
++                <title>
++                  {p.name}
++                  {isBase ? ' ★' : ''}: {dominantQuadrant.get(p.name) || ''}
++                </title>
++              </circle>
++              <text
++                x={cx + GALAXY_DOT_RADIUS + 4}
++                y={cy + 3}
++                fontSize={9}
++                fill="#cbd5e1"
++                className="pointer-events-none"
++              >
++                {p.name.length > 16 ? p.name.slice(0, 14) + '…' : p.name}
++              </text>
++            </g>
++          );
++        })}
++      </svg>
++      <div className="mt-2 text-[9px] text-text-muted">
++        PCA 2D · distance ≈ structural similarity · edges shown when avg(struct, sem, temp) ≥{' '}
++        {GALAXY_EDGE_THRESHOLD.toFixed(1)}
++        {' · '}
++        ★ = current repo · click a point to select its nearest pair.
++      </div>
++    </div>
++  );
 +}
 +
 +function dimLabel(dim: string): string {
@@ -10001,6 +10185,11 @@ index 0000000..8b8a8bd
 +
 +  const baseRepo = (projectName || '').split('@')[0];
 +  const [selectedPair, setSelectedPair] = useState<{ a: string; b: string } | null>(null);
++  // Tier 2.6 — toggle between the N×N matrix (default) and the Galaxy
++  // 2D scatter plot. Galaxy auto-enables itself when 5+ repos are
++  // loaded since it scales better visually; below 5, the matrix is
++  // more informative.
++  const [viewMode, setViewMode] = useState<'matrix' | 'galaxy'>('matrix');
 +
 +  // Eligible repo set: all indexed repos that aren't snapshots. The
 +  // backend caps at MAX_REPOS=8, so an oversized fleet just gets the
@@ -10219,9 +10408,65 @@ index 0000000..8b8a8bd
 +            </span>
 +          </div>
 +
-+          {/* The matrix */}
++          {/* View toggle: matrix vs galaxy (Tier 2.6). Only shown when
++              the galaxy projection is available (N≥2) — single-repo
++              wouldn't have it anyway. */}
++          {similarityData.galaxyProjection && (
++            <div className="flex shrink-0 gap-1 border-b border-border-subtle bg-elevated px-3 py-1.5">
++              <button
++                type="button"
++                onClick={() => setViewMode('matrix')}
++                className={`cursor-pointer rounded px-2 py-0.5 text-[10px] font-medium transition-all ${
++                  viewMode === 'matrix'
++                    ? 'bg-cyan-500/20 text-cyan-200'
++                    : 'text-text-muted hover:text-text-primary'
++                }`}
++              >
++                Matrix
++              </button>
++              <button
++                type="button"
++                onClick={() => setViewMode('galaxy')}
++                className={`cursor-pointer rounded px-2 py-0.5 text-[10px] font-medium transition-all ${
++                  viewMode === 'galaxy'
++                    ? 'bg-cyan-500/20 text-cyan-200'
++                    : 'text-text-muted hover:text-text-primary'
++                }`}
++                title={`PCA 2D projection of ${similarityData.identityDims.length}-dim identity vectors. Distance ≈ structural similarity.`}
++              >
++                Galaxy <span className="ml-0.5 text-[8px] opacity-60">pca</span>
++              </button>
++            </div>
++          )}
++
 +          <div className="flex-1 overflow-y-auto">
-+            <div className="px-3 py-2">
++            {viewMode === 'galaxy' && similarityData.galaxyProjection ? (
++              <GalaxyView
++                repos={similarityData.repos}
++                pairs={similarityData.pairs}
++                selectedPair={selected}
++                baseRepo={baseRepo}
++                onSelectRepo={(name) => {
++                  // Selecting a repo in the galaxy picks the pair to
++                  // its nearest neighbour (or the second-closest if
++                  // the user clicked the same repo twice).
++                  const others = similarityData.repos
++                    .filter((r) => r.name !== name && r.galaxyXY)
++                    .map((r) => {
++                      const here = similarityData.repos.find((x) => x.name === name);
++                      if (!here?.galaxyXY || !r.galaxyXY) return { name: r.name, d: Infinity };
++                      const dx = here.galaxyXY[0] - r.galaxyXY[0];
++                      const dy = here.galaxyXY[1] - r.galaxyXY[1];
++                      return { name: r.name, d: Math.hypot(dx, dy) };
++                    })
++                    .sort((a, b) => a.d - b.d);
++                  if (others.length > 0) {
++                    setSelectedPair({ a: name, b: others[0].name });
++                  }
++                }}
++              />
++            ) : (
++              <div className="px-3 py-2">
 +              <div
 +                className="grid gap-0.5"
 +                style={{
@@ -10307,6 +10552,7 @@ index 0000000..8b8a8bd
 +                ))}
 +              </div>
 +            </div>
++            )}
 +
 +            {/* Pair drill-down */}
 +            {selected && (
@@ -11690,7 +11936,7 @@ index 0000000..a370295
 +  );
 +};
 diff --git a/gitnexus-web/src/core/llm/agent.ts b/gitnexus-web/src/core/llm/agent.ts
-index c8cfa8d..a8024d7 100644
+index 49862a9..5c552dd 100644
 --- a/gitnexus-web/src/core/llm/agent.ts
 +++ b/gitnexus-web/src/core/llm/agent.ts
 @@ -7,11 +7,20 @@
@@ -11717,7 +11963,7 @@ index c8cfa8d..a8024d7 100644
  import { createGraphRAGTools, type GraphRAGBackend } from './tools';
  import type {
    ProviderConfig,
-@@ -289,6 +298,94 @@ const extractInstanceName = (endpoint: string): string => {
+@@ -291,6 +300,94 @@ const extractInstanceName = (endpoint: string): string => {
    }
  };
  
@@ -11813,7 +12059,7 @@ index c8cfa8d..a8024d7 100644
   * Create a Graph RAG agent
   */
 diff --git a/gitnexus-web/src/hooks/useAppState.tsx b/gitnexus-web/src/hooks/useAppState.tsx
-index 25c5776..158de16 100644
+index 25c5776..9b5f5dd 100644
 --- a/gitnexus-web/src/hooks/useAppState.tsx
 +++ b/gitnexus-web/src/hooks/useAppState.tsx
 @@ -8,7 +8,12 @@ import {
@@ -11871,7 +12117,7 @@ index 25c5776..158de16 100644
  
    // Graph data
    graph: KnowledgeGraph | null;
-@@ -192,6 +211,267 @@ interface AppState {
+@@ -192,6 +211,272 @@ interface AppState {
    clearAICodeReferences: () => void;
    clearCodeReferences: () => void;
    codeReferenceFocus: CodeReferenceFocus | null;
@@ -12108,6 +12354,8 @@ index 25c5776..158de16 100644
 +  semanticLabelsCount: number;
 +  semanticEmbeddingsCount: number;
 +  hasLabelCentroid: boolean;
++  /** 2D PCA projection of the identity matrix (Tier 2.6). null when N<2. */
++  galaxyXY: [number, number] | null;
 +}
 +
 +export interface SimilarityPair {
@@ -12136,10 +12384,13 @@ index 25c5776..158de16 100644
 +  reposWithLabels: number;
 +  reposWithCentroid: number;
 +  semanticAxisNote: string;
++  /** Galaxy projection metadata (Tier 2.6). null when projection isn't
++   *  available (N<2). When present, repos[].galaxyXY is also non-null. */
++  galaxyProjection: { method: 'pca'; dim: 2 } | null;
  }
  
  const AppStateContext = createContext<AppState | null>(null);
-@@ -205,6 +485,10 @@ export const AppStateProvider = ({ children }: { children: ReactNode }) => (
+@@ -205,6 +490,10 @@ export const AppStateProvider = ({ children }: { children: ReactNode }) => (
  const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
    // View state
    const [viewMode, setViewMode] = useState<ViewMode>('onboarding');
@@ -12150,7 +12401,7 @@ index 25c5776..158de16 100644
  
    const {
      graph,
-@@ -343,6 +627,87 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
+@@ -343,6 +632,87 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
    const [isCodePanelOpen, setCodePanelOpen] = useState(false);
    const [codeReferenceFocus, setCodeReferenceFocus] = useState<CodeReferenceFocus | null>(null);
  
@@ -12238,7 +12489,7 @@ index 25c5776..158de16 100644
    // Map of normalized file path → node ID for graph-based lookups
    const fileNodeByPath = useMemo(() => {
      if (!graph) return new Map<string, string>();
-@@ -1207,9 +1572,519 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
+@@ -1207,9 +1577,519 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
      setCodeReferenceFocus(null);
    }, []);
  
@@ -12758,7 +13009,7 @@ index 25c5776..158de16 100644
      graph,
      setGraph,
      selectedNode,
-@@ -1293,6 +2168,88 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
+@@ -1293,6 +2173,88 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
      clearAICodeReferences,
      clearCodeReferences,
      codeReferenceFocus,
@@ -12848,7 +13099,7 @@ index 25c5776..158de16 100644
  
    return <AppStateContext.Provider value={value}>{children}</AppStateContext.Provider>;
 diff --git a/gitnexus-web/src/hooks/useSigma.ts b/gitnexus-web/src/hooks/useSigma.ts
-index 8f350f0..bdb6fc9 100644
+index 461de0f..5a38eae 100644
 --- a/gitnexus-web/src/hooks/useSigma.ts
 +++ b/gitnexus-web/src/hooks/useSigma.ts
 @@ -62,6 +62,46 @@ interface UseSigmaOptions {
@@ -13198,10 +13449,10 @@ index 05676e5..8844aab 100644
    X,
    Zap,
 diff --git a/gitnexus-web/src/services/backend-client.ts b/gitnexus-web/src/services/backend-client.ts
-index ebc18c1..630643f 100644
+index e887e39..63ef61f 100644
 --- a/gitnexus-web/src/services/backend-client.ts
 +++ b/gitnexus-web/src/services/backend-client.ts
-@@ -381,9 +381,14 @@ export const probeBackend = async (): Promise<boolean> => {
+@@ -500,9 +500,14 @@ export const probeBackend = async (): Promise<boolean> => {
    }
  };
  
