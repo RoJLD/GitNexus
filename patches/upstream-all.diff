@@ -6732,10 +6732,10 @@ index 0000000..086ce14
 +}
 diff --git a/docker-server-snapshots.mjs b/docker-server-snapshots.mjs
 new file mode 100644
-index 0000000..f6f693f
+index 0000000..2b22870
 --- /dev/null
 +++ b/docker-server-snapshots.mjs
-@@ -0,0 +1,326 @@
+@@ -0,0 +1,335 @@
 +/**
 + * Snapshot endpoints — Phase 1 of the gitnexus time-travel feature.
 + *
@@ -6884,6 +6884,15 @@ index 0000000..f6f693f
 +    // No --depth=1 because some gitnexus analyzers consult git history.
 +    await runCmd('git', ['clone', repoPath, sourceDir]);
 +    await runCmd('git', ['-C', sourceDir, 'checkout', '--detach', commit.hash]);
++
++    // Roadmap-predictive: snapshot ghosts.json from ROADMAP.md at this commit.
++    // Non-fatal — a snapshot without ghosts.json is still a valid snapshot.
++    try {
++      const { syncGhostsForSnapshot } = await import('./docker-server-ghosts.mjs');
++      await syncGhostsForSnapshot(sourceDir, snapshotDir, commit.hash);
++    } catch (err) {
++      console.warn(`[ghosts] sync failed for snapshot ${commit.shortHash}: ${err.message}`);
++    }
 +
 +    onPhase?.('analyzing');
 +    const analyzeResp = await fetch(`${api}/api/analyze`, {
