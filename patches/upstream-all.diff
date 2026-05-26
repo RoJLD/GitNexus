@@ -12811,10 +12811,10 @@ index 0000000..5c77c1a
 +}
 diff --git a/gitnexus-web/src/components/Timeline.tsx b/gitnexus-web/src/components/Timeline.tsx
 new file mode 100644
-index 0000000..59cc2ac
+index 0000000..7f1d468
 --- /dev/null
 +++ b/gitnexus-web/src/components/Timeline.tsx
-@@ -0,0 +1,679 @@
+@@ -0,0 +1,752 @@
 +import { useEffect, useMemo, useRef, useState } from 'react';
 +import {
 +  Play,
@@ -12831,6 +12831,8 @@ index 0000000..59cc2ac
 +  FlaskConical,
 +  Network,
 +  Activity,
++  Download,
++  Check,
 +} from '@/lib/lucide-icons';
 +import { useAppState } from '../hooks/useAppState';
 +import { EntropyBadge } from './EntropyBadge';
@@ -12912,6 +12914,13 @@ index 0000000..59cc2ac
 +    entropyCommitsActive,
 +    enterEntropyCommitsMode,
 +    exitEntropyCommitsMode,
++    cachedSnapshotNames,
++    preloadingSnapshots,
++    preloadProgress,
++    preloadError,
++    preloadAllSnapshots,
++    cancelPreload,
++    clearSnapshotCache,
 +  } = useAppState();
 +  const [snapshots, setSnapshots] = useState<
 +    Array<{
@@ -13036,10 +13045,74 @@ index 0000000..59cc2ac
 +            ? 'bg-accent/20 text-accent hover:bg-accent/30'
 +            : 'text-text-muted hover:bg-hover hover:text-text-primary'
 +        }`}
-+        title={playing ? 'Pause' : `Play (${FRAME_DELAY_MS / 1000}s per frame)`}
++        title={
++          playing
++            ? 'Pause'
++            : `Play (${FRAME_DELAY_MS / 1000}s per frame)${
++                cachedSnapshotNames.size > 0
++                  ? ` — ${cachedSnapshotNames.size} cached for instant frame swap`
++                  : ''
++              }`
++        }
 +      >
 +        {playing ? <Pause className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />}
 +      </button>
++
++      {/* Preload button — fetches every snapshot of the current base
++          repo upfront so the Play loop swaps frames from memory
++          (no LoadingOverlay between frames). Click again while preloading
++          to cancel. After completion, click to clear the cache (useful
++          when re-indexing). Disabled when there's no active repo. */}
++      {points.length > 1 && (
++        <button
++          type="button"
++          onClick={() => {
++            if (preloadingSnapshots) {
++              cancelPreload();
++              return;
++            }
++            const allCached =
++              points.length > 0 && points.every((p) => cachedSnapshotNames.has(p.name));
++            if (allCached) {
++              clearSnapshotCache();
++              return;
++            }
++            void preloadAllSnapshots();
++          }}
++          className={`flex shrink-0 cursor-pointer items-center gap-1 rounded-md border px-1.5 py-0.5 text-[10px] font-medium transition-all ${
++            preloadingSnapshots
++              ? 'border-amber-500/40 bg-amber-500/15 text-amber-300'
++              : cachedSnapshotNames.size >= points.length && points.length > 0
++                ? 'border-emerald-500/40 bg-emerald-500/15 text-emerald-300'
++                : 'border-border-subtle bg-elevated text-text-secondary hover:bg-hover hover:text-text-primary'
++          }`}
++          title={
++            preloadingSnapshots
++              ? 'Cancel preload (already-cached frames remain cached)'
++              : cachedSnapshotNames.size >= points.length && points.length > 0
++                ? `${cachedSnapshotNames.size}/${points.length} cached — click to clear`
++                : `Preload all ${points.length} snapshots so Play swaps frames instantly (no loading overlay between frames)`
++          }
++        >
++          {preloadingSnapshots ? (
++            <Loader2 className="h-2.5 w-2.5 animate-spin" />
++          ) : cachedSnapshotNames.size >= points.length && points.length > 0 ? (
++            <Check className="h-2.5 w-2.5" />
++          ) : (
++            <Download className="h-2.5 w-2.5" />
++          )}
++          {preloadingSnapshots && preloadProgress
++            ? `${preloadProgress.done}/${preloadProgress.total}`
++            : cachedSnapshotNames.size > 0
++              ? `${cachedSnapshotNames.size}/${points.length}`
++              : 'Preload'}
++        </button>
++      )}
++      {preloadError && !preloadingSnapshots && (
++        <div className="shrink-0 max-w-[180px] truncate text-[10px] text-red-400" title={preloadError}>
++          preload error (hover)
++        </div>
++      )}
 +
 +      <div className="flex shrink-0 items-center gap-1.5 text-[10px] font-medium tracking-wider text-text-muted uppercase">
 +        <Clock className="h-3 w-3" />
@@ -13972,7 +14045,7 @@ index 49862a9..5c552dd 100644
   * Create a Graph RAG agent
   */
 diff --git a/gitnexus-web/src/hooks/useAppState.tsx b/gitnexus-web/src/hooks/useAppState.tsx
-index 25c5776..994e86c 100644
+index 25c5776..2bc431b 100644
 --- a/gitnexus-web/src/hooks/useAppState.tsx
 +++ b/gitnexus-web/src/hooks/useAppState.tsx
 @@ -8,7 +8,12 @@ import {
@@ -14030,7 +14103,7 @@ index 25c5776..994e86c 100644
  
    // Graph data
    graph: KnowledgeGraph | null;
-@@ -192,6 +211,321 @@ interface AppState {
+@@ -192,6 +211,334 @@ interface AppState {
    clearAICodeReferences: () => void;
    clearCodeReferences: () => void;
    codeReferenceFocus: CodeReferenceFocus | null;
@@ -14138,6 +14211,19 @@ index 25c5776..994e86c 100644
 +  setEntropyCommitsDays: (days: number) => void;
 +  enterEntropyCommitsMode: () => void;
 +  exitEntropyCommitsMode: () => void;
++
++  // Snapshot graph cache (for smooth Play playback). When populated,
++  // switchRepo serves the graph from memory instead of re-fetching
++  // it — turns the per-frame loading overlay into instant frame
++  // swaps. Invalidated automatically on switch to a different base
++  // repo. See preloadAllSnapshots below.
++  cachedSnapshotNames: Set<string>;
++  preloadingSnapshots: boolean;
++  preloadProgress: { done: number; total: number; current?: string } | null;
++  preloadError: string | null;
++  preloadAllSnapshots: () => Promise<void>;
++  cancelPreload: () => void;
++  clearSnapshotCache: () => void;
 +
 +  // Semantic labels (ROADMAP Tier 2.1). LLM-generated human-readable
 +  // labels for each detected Community. Auto-loaded from server cache
@@ -14352,7 +14438,7 @@ index 25c5776..994e86c 100644
  }
  
  const AppStateContext = createContext<AppState | null>(null);
-@@ -205,6 +539,10 @@ export const AppStateProvider = ({ children }: { children: ReactNode }) => (
+@@ -205,6 +552,10 @@ export const AppStateProvider = ({ children }: { children: ReactNode }) => (
  const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
    // View state
    const [viewMode, setViewMode] = useState<ViewMode>('onboarding');
@@ -14363,7 +14449,7 @@ index 25c5776..994e86c 100644
  
    const {
      graph,
-@@ -343,6 +681,94 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
+@@ -343,6 +694,106 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
    const [isCodePanelOpen, setCodePanelOpen] = useState(false);
    const [codeReferenceFocus, setCodeReferenceFocus] = useState<CodeReferenceFocus | null>(null);
  
@@ -14433,6 +14519,18 @@ index 25c5776..994e86c 100644
 +  const [entropyCommitsData, setEntropyCommitsData] = useState<EntropyCommitsData | null>(null);
 +  const [entropyCommitsDays, setEntropyCommitsDays] = useState(90);
 +
++  // Snapshot graph cache — Ref so we don't re-render every time we
++  // stuff something in. The matching Set state (cachedSnapshotNames)
++  // does drive re-renders, used by the Timeline progress label.
++  const snapshotCacheRef = useRef<Map<string, ConnectResult>>(new Map());
++  const [cachedSnapshotNames, setCachedSnapshotNames] = useState<Set<string>>(new Set());
++  const [preloadingSnapshots, setPreloadingSnapshots] = useState(false);
++  const [preloadProgress, setPreloadProgress] = useState<
++    { done: number; total: number; current?: string } | null
++  >(null);
++  const [preloadError, setPreloadError] = useState<string | null>(null);
++  const preloadAbortRef = useRef<AbortController | null>(null);
++
 +  // Semantic labels state.
 +  const [semanticLabels, setSemanticLabels] = useState<Map<string, SemanticLabel>>(new Map());
 +  const [semanticLabelsLoading, setSemanticLabelsLoading] = useState(false);
@@ -14458,7 +14556,84 @@ index 25c5776..994e86c 100644
    // Map of normalized file path → node ID for graph-based lookups
    const fileNodeByPath = useMemo(() => {
      if (!graph) return new Map<string, string>();
-@@ -1207,9 +1633,562 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
+@@ -1029,6 +1480,62 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
+     async (repoName: string) => {
+       if (!serverBaseUrl) return;
+ 
++      // Tier "preload all snapshots" — cache hit means we skip the
++      // fetch + LoadingOverlay entirely. Frame swap is instant, which
++      // is the whole reason the cache exists (Play playback fluidity).
++      const cached = snapshotCacheRef.current.get(repoName);
++      // Invalidate when switching to a different base repo. Same base
++      // (live ↔ snapshot of same repo) keeps the cache.
++      const prevBase = (repoRef.current || '').split('@')[0];
++      const newBase = (repoName || '').split('@')[0];
++      if (prevBase && newBase && prevBase !== newBase) {
++        snapshotCacheRef.current.clear();
++        setCachedSnapshotNames(new Set());
++      }
++
++      if (cached) {
++        // Cache hit — clear stale per-repo highlights / selections
++        // (same hygiene as the slow path), then rebuild the graph
++        // synchronously and skip the rest.
++        setHighlightedNodeIds(new Set());
++        clearAIToolHighlights();
++        clearAICitationHighlights();
++        clearBlastRadius();
++        setSelectedNode(null);
++        setQueryResult(null);
++        setCodeReferences([]);
++        setCodePanelOpen(false);
++        setCodeReferenceFocus(null);
++
++        const repoPath = cached.repoInfo.repoPath ?? cached.repoInfo.path;
++        const pName =
++          repoName ||
++          cached.repoInfo.name ||
++          (repoPath || '').replace(/\\/g, '/').split('/').filter(Boolean).pop() ||
++          'server-project';
++        setProjectName(pName);
++        repoRef.current = pName;
++
++        const newGraph = createKnowledgeGraph();
++        for (const node of cached.nodes) newGraph.addNode(node);
++        for (const rel of cached.relationships) newGraph.addRelationship(rel);
++        setGraph(newGraph);
++
++        // Persist URL like the slow path does.
++        if (pName) {
++          const urlObj = new URL(window.location.href);
++          urlObj.searchParams.set('project', pName);
++          window.history.replaceState(null, '', urlObj.toString());
++        }
++        // Stay in "exploring" view — no progress overlay to clear.
++        setViewMode('exploring');
++        // NOT re-initializing the agent on every frame: agent context
++        // is per-base-repo, and walking snapshots of the same base
++        // shouldn't tear it down. The slow path re-inits because it
++        // assumes a fresh repo; here we know it's the same base.
++        return;
++      }
++
+       setProgress({
+         phase: 'extracting',
+         percent: 0,
+@@ -1105,6 +1612,13 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
+         for (const node of result.nodes) newGraph.addNode(node);
+         for (const rel of result.relationships) newGraph.addRelationship(rel);
+         setGraph(newGraph);
++
++        // Stuff the freshly-fetched payload in the snapshot cache so
++        // the next switch to this same (snapshot of the same base)
++        // serves from memory. Bumps the cachedSnapshotNames state to
++        // re-render the Timeline indicator.
++        snapshotCacheRef.current.set(pName, result);
++        setCachedSnapshotNames(new Set(snapshotCacheRef.current.keys()));
+       } catch (err: unknown) {
+         console.error('Repo switch failed:', err);
+         setProgress({
+@@ -1207,9 +1721,659 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
      setCodeReferenceFocus(null);
    }, []);
  
@@ -14886,6 +15061,103 @@ index 25c5776..994e86c 100644
 +    void refreshEntropyCommits();
 +  }, [entropyCommitsActive, projectName, entropyCommitsDays, refreshEntropyCommits]);
 +
++  // ── Snapshot graph preload (smooth Play playback) ──────────────────
++
++  const clearSnapshotCache = useCallback(() => {
++    snapshotCacheRef.current.clear();
++    setCachedSnapshotNames(new Set());
++  }, []);
++
++  const cancelPreload = useCallback(() => {
++    preloadAbortRef.current?.abort();
++  }, []);
++
++  /**
++   * Fetch every snapshot of the current base repo and stash each
++   * payload in the snapshot cache, so subsequent switchRepo calls
++   * (including the Timeline Play loop) serve from memory instead of
++   * re-fetching. Parallel pool of 3 to balance throughput vs
++   * back-pressure on the backend graph endpoint.
++   *
++   * Idempotent: snapshots already cached are skipped, so re-running
++   * after a partial cancel just continues from where it left off.
++   * Cancel via cancelPreload() — sets the AbortController and the
++   * loop exits at the next worker boundary.
++   */
++  const preloadAllSnapshots = useCallback(async () => {
++    if (!serverBaseUrl || !projectName) {
++      setPreloadError('No active repo to preload.');
++      return;
++    }
++    const baseRepo = projectName.split('@')[0];
++
++    // Eligible: the live repo + every snapshot of the same base. We
++    // filter out unrelated repos so a multi-repo deployment doesn't
++    // accidentally fetch hundreds of MB.
++    const eligible = availableRepos.filter(
++      (r) => r.name === baseRepo || r.name.startsWith(baseRepo + '@'),
++    );
++    if (eligible.length === 0) {
++      setPreloadError(`No snapshots found for ${baseRepo}.`);
++      return;
++    }
++
++    const todo = eligible.filter((r) => !snapshotCacheRef.current.has(r.name));
++    const total = eligible.length;
++    if (todo.length === 0) {
++      setPreloadProgress({ done: total, total });
++      return;
++    }
++
++    setPreloadingSnapshots(true);
++    setPreloadError(null);
++    setPreloadProgress({ done: total - todo.length, total });
++    const ctrl = new AbortController();
++    preloadAbortRef.current = ctrl;
++
++    const queue = [...todo];
++    const concurrency = Math.min(3, queue.length);
++    let done = total - todo.length;
++    let firstError: string | null = null;
++
++    await Promise.all(
++      Array.from({ length: concurrency }, async () => {
++        while (queue.length > 0) {
++          if (ctrl.signal.aborted) return;
++          const next = queue.shift();
++          if (!next) return;
++          try {
++            const result = await connectToServer(
++              serverBaseUrl,
++              undefined,
++              ctrl.signal,
++              next.name,
++              { awaitAnalysis: false }, // assume analysis already done for snapshots
++            );
++            snapshotCacheRef.current.set(next.name, result);
++            done++;
++            setCachedSnapshotNames(new Set(snapshotCacheRef.current.keys()));
++            setPreloadProgress({ done, total, current: next.name });
++          } catch (err) {
++            if (ctrl.signal.aborted) return;
++            done++;
++            const msg = err instanceof Error ? err.message : 'fetch failed';
++            if (!firstError) firstError = `${next.name}: ${msg}`;
++            // Surface the failure in progress.current so the UI can
++            // hint at it; don't abort the whole pass.
++            setPreloadProgress({ done, total, current: `${next.name} (failed)` });
++            // eslint-disable-next-line no-console
++            console.warn(`[preload] ${next.name} failed:`, err);
++          }
++        }
++      }),
++    );
++
++    setPreloadingSnapshots(false);
++    if (firstError) setPreloadError(firstError);
++    preloadAbortRef.current = null;
++  }, [serverBaseUrl, projectName, availableRepos]);
++
 +  // Semantic labels: read-only fetch (cheap, idempotent). Called
 +  // automatically when the active repo changes, and manually after a
 +  // generation pass completes.
@@ -15021,7 +15293,7 @@ index 25c5776..994e86c 100644
      graph,
      setGraph,
      selectedNode,
-@@ -1293,6 +2272,97 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
+@@ -1293,6 +2457,105 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
      clearAICodeReferences,
      clearCodeReferences,
      codeReferenceFocus,
@@ -15099,6 +15371,14 @@ index 25c5776..994e86c 100644
 +    setEntropyCommitsDays,
 +    enterEntropyCommitsMode,
 +    exitEntropyCommitsMode,
++    // Snapshot graph preload (smooth Play playback)
++    cachedSnapshotNames,
++    preloadingSnapshots,
++    preloadProgress,
++    preloadError,
++    preloadAllSnapshots,
++    cancelPreload,
++    clearSnapshotCache,
 +    // Semantic labels
 +    semanticLabels,
 +    semanticLabelsLoading,

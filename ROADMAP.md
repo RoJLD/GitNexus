@@ -1,7 +1,7 @@
 # GitNexus — Roadmap
 
 État vivant des fonctionnalités déjà livrées et des prochaines pistes.
-Dernière mise à jour : 2026-05-26 (Tier 2bis.2 frontend livré : `EntropyCommitTimeline.tsx` sparkline au-dessus de la Timeline — toggle Commit Δ, switch density/modularity, drill-down par commit).
+Dernière mise à jour : 2026-05-26 (Quick-win UX livré : preload all snapshots → Play loop fluide sans loading overlay entre frames).
 
 > 📋 **Voir aussi** [INVENTORY.md](INVENTORY.md) — état des lieux complet :
 > features upstream + nos ajouts + distance avec upstream. À utiliser
@@ -50,6 +50,7 @@ un nom marketing — et son premier pas concret.
 | 30 | **Commit-level entropy delta (Tier 2bis.2)** : `GET /entropy/commits?repo=<base>&days=N` (ou `from/to` = SHA ou ISO date) attribue à chaque commit sa part du delta entropy observé entre snapshots bracketants (proportionnel à filesTouched). MVP par interpolation, pas de Leiden in-memory — assume des snapshots suffisamment denses. Stragglers (commits hors fenêtre snapshot) retournés avec `attributedDensityDelta: null` | `/entropy/commits`, MCP tool `gitnexus_entropy_commits` |
 | 31 | **Watches + webhooks (Tier 2bis.3 MVP)** : cron interne toutes les `WATCH_INTERVAL_MS` (5 min default), debounce `WATCH_DEBOUNCE_MS` (1h default), POST webhook Slack-compatible quand seuil franchi. Watches déclarées dans `.gitnexus.json > watches` (déjà parsées par 2bis.4). 5 métriques supportées : entropy.{density,modularity}, ownership.{busFactor,topAuthorShare}, dissonance.purity. `GET /watches` liste les watches + leur dernier état | `/watches`, MCP tool `gitnexus_watches` |
 | 32 | **Commit Δ sparkline frontend (Tier 2bis.2 UI)** : `EntropyCommitTimeline.tsx` au-dessus de la Timeline. Toggle Commit Δ dans la Timeline. SVG sparkline avec bars verticaux (rouge = dégradation / vert = amélioration / gris = straggler), boundaries snapshot marquées en dashed amber, drill-down par commit (sha + author + date + filesTouched + window deltas + copy-SHA + git-show snippet). Switch metric density/modularity. Window input | `components/EntropyCommitTimeline.tsx`, Timeline toggle Activity icon |
+| 33 | **Snapshot preload (Play smoothness)** : bouton Preload dans la Timeline, fetch parallel pool=3 de tous les snapshots du base repo en mémoire, switchRepo sert depuis le cache → frame swap instantané (pas de LoadingOverlay entre frames du Play loop). Badge "N/M" cached + bouton clear + cancel-able. Invalidation auto au switch de base repo | `useAppState` cache Map + actions, `Timeline` Preload button |
 
 Toutes les analytics ci-dessus marchent dans un seul repo. La granularité
 est le node gitnexus (File, Function, Class, Section, …).

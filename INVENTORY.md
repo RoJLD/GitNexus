@@ -141,7 +141,7 @@ Fichiers à la racine du repo, qui rendent le setup reproductible sur poste Wind
 | `?format=csv` partout | Serializer partagé `docker-server-csv.mjs` |
 
 #### Composants frontend (React/TS, dans `gitnexus-web/src/`)
-- `Timeline.tsx` — slider + play/pause auto-animation
+- `Timeline.tsx` — slider + play/pause auto-animation + **Preload all snapshots** (bouton Download/Check, fetch parallel pool=3 du graphe de chaque snapshot, cache `useAppState.snapshotCacheRef` Map, switchRepo sert depuis le cache → frame swap instantané pendant le Play, sans LoadingOverlay entre frames)
 - `EntropyBadge.tsx` — densité × trend, inline dans Timeline (auto-hide si <2 points)
 - `OwnershipPanel.tsx` — header repo-level, filtre path/auteur, slider bus-factor, click-to-highlight
 - `CouplingPanel.tsx`, `GrowthChart.tsx` (SVG natif), `LifespanPanel.tsx`
