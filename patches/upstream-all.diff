@@ -6644,10 +6644,10 @@ index 211bb65..49a1c7a 100644
      "@vitejs/plugin-react": "^5.1.4",
      "@vitest/coverage-v8": "^4.1.5",
 diff --git a/gitnexus-web/src/App.tsx b/gitnexus-web/src/App.tsx
-index 2ee3569..e472628 100644
+index 2ee3569..37d3705 100644
 --- a/gitnexus-web/src/App.tsx
 +++ b/gitnexus-web/src/App.tsx
-@@ -1,9 +1,19 @@
+@@ -1,9 +1,20 @@
  import { useCallback, useEffect, useRef, useState } from 'react';
  import { AppStateProvider, useAppState } from './hooks/useAppState';
  import { DropZone } from './components/DropZone';
@@ -6662,12 +6662,13 @@ index 2ee3569..e472628 100644
  import { LoadingOverlay } from './components/LoadingOverlay';
  import { Header } from './components/Header';
 +import { Timeline } from './components/Timeline';
++import { EntropyCommitTimeline } from './components/EntropyCommitTimeline';
  import { GraphCanvas, GraphCanvasHandle } from './components/GraphCanvas';
 +import { Graph3DCanvas } from './components/Graph3DCanvas';
  import { RightPanel } from './components/RightPanel';
  import { SettingsPanel } from './components/SettingsPanel';
  import { StatusBar } from './components/StatusBar';
-@@ -45,6 +55,7 @@ const AppContent = () => {
+@@ -45,6 +56,7 @@ const AppContent = () => {
      setAvailableRepos,
      switchRepo,
      setCurrentRepo,
@@ -6675,7 +6676,7 @@ index 2ee3569..e472628 100644
    } = useAppState();
  
    const graphCanvasRef = useRef<GraphCanvasHandle>(null);
-@@ -194,6 +205,21 @@ const AppContent = () => {
+@@ -194,6 +206,21 @@ const AppContent = () => {
      initializeAgent();
    }, [refreshLLMSettings, initializeAgent]);
  
@@ -6697,7 +6698,7 @@ index 2ee3569..e472628 100644
    // ── Server heartbeat: detect when server goes down while exploring ────────
    // Uses SSE (EventSource) for instant detection — no polling delay.
    // On disconnect: show a reconnecting banner instead of resetting to onboarding.
-@@ -250,22 +276,84 @@ const AppContent = () => {
+@@ -250,22 +277,84 @@ const AppContent = () => {
            // Retry once after 1s if the repo isn't found yet (server may still
            // be reinitializing after the worker completed).
            const url = serverBaseUrl ?? 'http://localhost:4747';
@@ -6783,7 +6784,7 @@ index 2ee3569..e472628 100644
                fetchRepos()
                  .then((repos) => setAvailableRepos(repos))
                  .catch(() => {});
-@@ -281,7 +369,40 @@ const AppContent = () => {
+@@ -281,7 +370,40 @@ const AppContent = () => {
  
          {/* Graph area - takes remaining space */}
          <div className="relative min-w-0 flex-1">
@@ -6825,10 +6826,15 @@ index 2ee3569..e472628 100644
  
            {/* Code References Panel (overlay) - does NOT resize the graph, it overlaps on top */}
            {isCodePanelOpen && (codeReferences.length > 0 || !!selectedNode) && (
-@@ -295,6 +416,11 @@ const AppContent = () => {
+@@ -295,6 +417,16 @@ const AppContent = () => {
          {isRightPanelOpen && <RightPanel />}
        </main>
  
++      {/* Commit-level entropy sparkline (Tier 2bis.2) — sits above the
++          Timeline, hidden unless toggled on. Auto-fetches per active
++          repo + window. */}
++      <EntropyCommitTimeline />
++
 +      {/* Time-travel slider — auto-hides when the active repo has no
 +          snapshots (nothing to navigate). Sits between the graph and the
 +          status bar so it never overlaps the canvas. */}
@@ -8418,6 +8424,380 @@ index 0000000..07a59b5
 +      <span className="text-text-muted">
 +        mod {currentModularity.toFixed(3)}
 +      </span>
++    </div>
++  );
++};
+diff --git a/gitnexus-web/src/components/EntropyCommitTimeline.tsx b/gitnexus-web/src/components/EntropyCommitTimeline.tsx
+new file mode 100644
+index 0000000..635ab08
+--- /dev/null
++++ b/gitnexus-web/src/components/EntropyCommitTimeline.tsx
+@@ -0,0 +1,368 @@
++import { useMemo, useState } from 'react';
++import {
++  X,
++  Activity,
++  Loader2,
++  AlertCircle,
++  Copy,
++  Check,
++  Info,
++} from '@/lib/lucide-icons';
++import { useAppState } from '../hooks/useAppState';
++import type { EntropyCommit } from '../hooks/useAppState';
++
++/**
++ * Commit-level entropy delta sparkline — ROADMAP Tier 2bis.2.
++ *
++ * Sits **above** the Timeline (mounted as a sibling in App.tsx). One
++ * vertical bar per commit in the active window; height = magnitude of
++ * the attributed delta on the active metric (density or modularity);
++ * color = sign:
++ *
++ *   - red    delta > 0 on density  (densifying = bad)
++ *   - red    delta < 0 on modularity (less modular = bad)
++ *   - green  delta < 0 on density / > 0 on modularity (improvement)
++ *   - gray   straggler (commit outside any snapshot window → no
++ *            attribution possible; rendered as a tiny dot at the
++ *            baseline so the user knows it exists)
++ *
++ * Click a bar → drill-down strip below shows sha, author, date, files
++ * touched, the window deltas, and a copy-SHA button. The "real diff
++ * visual" mentioned in the ROADMAP needs commit-level snapshots
++ * (not currently produced) — punted.
++ *
++ * Auto-hides when there's no active repo, no snapshots (no deltas
++ * computable), or when toggled off via the X button.
++ */
++
++const HEIGHT_PX = 80;
++const PADDING = 8;
++const MIN_BAR_WIDTH = 1;
++const MAX_BAR_WIDTH = 14;
++const STRAGGLER_DOT_R = 2;
++
++type Metric = 'density' | 'modularity';
++
++function fmtDelta(n: number | null): string {
++  if (n === null || !Number.isFinite(n)) return '—';
++  const sign = n > 0 ? '+' : '';
++  return `${sign}${n.toExponential(2)}`;
++}
++
++function shortDate(iso: string): string {
++  return iso.slice(0, 10);
++}
++
++export const EntropyCommitTimeline = () => {
++  const {
++    projectName,
++    entropyCommitsActive,
++    entropyCommitsLoading,
++    entropyCommitsError,
++    entropyCommitsData,
++    entropyCommitsDays,
++    setEntropyCommitsDays,
++    exitEntropyCommitsMode,
++  } = useAppState();
++  const [metric, setMetric] = useState<Metric>('density');
++  const [selected, setSelected] = useState<EntropyCommit | null>(null);
++  const [copiedSha, setCopiedSha] = useState<string | null>(null);
++
++  // Reset drill-down when the data shape changes (new repo / window).
++  const dataKey = `${entropyCommitsData?.repo}-${entropyCommitsData?.from}-${entropyCommitsData?.to}`;
++
++  // X-axis: window from "from" to "to". Stragglers (no window) get
++  // a separate left strip so they don't compress the rest.
++  const { layout, attributed, stragglers, range } = useMemo(() => {
++    if (!entropyCommitsData) {
++      return { layout: 'empty' as const, attributed: [] as EntropyCommit[], stragglers: [] as EntropyCommit[], range: { min: 0, max: 1 } };
++    }
++    const all = entropyCommitsData.commits || [];
++    const attrib = all.filter((c) => c.snapshotWindow !== null);
++    const strag = all.filter((c) => c.snapshotWindow === null);
++    const fromMs = entropyCommitsData.from ? Date.parse(entropyCommitsData.from) : 0;
++    const toMs = entropyCommitsData.to ? Date.parse(entropyCommitsData.to) : Date.now();
++    // Find max |delta| on the active metric to normalize bar heights.
++    const fieldFor = (c: EntropyCommit) =>
++      metric === 'density' ? c.attributedDensityDelta : c.attributedModularityDelta;
++    let maxAbs = 0;
++    for (const c of attrib) {
++      const v = fieldFor(c);
++      if (v !== null && Number.isFinite(v) && Math.abs(v) > maxAbs) maxAbs = Math.abs(v);
++    }
++    return {
++      layout: 'has-data' as const,
++      attributed: attrib,
++      stragglers: strag,
++      range: { min: fromMs, max: toMs, maxAbs: maxAbs || 1 },
++    };
++  }, [entropyCommitsData, metric]);
++
++  if (!entropyCommitsActive && !entropyCommitsLoading && !entropyCommitsError) return null;
++  if (!projectName) return null;
++
++  const baseRepo = projectName.split('@')[0];
++  const totalAttrib = attributed.length;
++  const totalStrag = stragglers.length;
++  const fieldFor = (c: EntropyCommit) =>
++    metric === 'density' ? c.attributedDensityDelta : c.attributedModularityDelta;
++  // Color rules per metric — for density, > 0 is bad; for modularity
++  // (communities/nodes ratio), < 0 is bad (less modular).
++  const colorFor = (v: number | null) => {
++    if (v === null || !Number.isFinite(v)) return '#475569'; // slate
++    if (v === 0) return '#94a3b8';
++    const bad = metric === 'density' ? v > 0 : v < 0;
++    return bad ? '#f87171' : '#34d399'; // red-400 / emerald-400
++  };
++
++  // SVG width = available width via viewBox; bars positioned in [0,
++  // totalAttrib) along x, mapped to a percentage so the SVG scales
++  // with the parent. Stragglers sit in a separate fixed-width left
++  // strip with their own dots.
++  const ATTRIB_VIEWBOX_W = 1000; // arbitrary internal coordinate space
++  const usableW = ATTRIB_VIEWBOX_W - 2 * PADDING;
++  const usableH = HEIGHT_PX - 2 * PADDING;
++  const denom = Math.max(1, range.max - range.min);
++  const project = (ms: number) => PADDING + ((ms - range.min) / denom) * usableW;
++  const barWidth = totalAttrib > 0
++    ? Math.max(MIN_BAR_WIDTH, Math.min(MAX_BAR_WIDTH, usableW / Math.max(1, totalAttrib * 2)))
++    : MIN_BAR_WIDTH;
++
++  return (
++    <div className="pointer-events-auto absolute right-0 bottom-9 left-0 z-20 border-t border-border-subtle bg-surface/95 px-3 py-1.5 backdrop-blur">
++      {/* Header strip */}
++      <div className="mb-1 flex items-center gap-2 text-[10px] text-text-muted">
++        <Activity className="h-3 w-3 text-amber-300" />
++        <span className="font-semibold text-text-primary">Commit entropy</span>
++        <span className="text-text-muted">· {baseRepo}</span>
++        {entropyCommitsData && (
++          <span className="font-mono">
++            {totalAttrib} attributed · {totalStrag} straggler{totalStrag !== 1 ? 's' : ''} ·{' '}
++            {entropyCommitsData.windowsCount} snapshot windows
++          </span>
++        )}
++        {/* Metric toggle */}
++        <div className="ml-2 flex gap-0.5 rounded bg-elevated p-0.5">
++          {(['density', 'modularity'] as Metric[]).map((m) => (
++            <button
++              key={m}
++              type="button"
++              onClick={() => setMetric(m)}
++              className={`cursor-pointer rounded px-1.5 py-0 text-[9px] font-medium transition-all ${
++                metric === m
++                  ? 'bg-amber-500/20 text-amber-200'
++                  : 'text-text-muted hover:text-text-primary'
++              }`}
++              title={m === 'density' ? 'Graph density (positive delta = densifying = bad)' : 'Modularity (negative delta = less modular = bad)'}
++            >
++              {m}
++            </button>
++          ))}
++        </div>
++        {/* Window selector */}
++        <label className="ml-2 flex items-center gap-1 text-text-muted">
++          window
++          <input
++            type="number"
++            min={7}
++            max={3650}
++            value={entropyCommitsDays}
++            onChange={(e) => {
++              const v = Math.max(7, Math.min(3650, Number(e.target.value) || 90));
++              setEntropyCommitsDays(v);
++            }}
++            className="w-12 rounded border border-border-default bg-void px-1 py-0 text-right font-mono text-[10px] text-text-primary outline-none focus:border-accent/40"
++          />
++          d
++        </label>
++        {entropyCommitsLoading && (
++          <span className="flex items-center gap-1 text-amber-300">
++            <Loader2 className="h-3 w-3 animate-spin" /> computing…
++          </span>
++        )}
++        <button
++          type="button"
++          onClick={() => exitEntropyCommitsMode()}
++          className="ml-auto cursor-pointer rounded p-0.5 text-text-muted transition-colors hover:bg-hover hover:text-text-primary"
++          title="Hide commit entropy sparkline"
++        >
++          <X className="h-3 w-3" />
++        </button>
++      </div>
++
++      {/* Error state */}
++      {entropyCommitsError && (
++        <div className="flex items-start gap-1.5 px-1 py-1 text-[10px] text-red-400">
++          <AlertCircle className="mt-0.5 h-3 w-3 shrink-0" />
++          <span className="break-all font-mono">{entropyCommitsError}</span>
++        </div>
++      )}
++
++      {/* No-data warning (e.g. < 2 snapshots) */}
++      {entropyCommitsData?.warning && (
++        <div className="flex items-start gap-1.5 px-1 py-1 text-[10px] text-amber-300">
++          <Info className="mt-0.5 h-3 w-3 shrink-0" />
++          <span>{entropyCommitsData.warning}</span>
++        </div>
++      )}
++
++      {/* The sparkline itself */}
++      {entropyCommitsData && layout === 'has-data' && (
++        <div className="flex items-stretch gap-1">
++          {/* Stragglers strip */}
++          {totalStrag > 0 && (
++            <div
++              className="flex shrink-0 items-end gap-0.5 border-r border-border-subtle pr-1"
++              title={`${totalStrag} commits older than the first snapshot — no entropy delta attributable`}
++              style={{ height: HEIGHT_PX, maxWidth: 60 }}
++            >
++              {stragglers.slice(0, 30).map((c) => (
++                <button
++                  key={`s-${c.sha}`}
++                  type="button"
++                  onClick={() => setSelected(c)}
++                  className={`cursor-pointer rounded-full transition-all ${
++                    selected?.sha === c.sha ? 'ring-2 ring-cyan-400 ring-offset-1 ring-offset-surface' : ''
++                  }`}
++                  style={{
++                    width: STRAGGLER_DOT_R * 2,
++                    height: STRAGGLER_DOT_R * 2,
++                    background: '#475569',
++                    marginBottom: 8,
++                  }}
++                  title={`${c.shortSha} · ${c.author} · ${shortDate(c.date)} · ${c.filesTouched} files · straggler (no snapshot bracket)`}
++                />
++              ))}
++            </div>
++          )}
++          {/* Attributed bars */}
++          <svg
++            key={dataKey}
++            width="100%"
++            height={HEIGHT_PX}
++            viewBox={`0 0 ${ATTRIB_VIEWBOX_W} ${HEIGHT_PX}`}
++            preserveAspectRatio="none"
++            className="flex-1"
++          >
++            {/* Baseline */}
++            <line
++              x1={PADDING}
++              x2={ATTRIB_VIEWBOX_W - PADDING}
++              y1={HEIGHT_PX / 2}
++              y2={HEIGHT_PX / 2}
++              stroke="#334155"
++              strokeWidth={0.5}
++            />
++            {/* Bars */}
++            {attributed.map((c) => {
++              const v = fieldFor(c);
++              const t = Date.parse(c.date);
++              if (!Number.isFinite(t)) return null;
++              const x = project(t);
++              const norm = v === null || !range.maxAbs ? 0 : v / range.maxAbs;
++              const barH = Math.max(0, Math.abs(norm) * (usableH / 2));
++              const y = norm >= 0 ? HEIGHT_PX / 2 - barH : HEIGHT_PX / 2;
++              const isSelected = selected?.sha === c.sha;
++              return (
++                <g key={c.sha} onClick={() => setSelected(c)} style={{ cursor: 'pointer' }}>
++                  <rect
++                    x={x - barWidth / 2}
++                    y={y}
++                    width={barWidth}
++                    height={barH || 0.5}
++                    fill={colorFor(v)}
++                    opacity={isSelected ? 1 : 0.85}
++                    stroke={isSelected ? '#22d3ee' : 'none'}
++                    strokeWidth={isSelected ? 1 : 0}
++                  >
++                    <title>
++                      {c.shortSha} · {c.author} · {shortDate(c.date)}
++                      {'\n'}files touched: {c.filesTouched}
++                      {'\n'}attributed {metric} Δ: {fmtDelta(v)}
++                    </title>
++                  </rect>
++                </g>
++              );
++            })}
++            {/* Snapshot boundaries */}
++            {entropyCommitsData.windows.map((w, i) => {
++              const t = Date.parse(w.from);
++              if (!Number.isFinite(t)) return null;
++              const x = project(t);
++              return (
++                <line
++                  key={`w-${i}`}
++                  x1={x}
++                  x2={x}
++                  y1={PADDING}
++                  y2={HEIGHT_PX - PADDING}
++                  stroke="#fbbf24"
++                  strokeWidth={0.4}
++                  strokeDasharray="2 2"
++                  opacity={0.4}
++                >
++                  <title>snapshot @ {shortDate(w.from)}</title>
++                </line>
++              );
++            })}
++          </svg>
++        </div>
++      )}
++
++      {/* Drill-down for the selected commit */}
++      {selected && (
++        <div className="mt-1.5 flex items-center gap-2 rounded border border-border-subtle bg-elevated px-2 py-1 text-[10px]">
++          <span
++            className="shrink-0 rounded font-mono text-text-primary"
++            style={{ color: colorFor(fieldFor(selected)) }}
++          >
++            ●
++          </span>
++          <span className="font-mono text-text-primary">{selected.shortSha}</span>
++          <button
++            type="button"
++            onClick={async () => {
++              try {
++                await navigator.clipboard.writeText(selected.sha);
++                setCopiedSha(selected.sha);
++                setTimeout(() => setCopiedSha((s) => (s === selected.sha ? null : s)), 1500);
++              } catch {
++                // Clipboard API may be blocked; tiny fallback: select the
++                // sha in the title attribute so the user can still copy.
++              }
++            }}
++            className="cursor-pointer rounded p-0.5 text-text-muted transition-colors hover:bg-hover hover:text-text-primary"
++            title="Copy full SHA"
++          >
++            {copiedSha === selected.sha ? <Check className="h-3 w-3 text-emerald-400" /> : <Copy className="h-3 w-3" />}
++          </button>
++          <span className="text-text-muted">·</span>
++          <span className="text-text-secondary">{selected.author}</span>
++          <span className="text-text-muted">·</span>
++          <span className="font-mono text-text-muted">{shortDate(selected.date)}</span>
++          <span className="text-text-muted">·</span>
++          <span className="font-mono text-text-secondary">{selected.filesTouched} files</span>
++          {selected.snapshotWindow ? (
++            <>
++              <span className="text-text-muted">·</span>
++              <span className="font-mono text-text-secondary">
++                attributed {metric}Δ:{' '}
++                <span style={{ color: colorFor(fieldFor(selected)) }}>
++                  {fmtDelta(fieldFor(selected))}
++                </span>
++              </span>
++              <span className="text-text-muted">
++                (window {shortDate(selected.snapshotWindow[0])} → {shortDate(selected.snapshotWindow[1])})
++              </span>
++            </>
++          ) : (
++            <span className="italic text-text-muted">straggler · no snapshot bracket</span>
++          )}
++          <code className="ml-auto rounded bg-void px-1 font-mono text-[9px] text-text-muted">
++            git show {selected.shortSha}
++          </code>
++        </div>
++      )}
 +    </div>
 +  );
 +};
@@ -12431,10 +12811,10 @@ index 0000000..5c77c1a
 +}
 diff --git a/gitnexus-web/src/components/Timeline.tsx b/gitnexus-web/src/components/Timeline.tsx
 new file mode 100644
-index 0000000..0b67e49
+index 0000000..59cc2ac
 --- /dev/null
 +++ b/gitnexus-web/src/components/Timeline.tsx
-@@ -0,0 +1,648 @@
+@@ -0,0 +1,679 @@
 +import { useEffect, useMemo, useRef, useState } from 'react';
 +import {
 +  Play,
@@ -12450,6 +12830,7 @@ index 0000000..0b67e49
 +  Target,
 +  FlaskConical,
 +  Network,
++  Activity,
 +} from '@/lib/lucide-icons';
 +import { useAppState } from '../hooks/useAppState';
 +import { EntropyBadge } from './EntropyBadge';
@@ -12528,6 +12909,9 @@ index 0000000..0b67e49
 +    exitWhatIfMode,
 +    setWhatIfMutations,
 +    setWhatIfPanelOpen,
++    entropyCommitsActive,
++    enterEntropyCommitsMode,
++    exitEntropyCommitsMode,
 +  } = useAppState();
 +  const [snapshots, setSnapshots] = useState<
 +    Array<{
@@ -13023,6 +13407,33 @@ index 0000000..0b67e49
 +          similarity error (hover)
 +        </div>
 +      )}
++
++      {/* Commit entropy sparkline (Tier 2bis.2) — non-mutex with the
++          right-side panels (renders above the Timeline, doesn't fight
++          for screen real estate). Auto-fetches when toggled on. */}
++      <button
++        type="button"
++        onClick={() => {
++          if (entropyCommitsActive) exitEntropyCommitsMode();
++          else enterEntropyCommitsMode();
++        }}
++        disabled={!!diffMode}
++        className={`flex shrink-0 cursor-pointer items-center gap-1 rounded-md border px-1.5 py-0.5 text-[10px] font-medium transition-all disabled:cursor-not-allowed disabled:opacity-40 ${
++          entropyCommitsActive
++            ? 'border-amber-500/40 bg-amber-500/15 text-amber-300'
++            : 'border-border-subtle bg-elevated text-text-secondary hover:bg-hover hover:text-text-primary'
++        }`}
++        title={
++          diffMode
++            ? 'Exit diff mode first'
++            : entropyCommitsActive
++              ? 'Hide commit entropy sparkline'
++              : 'Show per-commit entropy delta sparkline above the timeline (Tier 2bis.2)'
++        }
++      >
++        <Activity className="h-2.5 w-2.5" />
++        Commit Δ
++      </button>
 +
 +      {/* The bar itself: line + dots */}
 +      <div className="relative h-8 flex-1">
@@ -13561,7 +13972,7 @@ index 49862a9..5c552dd 100644
   * Create a Graph RAG agent
   */
 diff --git a/gitnexus-web/src/hooks/useAppState.tsx b/gitnexus-web/src/hooks/useAppState.tsx
-index 25c5776..9b5f5dd 100644
+index 25c5776..994e86c 100644
 --- a/gitnexus-web/src/hooks/useAppState.tsx
 +++ b/gitnexus-web/src/hooks/useAppState.tsx
 @@ -8,7 +8,12 @@ import {
@@ -13619,7 +14030,7 @@ index 25c5776..9b5f5dd 100644
  
    // Graph data
    graph: KnowledgeGraph | null;
-@@ -192,6 +211,272 @@ interface AppState {
+@@ -192,6 +211,321 @@ interface AppState {
    clearAICodeReferences: () => void;
    clearCodeReferences: () => void;
    codeReferenceFocus: CodeReferenceFocus | null;
@@ -13715,6 +14126,18 @@ index 25c5776..9b5f5dd 100644
 +  embedSimilarityProgress: { repo: string; done: number; total: number } | null;
 +  embedSimilarityError: string | null;
 +  embedSimilaritySupported: boolean;
++
++  // Commit-level entropy delta (ROADMAP Tier 2bis.2). Sparkline of
++  // commits with their attributed share of the entropy delta between
++  // bracketing snapshots. Auto-fetches when active + repo changes.
++  entropyCommitsActive: boolean;
++  entropyCommitsLoading: boolean;
++  entropyCommitsError: string | null;
++  entropyCommitsData: EntropyCommitsData | null;
++  entropyCommitsDays: number;
++  setEntropyCommitsDays: (days: number) => void;
++  enterEntropyCommitsMode: () => void;
++  exitEntropyCommitsMode: () => void;
 +
 +  // Semantic labels (ROADMAP Tier 2.1). LLM-generated human-readable
 +  // labels for each detected Community. Auto-loaded from server cache
@@ -13889,10 +14312,47 @@ index 25c5776..9b5f5dd 100644
 +  /** Galaxy projection metadata (Tier 2.6). null when projection isn't
 +   *  available (N<2). When present, repos[].galaxyXY is also non-null. */
 +  galaxyProjection: { method: 'pca'; dim: 2 } | null;
++}
++
++// ── Commit-level entropy delta (Tier 2bis.2) ─────────────────────────
++
++export interface EntropyCommit {
++  sha: string;
++  shortSha: string;
++  author: string;
++  date: string;
++  filesTouched: number;
++  snapshotWindow: [string, string] | null;
++  windowDensityDelta: number | null;
++  windowModularityDelta: number | null;
++  attributedDensityDelta: number | null;
++  attributedModularityDelta: number | null;
++}
++
++export interface EntropyCommitsData {
++  repo: string;
++  method: string;
++  from?: string;
++  to?: string;
++  windowsCount: number;
++  totalCommits: number;
++  commitsAttributed: number;
++  commitsStraggler: number;
++  snapshotsUsed: string[];
++  commits: EntropyCommit[];
++  windows: Array<{
++    from: string;
++    to: string;
++    densityDelta: number;
++    modularityDelta: number;
++    commitsInWindow: number;
++    filesTouchedInWindow: number;
++  }>;
++  warning?: string;
  }
  
  const AppStateContext = createContext<AppState | null>(null);
-@@ -205,6 +490,10 @@ export const AppStateProvider = ({ children }: { children: ReactNode }) => (
+@@ -205,6 +539,10 @@ export const AppStateProvider = ({ children }: { children: ReactNode }) => (
  const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
    // View state
    const [viewMode, setViewMode] = useState<ViewMode>('onboarding');
@@ -13903,7 +14363,7 @@ index 25c5776..9b5f5dd 100644
  
    const {
      graph,
-@@ -343,6 +632,87 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
+@@ -343,6 +681,94 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
    const [isCodePanelOpen, setCodePanelOpen] = useState(false);
    const [codeReferenceFocus, setCodeReferenceFocus] = useState<CodeReferenceFocus | null>(null);
  
@@ -13966,6 +14426,13 @@ index 25c5776..9b5f5dd 100644
 +  >(null);
 +  const [embedSimilarityError, setEmbedSimilarityError] = useState<string | null>(null);
 +
++  // Tier 2bis.2: commit-level entropy delta sparkline.
++  const [entropyCommitsActive, setEntropyCommitsActive] = useState(false);
++  const [entropyCommitsLoading, setEntropyCommitsLoading] = useState(false);
++  const [entropyCommitsError, setEntropyCommitsError] = useState<string | null>(null);
++  const [entropyCommitsData, setEntropyCommitsData] = useState<EntropyCommitsData | null>(null);
++  const [entropyCommitsDays, setEntropyCommitsDays] = useState(90);
++
 +  // Semantic labels state.
 +  const [semanticLabels, setSemanticLabels] = useState<Map<string, SemanticLabel>>(new Map());
 +  const [semanticLabelsLoading, setSemanticLabelsLoading] = useState(false);
@@ -13991,7 +14458,7 @@ index 25c5776..9b5f5dd 100644
    // Map of normalized file path → node ID for graph-based lookups
    const fileNodeByPath = useMemo(() => {
      if (!graph) return new Map<string, string>();
-@@ -1207,9 +1577,519 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
+@@ -1207,9 +1633,562 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
      setCodeReferenceFocus(null);
    }, []);
  
@@ -14376,6 +14843,49 @@ index 25c5776..9b5f5dd 100644
 +    [refreshSimilarity],
 +  );
 +
++  // Tier 2bis.2: fetch /entropy/commits for the active repo + window.
++  // Called from the sparkline component's useEffect on mount + when
++  // the user changes the window-days knob.
++  const refreshEntropyCommits = useCallback(async () => {
++    if (!projectName) {
++      setEntropyCommitsData(null);
++      return;
++    }
++    const baseRepo = projectName.split('@')[0];
++    setEntropyCommitsLoading(true);
++    setEntropyCommitsError(null);
++    try {
++      const url = `/entropy/commits?repo=${encodeURIComponent(baseRepo)}&days=${entropyCommitsDays}`;
++      const resp = await fetch(url, { cache: 'no-store' });
++      if (!resp.ok) {
++        const body = await resp.json().catch(() => ({}));
++        throw new Error(body?.error || `HTTP ${resp.status}`);
++      }
++      const data = (await resp.json()) as EntropyCommitsData;
++      setEntropyCommitsData(data);
++    } catch (err) {
++      setEntropyCommitsError(err instanceof Error ? err.message : 'Failed to compute entropy/commits');
++      setEntropyCommitsData(null);
++    } finally {
++      setEntropyCommitsLoading(false);
++    }
++  }, [projectName, entropyCommitsDays]);
++
++  const enterEntropyCommitsMode = useCallback(() => {
++    setEntropyCommitsActive(true);
++    void refreshEntropyCommits();
++  }, [refreshEntropyCommits]);
++
++  const exitEntropyCommitsMode = useCallback(() => {
++    setEntropyCommitsActive(false);
++  }, []);
++
++  // Re-fetch when active + (repo or window) changes.
++  useEffect(() => {
++    if (!entropyCommitsActive || !projectName) return;
++    void refreshEntropyCommits();
++  }, [entropyCommitsActive, projectName, entropyCommitsDays, refreshEntropyCommits]);
++
 +  // Semantic labels: read-only fetch (cheap, idempotent). Called
 +  // automatically when the active repo changes, and manually after a
 +  // generation pass completes.
@@ -14511,7 +15021,7 @@ index 25c5776..9b5f5dd 100644
      graph,
      setGraph,
      selectedNode,
-@@ -1293,6 +2173,88 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
+@@ -1293,6 +2272,97 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
      clearAICodeReferences,
      clearCodeReferences,
      codeReferenceFocus,
@@ -14580,6 +15090,15 @@ index 25c5776..9b5f5dd 100644
 +    embedSimilarityProgress,
 +    embedSimilarityError,
 +    embedSimilaritySupported,
++    // Commit-level entropy delta (Tier 2bis.2)
++    entropyCommitsActive,
++    entropyCommitsLoading,
++    entropyCommitsError,
++    entropyCommitsData,
++    entropyCommitsDays,
++    setEntropyCommitsDays,
++    enterEntropyCommitsMode,
++    exitEntropyCommitsMode,
 +    // Semantic labels
 +    semanticLabels,
 +    semanticLabelsLoading,

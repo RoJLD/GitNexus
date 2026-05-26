@@ -1,7 +1,7 @@
 # GitNexus — Roadmap
 
 État vivant des fonctionnalités déjà livrées et des prochaines pistes.
-Dernière mise à jour : 2026-05-26 (Tier 2bis Phase 2 complet : 2bis.2 entropy/commits + 2bis.3 watches/webhooks — plate-forme + diagnostic fin tous livrés).
+Dernière mise à jour : 2026-05-26 (Tier 2bis.2 frontend livré : `EntropyCommitTimeline.tsx` sparkline au-dessus de la Timeline — toggle Commit Δ, switch density/modularity, drill-down par commit).
 
 > 📋 **Voir aussi** [INVENTORY.md](INVENTORY.md) — état des lieux complet :
 > features upstream + nos ajouts + distance avec upstream. À utiliser
@@ -49,6 +49,7 @@ un nom marketing — et son premier pas concret.
 | 29 | **Stable repoId (Tier 2bis.5)** : identifiant 16 hex chars = `sha256(firstCommitSha + normalizedRemote)[:16]`. Cache `<repoPath>/.gitnexus/repo-id.json`. Surface dans `/similarity` (`response.repos[].repoId` + `normalizedRemote`) et résoluble via `GET /repos/by-id/:repoId`. Survit aux re-clones et débloque la détection FN-2 de 2.5 (legacy + rewrite) | `upstream/docker-server-repo-id.mjs`, route `/repos/by-id/:repoId`, MCP tool `gitnexus_repo_by_id` |
 | 30 | **Commit-level entropy delta (Tier 2bis.2)** : `GET /entropy/commits?repo=<base>&days=N` (ou `from/to` = SHA ou ISO date) attribue à chaque commit sa part du delta entropy observé entre snapshots bracketants (proportionnel à filesTouched). MVP par interpolation, pas de Leiden in-memory — assume des snapshots suffisamment denses. Stragglers (commits hors fenêtre snapshot) retournés avec `attributedDensityDelta: null` | `/entropy/commits`, MCP tool `gitnexus_entropy_commits` |
 | 31 | **Watches + webhooks (Tier 2bis.3 MVP)** : cron interne toutes les `WATCH_INTERVAL_MS` (5 min default), debounce `WATCH_DEBOUNCE_MS` (1h default), POST webhook Slack-compatible quand seuil franchi. Watches déclarées dans `.gitnexus.json > watches` (déjà parsées par 2bis.4). 5 métriques supportées : entropy.{density,modularity}, ownership.{busFactor,topAuthorShare}, dissonance.purity. `GET /watches` liste les watches + leur dernier état | `/watches`, MCP tool `gitnexus_watches` |
+| 32 | **Commit Δ sparkline frontend (Tier 2bis.2 UI)** : `EntropyCommitTimeline.tsx` au-dessus de la Timeline. Toggle Commit Δ dans la Timeline. SVG sparkline avec bars verticaux (rouge = dégradation / vert = amélioration / gris = straggler), boundaries snapshot marquées en dashed amber, drill-down par commit (sha + author + date + filesTouched + window deltas + copy-SHA + git-show snippet). Switch metric density/modularity. Window input | `components/EntropyCommitTimeline.tsx`, Timeline toggle Activity icon |
 
 Toutes les analytics ci-dessus marchent dans un seul repo. La granularité
 est le node gitnexus (File, Function, Class, Section, …).
@@ -381,7 +382,7 @@ chaque endpoint REST en MCP tool avec description claire :
 **Effort** : 3-5 jours. Wrapper + tests manuels via Claude Code chat
 ("compare l'entropie de hmm_studio entre janvier et mars").
 
-### 2bis.2 — Commit-level entropy delta ✅ LIVRÉ (MVP par interpolation)
+### 2bis.2 — Commit-level entropy delta ✅ LIVRÉ (MVP par interpolation, UI livrée)
 **État** : livré 2026-05-26 via [`upstream/docker-server-entropy-commits.mjs`](upstream/docker-server-entropy-commits.mjs).
 Endpoint `GET /entropy/commits?repo=<base>[&from=&to=][&days=N][&format=csv]`.
 **Méthode MVP** : pas de Leiden in-memory (trop coûteux). À la place, pour
@@ -394,6 +395,17 @@ vrai per-commit causal entropy, snapshotter chaque commit (déjà
 supporté via `/snapshot/bulk`). MCP tool `gitnexus_entropy_commits`.
 Test live sur hmm_studio : 99 commits sur 180j → 66 attribués, 33
 stragglers, 4 windows dérivés de 5 snapshots.
+
+**UI livrée** : [`components/EntropyCommitTimeline.tsx`](upstream/gitnexus-web/src/components/EntropyCommitTimeline.tsx),
+sparkline SVG montée au-dessus de la Timeline. Toggle "Commit Δ" (icon
+Activity) dans la Timeline. Bars verticaux pondérés par
+`|attributedDelta|`, color-coded par signe selon la métrique (rouge =
+bad : densifying pour density / less modular pour modularity). Boundaries
+snapshot marquées en dashed amber. Stragglers en strip séparé à gauche
+(petits dots). Drill-down par commit cliqué : sha + author + date +
+filesTouched + window deltas + bouton copy-SHA + snippet `git show
+<shortSha>`. Switch metric density/modularity, window input en jours.
+Non-mutex avec les panels de droite.
 
 **Promesse** : actuellement entropie calculée par snapshot. Étendre à un
 **delta par commit** → identifie la PR exacte qui démarre la dégradation
