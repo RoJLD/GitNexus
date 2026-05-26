@@ -247,7 +247,9 @@ Un "Ghost Cluster" (groupement explicite type "module Auth complet") serait une 
 
 Aujourd'hui (v0 du CORE) : `roadmap.yml` au niveau repo, versionné, distinct.
 
-Cible v1 (quand Tier 2bis.4 `.gitnexus.yaml` unifié sera stable) : section `roadmap:` à l'intérieur de `.gitnexus.yaml`. La migration sera mécanique (une commande `npm run gitnexus:migrate-config`).
+Cible v1 (quand Tier 2bis.4 `.gitnexus.json` unifié sera stable) : section `roadmap:` à l'intérieur de `.gitnexus.json`. La migration sera mécanique (une commande `npm run gitnexus:migrate-config`).
+
+> **Note 2026-05-26** : la review externe parlait de `.gitnexus.yaml`, mais le codebase a livré `.gitnexus.json` (Tier 2bis.4) par cohérence avec le reste des configs. Le manifest cible est donc `.gitnexus.json`, pas `.gitnexus.yaml`.
 
 Pas de bloquant pour v0 — le user n'aura juste pas à éditer 2 fichiers de config plus tard.
 
