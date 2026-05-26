@@ -2332,10 +2332,10 @@ index 0000000..c57e279
 +}
 diff --git a/docker-server-ghosts-core.mjs b/docker-server-ghosts-core.mjs
 new file mode 100644
-index 0000000..2337790
+index 0000000..572a9a6
 --- /dev/null
 +++ b/docker-server-ghosts-core.mjs
-@@ -0,0 +1,227 @@
+@@ -0,0 +1,272 @@
 +/**
 + * Pure functions for the roadmap-predictive CORE.
 + * No I/O, no fs, no fetch — testable in isolation.
@@ -2562,6 +2562,51 @@ index 0000000..2337790
 +    lines.push(`    dependsOn: ${yamlInlineList(g.dependsOn || [])}`);
 +  }
 +  return lines.join('\n') + '\n';
++}
++
++// --- Expected-link matching ---
++
++function pathToRegex(pattern) {
++  let re = '';
++  let i = 0;
++  while (i < pattern.length) {
++    const c = pattern[i];
++    if (c === '*' && pattern[i + 1] === '*') { re += '.*'; i += 2; }
++    else if (c === '*') { re += '[^/]*'; i++; }
++    else if (c === '?') { re += '[^/]'; i++; }
++    else if (/[.+^${}()|[\]\\]/.test(c)) { re += '\\' + c; i++; }
++    else { re += c; i++; }
++  }
++  return new RegExp(re + '$');
++}
++
++function matchPattern(pattern, files) {
++  const hasWildcard = /[*?]/.test(pattern);
++  if (hasWildcard) {
++    const re = pathToRegex(pattern);
++    return files.filter(f => re.test(f));
++  }
++  return files.filter(f => f.endsWith(pattern) || f.includes('/' + pattern));
++}
++
++export function matchExpectedLinks(ghost, changedFiles) {
++  const matched = [];
++  const unmatched = [];
++  if (!ghost || !Array.isArray(ghost.expectedLinks)) {
++    return { matched, unmatched };
++  }
++  for (const link of ghost.expectedLinks) {
++    if (link.kind !== 'path') continue;
++    const hits = matchPattern(link.value, changedFiles || []);
++    if (hits.length > 0) {
++      for (const h of hits) {
++        matched.push({ pattern: link.value, matchedPath: h });
++      }
++    } else {
++      unmatched.push(link.value);
++    }
++  }
++  return { matched, unmatched };
 +}
 diff --git a/docker-server-growth-cross.mjs b/docker-server-growth-cross.mjs
 new file mode 100644
