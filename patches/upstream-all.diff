@@ -1,5 +1,5 @@
 diff --git a/Dockerfile.web b/Dockerfile.web
-index b102a70..d6eb919 100644
+index b102a70..9b049ac 100644
 --- a/Dockerfile.web
 +++ b/Dockerfile.web
 @@ -21,7 +21,10 @@ RUN npm run build --prefix gitnexus-shared
@@ -14,7 +14,7 @@ index b102a70..d6eb919 100644
  
  COPY gitnexus-web ./gitnexus-web
  RUN npm run build --prefix gitnexus-web
-@@ -29,15 +32,49 @@ RUN npm run build --prefix gitnexus-web
+@@ -29,15 +32,50 @@ RUN npm run build --prefix gitnexus-web
  # node:22-bookworm-slim
  FROM node:22-bookworm-slim@sha256:9f6d5975c7dca860947d3915877f85607946403fc55349f39b4bc3688448bb6e AS runtime
  
@@ -61,6 +61,7 @@ index b102a70..d6eb919 100644
 +COPY docker-server-watches.mjs ./docker-server-watches.mjs
 +COPY docker-server-commit-footprint.mjs ./docker-server-commit-footprint.mjs
 +COPY docker-server-snapshot-auto.mjs ./docker-server-snapshot-auto.mjs
++COPY docker-server-snapshot-from-pr.mjs ./docker-server-snapshot-from-pr.mjs
 +COPY docker-server-csv.mjs ./docker-server-csv.mjs
  
  RUN chown -R node:node /app
@@ -2328,6 +2329,102 @@ index 0000000..c57e279
 +    return true;
 +  }
 +  return false;
++}
+diff --git a/docker-server-ghosts-core.mjs b/docker-server-ghosts-core.mjs
+new file mode 100644
+index 0000000..a5ed978
+--- /dev/null
++++ b/docker-server-ghosts-core.mjs
+@@ -0,0 +1,90 @@
++/**
++ * Pure functions for the roadmap-predictive CORE.
++ * No I/O, no fs, no fetch — testable in isolation.
++ *
++ * See docs/superpowers/specs/2026-05-26-roadmap-predictive-core-design.md
++ */
++
++const TABLE_ROW_RE = /^\|\s*(\d+)\s*\|\s*(.+?)\s*\|\s*(.+?)\s*\|\s*$/;
++const TABLE_HEADER_RE = /^\|\s*#\s*\|/;
++const TABLE_SEP_RE = /^\|[\s:-]+\|/;
++const SHIPPED_SECTION_RE = /^##\s+✅\s+Déjà livré\s*$/i;
++const BACKTICK_RE = /`([^`]+)`/g;
++
++function slugify(s) {
++  return s
++    .toLowerCase()
++    .replace(/[^a-z0-9]+/g, '-')
++    .replace(/^-+|-+$/g, '')
++    .slice(0, 60);
++}
++
++function stripBold(s) {
++  return s.replace(/\*\*(.+?)\*\*/g, '$1');
++}
++
++function extractExpectedLinks(cell) {
++  const links = [];
++  const ticked = [...cell.matchAll(BACKTICK_RE)].map(m => m[1]);
++  for (const t of ticked) {
++    const isPath = t.includes('/') || /\.(mjs|ts|tsx|js|jsx|json|yaml|yml|md|css)$/.test(t);
++    links.push({ kind: isPath ? 'path' : 'label', value: t });
++  }
++  return links;
++}
++
++export function parseRoadmap(md) {
++  if (!md || typeof md !== 'string') return [];
++  const lines = md.split('\n');
++  const ghosts = [];
++
++  let inShippedSection = false;
++  let inTable = false;
++  let tableHasSep = false;
++
++  for (const line of lines) {
++    if (SHIPPED_SECTION_RE.test(line)) {
++      inShippedSection = true;
++      inTable = false;
++      tableHasSep = false;
++      continue;
++    }
++    if (line.startsWith('## ') && !SHIPPED_SECTION_RE.test(line)) {
++      inShippedSection = false;
++      inTable = false;
++      tableHasSep = false;
++      continue;
++    }
++    if (!inShippedSection) continue;
++
++    if (TABLE_HEADER_RE.test(line)) {
++      inTable = true;
++      tableHasSep = false;
++      continue;
++    }
++    if (inTable && !tableHasSep && TABLE_SEP_RE.test(line)) {
++      tableHasSep = true;
++      continue;
++    }
++    if (inTable && tableHasSep) {
++      const m = line.match(TABLE_ROW_RE);
++      if (!m) {
++        inTable = false;
++        continue;
++      }
++      const [, num, rawTitle, rawLinks] = m;
++      const title = stripBold(rawTitle).trim();
++      ghosts.push({
++        id: `${num}-${slugify(title)}`,
++        tier: null,
++        title,
++        description: '',
++        status: 'materialized',
++        expectedLinks: extractExpectedLinks(rawLinks),
++        dependsOn: [],
++      });
++    }
++  }
++
++  return ghosts;
 +}
 diff --git a/docker-server-growth-cross.mjs b/docker-server-growth-cross.mjs
 new file mode 100644
@@ -5376,6 +5473,248 @@ index 0000000..7929573
 +  }
 +  return false;
 +}
+diff --git a/docker-server-snapshot-from-pr.mjs b/docker-server-snapshot-from-pr.mjs
+new file mode 100644
+index 0000000..810a2bd
+--- /dev/null
++++ b/docker-server-snapshot-from-pr.mjs
+@@ -0,0 +1,236 @@
++/**
++ * PR-mode snapshot on-demand — Phase B of the incremental-snapshots
++ * design (see docs/superpowers/specs/2026-05-26-incremental-snapshots-
++ * design.md). Phase A (auto-snapshot aux pics) shipped first; Phase B
++ * sits next to it for the "I want the graph delta of this PR" workflow.
++ *
++ * Endpoint:
++ *   POST /snapshot/from-pr?repo=<base>&base=<ref>&head=<ref>
++ *   Body (optional):
++ *     {
++ *       "dryRun": false   // if true, resolves SHAs + plan but doesn't
++ *                         // actually create the snapshots
++ *     }
++ *
++ * Use case: a PR exists from feature/auth-refactor → main, and the
++ * user wants to see the graph delta the PR would introduce. They
++ * call this endpoint with `base=main&head=feature/auth-refactor` and
++ * get back two snapshot keys + a diffUrl. They can then open the
++ * existing diff-visual UI (red/green/grey graph) between those two
++ * snapshots, which is the actual review experience.
++ *
++ * --- Why this is NOT incremental snapshotting ---
++ *
++ * This is just "snapshot 2 specific commits on-demand", reusing the
++ * existing `createSnapshot` helper. No diff replay, no baseline+delta
++ * machinery. We're piggybacking on Phase 1 snapshot infrastructure and
++ * exposing it under a PR-shaped surface. True incremental snapshotting
++ * (Phase C) stays parked.
++ *
++ * --- Why not GitHub-specific in v1 ---
++ *
++ * The spec mentions a `?prNumber=42` variant that calls the GitHub API
++ * to resolve base/head. That needs an API token in config, a GitHub
++ * App for webhook auto-trigger, etc. — its own feature. Generic
++ * `base`/`head` covers the workflow without auth. GitHub variant can
++ * land as a follow-up if/when there's real demand.
++ *
++ * --- Response shape ---
++ *
++ *   {
++ *     "repo": "hmm_studio",
++ *     "dryRun": false,
++ *     "base": { "ref": "main", "sha": "abc...", "shortSha": "abc1234",
++ *               "snapshotKey": "hmm_studio@abc1234",
++ *               "status": "created" | "existing" | "planned" | "error",
++ *               "error": "..." (only on error) },
++ *     "head": { same shape },
++ *     "diffUrl": "/?project=hmm_studio&diff=hmm_studio@abc1234,hmm_studio@def5678"
++ *                (built only when both snapshots succeeded)
++ *   }
++ *
++ * If base resolves to the same SHA as head, we still snapshot once,
++ * return the same key on both sides, and set `diffUrl: null` with a
++ * `warning` field — the user is asking for a diff against itself.
++ */
++
++import { spawn } from 'node:child_process';
++import { stat } from 'node:fs/promises';
++import { join } from 'node:path';
++import { findRepoByName, createSnapshot } from './docker-server-snapshots.mjs';
++
++function runCmd(cmd, args, opts = {}) {
++  return new Promise((resolve, reject) => {
++    const child = spawn(cmd, args, opts);
++    let stdout = '';
++    let stderr = '';
++    child.stdout?.on('data', (d) => (stdout += d.toString()));
++    child.stderr?.on('data', (d) => (stderr += d.toString()));
++    child.on('error', reject);
++    child.on('close', (code) => {
++      if (code === 0) resolve(stdout.trim());
++      else reject(new Error(`${cmd} exited ${code}: ${stderr.trim() || stdout.trim()}`));
++    });
++  });
++}
++
++// Resolve a ref (branch / tag / SHA / HEAD~N / etc.) to its full SHA.
++// `git rev-parse --verify` errors out on unknown refs, which is what
++// we want — the caller will turn that into a 404.
++async function resolveRefToSha(repoPath, ref) {
++  return runCmd('git', ['-C', repoPath, 'rev-parse', '--verify', `${ref}^{commit}`]);
++}
++
++// Build the same /?project=…&diff=A,B URL the frontend's diff mode
++// expects. The frontend's URL handler accepts the diff param and
++// pre-loads both snapshots into compare mode.
++function buildDiffUrl(repo, baseKey, headKey) {
++  const qs = new URLSearchParams({
++    project: repo,
++    diff: `${baseKey},${headKey}`,
++  });
++  return `/?${qs.toString()}`;
++}
++
++async function snapshotRef(repoName, ref, sha, dryRun, opts) {
++  const shortSha = sha.slice(0, 7);
++  const snapshotKey = `${repoName}@${shortSha}`;
++  if (dryRun) {
++    return { ref, sha, shortSha, snapshotKey, status: 'planned' };
++  }
++  try {
++    const r = await createSnapshot({
++      repoName,
++      commitRef: sha,
++      api: opts.api,
++      onPhase: (phase) =>
++        process.stderr.write(`[snapshot-from-pr] ${snapshotKey}: ${phase}\n`),
++    });
++    return {
++      ref,
++      sha,
++      shortSha,
++      snapshotKey: r.snapshot?.name || snapshotKey,
++      status: r.existing ? 'existing' : 'created',
++    };
++  } catch (err) {
++    return {
++      ref,
++      sha,
++      shortSha,
++      snapshotKey,
++      status: 'error',
++      error: err.message,
++    };
++  }
++}
++
++async function handleSnapshotFromPr(url, req, res, opts) {
++  const repoName = url.searchParams.get('repo');
++  const baseRef = url.searchParams.get('base');
++  const headRef = url.searchParams.get('head');
++
++  if (!repoName) {
++    res.writeHead(400, { 'Content-Type': 'application/json' });
++    res.end(JSON.stringify({ error: 'missing repo' }));
++    return;
++  }
++  if (!baseRef || !headRef) {
++    res.writeHead(400, { 'Content-Type': 'application/json' });
++    res.end(JSON.stringify({ error: 'missing base or head ref' }));
++    return;
++  }
++
++  // Optional body for dryRun (+ future opts). Empty body OK.
++  let body = {};
++  let raw = '';
++  for await (const chunk of req) raw += chunk;
++  if (raw) {
++    try {
++      body = JSON.parse(raw);
++    } catch {
++      res.writeHead(400, { 'Content-Type': 'application/json' });
++      res.end(JSON.stringify({ error: 'invalid JSON body' }));
++      return;
++    }
++  }
++  const dryRun = !!body.dryRun;
++
++  const baseRepo = repoName.split('@')[0];
++  const live = await findRepoByName(baseRepo, opts.api);
++  if (!live) {
++    res.writeHead(404, { 'Content-Type': 'application/json' });
++    res.end(JSON.stringify({ error: `repo not found: ${baseRepo}` }));
++    return;
++  }
++  const repoPath = live.repoPath || live.path;
++  const hasGit = await stat(join(repoPath, '.git')).catch(() => null);
++  if (!hasGit) {
++    res.writeHead(400, { 'Content-Type': 'application/json' });
++    res.end(JSON.stringify({ error: `${baseRepo} is not a git repo` }));
++    return;
++  }
++
++  // Resolve both refs upfront so we 404 the whole request if either
++  // is bogus, instead of half-snapshotting.
++  let baseSha;
++  let headSha;
++  try {
++    baseSha = await resolveRefToSha(repoPath, baseRef);
++  } catch (err) {
++    res.writeHead(404, { 'Content-Type': 'application/json' });
++    res.end(JSON.stringify({ error: `base ref not found: ${baseRef} (${err.message})` }));
++    return;
++  }
++  try {
++    headSha = await resolveRefToSha(repoPath, headRef);
++  } catch (err) {
++    res.writeHead(404, { 'Content-Type': 'application/json' });
++    res.end(JSON.stringify({ error: `head ref not found: ${headRef} (${err.message})` }));
++    return;
++  }
++
++  // Same-commit degenerate case: snapshot once, mirror on both sides,
++  // no diff URL.
++  if (baseSha === headSha) {
++    const single = await snapshotRef(baseRepo, baseRef, baseSha, dryRun, opts);
++    const headEcho = { ...single, ref: headRef };
++    res.writeHead(200, { 'Content-Type': 'application/json' });
++    res.end(JSON.stringify({
++      repo: baseRepo,
++      dryRun,
++      base: single,
++      head: headEcho,
++      diffUrl: null,
++      warning: `base and head resolve to the same commit ${baseSha.slice(0, 7)} — no diff possible`,
++    }));
++    return;
++  }
++
++  // Sequential snapshot creation. Parallel would be too aggressive on
++  // `gitnexus analyze` (both runs would compete for CPU and the
++  // worker pool). 2 sequential = ~6-10 minutes worst case.
++  const base = await snapshotRef(baseRepo, baseRef, baseSha, dryRun, opts);
++  const head = await snapshotRef(baseRepo, headRef, headSha, dryRun, opts);
++
++  const bothOk =
++    (base.status === 'created' || base.status === 'existing' || base.status === 'planned') &&
++    (head.status === 'created' || head.status === 'existing' || head.status === 'planned');
++
++  res.writeHead(200, { 'Content-Type': 'application/json' });
++  res.end(JSON.stringify({
++    repo: baseRepo,
++    dryRun,
++    base,
++    head,
++    diffUrl: bothOk ? buildDiffUrl(baseRepo, base.snapshotKey, head.snapshotKey) : null,
++  }));
++}
++
++export async function handleSnapshotFromPrRoute(req, url, res, opts) {
++  if (url.pathname === '/snapshot/from-pr' && req.method === 'POST') {
++    await handleSnapshotFromPr(url, req, res, opts);
++    return true;
++  }
++  return false;
++}
 diff --git a/docker-server-snapshots-bulk.mjs b/docker-server-snapshots-bulk.mjs
 new file mode 100644
 index 0000000..086ce14
@@ -6409,10 +6748,10 @@ index 0000000..c6a7798
 +  return false;
 +}
 diff --git a/docker-server.mjs b/docker-server.mjs
-index 8143eb4..6b61402 100644
+index 8143eb4..69ac757 100644
 --- a/docker-server.mjs
 +++ b/docker-server.mjs
-@@ -1,12 +1,55 @@
+@@ -1,12 +1,56 @@
 -import { createReadStream } from 'node:fs';
 -import { stat } from 'node:fs/promises';
 +import { createReadStream, createWriteStream } from 'node:fs';
@@ -6440,6 +6779,7 @@ index 8143eb4..6b61402 100644
 +import { handleWatchesRoute, startWatchesCron } from './docker-server-watches.mjs';
 +import { handleCommitFootprintRoute } from './docker-server-commit-footprint.mjs';
 +import { handleSnapshotAutoRoute } from './docker-server-snapshot-auto.mjs';
++import { handleSnapshotFromPrRoute } from './docker-server-snapshot-from-pr.mjs';
  
  const host = '0.0.0.0';
  const port = Number(process.env.PORT || '4173');
@@ -6471,7 +6811,7 @@ index 8143eb4..6b61402 100644
  const contentTypes = {
    '.css': 'text/css; charset=utf-8',
    '.html': 'text/html; charset=utf-8',
-@@ -20,6 +63,416 @@ const contentTypes = {
+@@ -20,6 +64,416 @@ const contentTypes = {
    '.woff2': 'font/woff2',
  };
  
@@ -6888,7 +7228,7 @@ index 8143eb4..6b61402 100644
  // Static asset server for the gitnexus-web Docker image.
  //
  // Path-injection containment: the request handler is intentionally a single
-@@ -39,8 +492,63 @@ const contentTypes = {
+@@ -39,8 +493,65 @@ const contentTypes = {
  // the request handler's reassignment paths in vanilla JS. The inline-at-sink
  // shape below is the documented analyzer-friendly idiom.
  const server = createServer(async (req, res) => {
@@ -6948,12 +7288,14 @@ index 8143eb4..6b61402 100644
 +  if (await handleCommitFootprintRoute(req, reqUrl, res, { api: GITNEXUS_API })) return;
 +  // Auto-snapshot aux pics (Phase A of incremental-snapshots design)
 +  if (await handleSnapshotAutoRoute(req, reqUrl, res, { api: GITNEXUS_API })) return;
++  // PR-mode snapshot on-demand (Phase B of incremental-snapshots design)
++  if (await handleSnapshotFromPrRoute(req, reqUrl, res, { api: GITNEXUS_API })) return;
  
 +  // ── Static asset serving (v1.6.5 CodeQL-compliant pipeline) ───────────
    let decoded;
    try {
      decoded = decodeURIComponent(urlPath);
-@@ -117,4 +625,7 @@ const server = createServer(async (req, res) => {
+@@ -117,4 +628,7 @@ const server = createServer(async (req, res) => {
  
  server.listen(port, host, () => {
    console.log(`gitnexus-web listening on http://${host}:${port}`);
