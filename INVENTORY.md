@@ -114,7 +114,7 @@ Fichiers à la racine du repo, qui rendent le setup reproductible sur poste Wind
 **Pourquoi une image dérivée** : `:1.6.3` upstream ship avec 2 bugs connus dans son `Dockerfile.cli` (mkdir `hf-cache` sans `node:node` → EACCES, et oubli de `gitnexus/scripts/` → DuckDB FTS+VECTOR non installés). Notre layer fixe les deux.
 
 ### B.2 Time-travel + analytics
-**Implémentation : patches sur upstream** (clone gitignoré, deltas sérialisés dans [patches/upstream-all.diff](patches/upstream-all.diff) = 8567 lignes).
+**Implémentation : patches sur upstream** (clone gitignoré, deltas sérialisés dans [patches/upstream-all.diff](patches/upstream-all.diff) — taille re-générée à chaque feature).
 
 #### Endpoints backend (ajoutés à `docker-server.mjs`)
 | Endpoint | Fonction |
@@ -128,6 +128,10 @@ Fichiers à la racine du repo, qui rendent le setup reproductible sur poste Wind
 | `GET /lifespan` | Buckets foundational / recent / discontinued / ephemeral |
 | `GET /entropy` | Densité × modularité du graphe par snapshot |
 | `GET /ownership` | Bus factor par fichier (`git log --name-only`) |
+| `GET /dissonance` | Compare domaines déclarés (`.gitnexus-domains.json`) vs communities détectées, purity + misplaced |
+| `GET /semantic-labels` + `POST` | Cache des labels LLM par community (LLM appelé côté frontend) |
+| `GET /coupling/cross` | Couplage cross-repo via bucketing temporel sur `git log` multi-repo |
+| `GET /growth/cross` | Timeline union des snapshots avec counts par-repo (migration des centres de gravité) |
 | `GET /listdir` | Folder browser server-side |
 | `GET /export` + `POST /import` | Bundle ou index-only, register-only mode |
 | `?format=csv` partout | Serializer partagé `docker-server-csv.mjs` |
@@ -137,10 +141,13 @@ Fichiers à la racine du repo, qui rendent le setup reproductible sur poste Wind
 - `EntropyBadge.tsx` — densité × trend, inline dans Timeline (auto-hide si <2 points)
 - `OwnershipPanel.tsx` — header repo-level, filtre path/auteur, slider bus-factor, click-to-highlight
 - `CouplingPanel.tsx`, `GrowthChart.tsx` (SVG natif), `LifespanPanel.tsx`
+- `CouplingPanel` + `GrowthChart` ont un toggle interne **cross-repo** (Layers icon) → fetch `/coupling/cross` ou `/growth/cross`
+- `DissonancePanel.tsx` — purity score + misplaced files + bouton ✨ pour générer les labels LLM
 - `SnapshotsPanel.tsx`, `BulkSnapshotModal.tsx`, `DiffBanner.tsx`
 - `Graph3DCanvas.tsx` (mode 3D via `react-force-graph-3d` + `three`)
+- `services/semantic-labeler.ts` — pipeline LLM (worker pool, abort-aware, MCP-via-frontend)
 - `lib/graph-diff.ts` — utilities diff visuel
-- `lib/lucide-icons.tsx` — re-exports d'icônes ajoutées (Activity, Minus, TrendingDown, Users)
+- `lib/lucide-icons.tsx` — re-exports d'icônes ajoutées (Activity, Minus, TrendingDown, Users, Layers, Target, History, Sparkles, Pause)
 - Color reducers dans `useSigma.ts` (churnColor, couplingColor)
 - `DropZone.LoadingCard` + `RepoAnalyzer` (loading bars + path picker + folder browser)
 - Edits sur composants existants : `App.tsx`, `hooks/useAppState.tsx`, `Header.tsx`, `GraphCanvas.tsx`, `DropZone.tsx`
@@ -153,13 +160,18 @@ Fichiers à la racine du repo, qui rendent le setup reproductible sur poste Wind
 | Fichier | Contenu |
 |---|---|
 | [README.md](README.md) | Setup deployment local (Rancher, .env, start.bat) |
-| [ROADMAP.md](ROADMAP.md) | Tier 1 ✅ livré, Tier 2/3 priorisés par ROI |
+| [ROADMAP.md](ROADMAP.md) | Tier 1 + 2 (1.2/1.3/2.1/2.2) ✅ livrés, 2.3/2.4 pending, Tier 3 reste à valider |
+| [CLAUDE.md](CLAUDE.md) | Règles pour l'agent : maintenir ROADMAP + INVENTORY à chaque feature, rebuild after upstream edits |
+| [../CLAUDE.md](../CLAUDE.md) | Règle workspace : tests CI/CD si module en a déjà |
 | [patches/README.md](patches/README.md) | Comment ré-appliquer les patches sur un clone frais |
+| [patches/example-gitnexus-domains.json](patches/example-gitnexus-domains.json) | Template pour la feature Dissonance |
 | [INVENTORY.md](INVENTORY.md) | Ce document |
 
 ### B.4 Mapping ROADMAP ↔ État de livraison
 **Livré (Tier 1 complet)** :
 - ✅ 1.1 Bus factor + knowledge silos (`/ownership`, `OwnershipPanel`)
+- ✅ 1.2 Cross-repo coupling (`/coupling/cross`, toggle Layers dans `CouplingPanel`)
+- ✅ 1.3 Migration des centres de gravité — growth multi-repo (`/growth/cross`, toggle Layers dans `GrowthChart`)
 - ✅ 1.4 Entropie structurelle (`/entropy`, `EntropyBadge`)
 - ✅ 1.5 Export CSV (`?format=csv` partout)
 - ✅ Loading bars + UX path picker + folder browser
@@ -170,11 +182,15 @@ Fichiers à la racine du repo, qui rendent le setup reproductible sur poste Wind
 - ✅ Timeline UI play/pause
 - ✅ Churn / Coupling / Growth / Lifespan
 
-**Pending (Tier 1 résiduel)** :
-- ⏳ 1.2 Cross-repo coupling
-- ⏳ 1.3 Migration des centres de gravité (growth multi-repo)
+**Livré (Tier 2 partiel)** :
+- ✅ 2.1 Annotation sémantique LLM (`/semantic-labels`, `services/semantic-labeler.ts`, intégré dans `DissonancePanel`)
+- ✅ 2.2 Dissonance score (`/dissonance`, `DissonancePanel.tsx`, exemple `patches/example-gitnexus-domains.json`)
 
-**Tier 2/3** : voir [ROADMAP.md](ROADMAP.md), pas commencé.
+**Pending (Tier 2 résiduel)** :
+- ⏳ 2.3 What-if simulator
+- ⏳ 2.4 VSCode extension
+
+**Tier 3** : voir [ROADMAP.md](ROADMAP.md), à valider avant attaque.
 
 ---
 

@@ -34,6 +34,8 @@ un nom marketing — et son premier pas concret.
 | 14 | **Ownership / bus factor** (per-file commit-share + repo-level summary) | `/ownership`, `OwnershipPanel.tsx` |
 | 15 | **Dissonance** (declared domains vs detected communities, purity score, misplaced files) | `/dissonance`, `DissonancePanel.tsx`, `patches/example-gitnexus-domains.json` |
 | 16 | **Semantic labels** (LLM-generated cluster names, cached on disk, integrated into Dissonance UI) | `/semantic-labels`, `semantic-labeler.ts` |
+| 17 | **Cross-repo coupling** (git-log bucketing, multi-repo Jaccard) + UI toggle | `/coupling/cross`, `CouplingPanel` Layers toggle |
+| 18 | **Cross-repo growth** (union timeline, per-repo step lines, label switcher) | `/growth/cross`, `GrowthChart` Layers toggle |
 
 Toutes les analytics ci-dessus marchent dans un seul repo. La granularité
 est le node gitnexus (File, Function, Class, Section, …).
@@ -60,7 +62,7 @@ top contributeurs et `bus_factor = ceil(authors_covering_80pct_of_lines)`.
 **UI** : nouveau panneau `OwnershipPanel.tsx` qui liste les fichiers
 critiques (très modifiés via `/churn` × bus_factor ≤ 1).
 
-### 1.2 — Cross-repo coupling ⏳ pending
+### 1.2 — Cross-repo coupling ✅
 **Promesse** : détecte des dépendances invisibles entre dépôts
 (`monorepo-A` change quand `monorepo-B` change).
 
@@ -74,7 +76,7 @@ de temps.
 (fenêtre glissante de 1h, ou commits liés par PR si on intègre l'API
 GitHub plus tard).
 
-### 1.3 — Migration des centres de gravité ⏳ pending
+### 1.3 — Migration des centres de gravité ✅
 **Promesse** : voir le poids de code se déplacer entre repos au fil du
 temps (monolithe → microservices, ou inverse).
 

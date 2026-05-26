@@ -1,8 +1,8 @@
 diff --git a/Dockerfile.web b/Dockerfile.web
-index 7d20e09..a124ea9 100644
+index 7d20e09..cb5346a 100644
 --- a/Dockerfile.web
 +++ b/Dockerfile.web
-@@ -14,19 +14,47 @@ RUN npm run build --prefix gitnexus-shared
+@@ -14,19 +14,49 @@ RUN npm run build --prefix gitnexus-shared
  COPY gitnexus/package.json ./gitnexus/
  
  COPY gitnexus-web/package.json gitnexus-web/package-lock.json ./gitnexus-web/
@@ -48,6 +48,8 @@ index 7d20e09..a124ea9 100644
 +COPY docker-server-ownership.mjs ./docker-server-ownership.mjs
 +COPY docker-server-dissonance.mjs ./docker-server-dissonance.mjs
 +COPY docker-server-semantic-labels.mjs ./docker-server-semantic-labels.mjs
++COPY docker-server-coupling-cross.mjs ./docker-server-coupling-cross.mjs
++COPY docker-server-growth-cross.mjs ./docker-server-growth-cross.mjs
 +COPY docker-server-csv.mjs ./docker-server-csv.mjs
  
  RUN chown -R node:node /app
@@ -237,6 +239,301 @@ index 0000000..33f13d2
 +export async function handleChurnRoute(req, url, res, opts) {
 +  if (url.pathname === '/churn' && req.method === 'GET') {
 +    await handleChurn(url, res, opts);
++    return true;
++  }
++  return false;
++}
+diff --git a/docker-server-coupling-cross.mjs b/docker-server-coupling-cross.mjs
+new file mode 100644
+index 0000000..0f8e30e
+--- /dev/null
++++ b/docker-server-coupling-cross.mjs
+@@ -0,0 +1,289 @@
++/**
++ * Cross-repo temporal coupling — ROADMAP Tier 1.2.
++ *
++ * Endpoint:
++ *   GET /coupling/cross?repos=A,B[,C][&windowHours=24][&top=100][&format=csv]
++ *
++ * Detects pairs of files in *different* repos that tend to change in
++ * the same time window. The signal is "hidden inter-service coupling"
++ * — when a contract change in repo A reliably triggers a follow-up in
++ * repo B, you have a soft dependency the repo graphs don't show.
++ *
++ * --- Why git log rather than snapshots ---
++ *
++ * The single-repo /coupling endpoint diffs snapshots because that's
++ * what gitnexus persists. Cross-repo is sparser: two repos rarely have
++ * snapshots taken at exactly the same time, so consecutive-snapshot
++ * diffing would miss the actual co-change events. Git commit dates are
++ * the source of truth — they're continuous, every change is timestamped
++ * the moment the developer committed, and the windowing approach maps
++ * naturally onto "what was touched in the same hour / day".
++ *
++ * --- Algorithm ---
++ *
++ *   1. For each repo, run `git log --pretty=format:%aI --name-only --no-merges`.
++ *      One row per (commit date ISO, file path) tuple.
++ *   2. Bucket each row into a window of `windowHours` hours
++ *      (rounded down from epoch). Same window → same bucket id.
++ *   3. For each bucket, collect the set of (repo, file) entries touched.
++ *   4. For every cross-repo pair within a bucket, increment a counter.
++ *   5. Jaccard per pair using the totals from step 2.
++ *
++ * Pairs are sorted by Jaccard desc, then count desc. We cap at `top`
++ * (default 100) so a multi-thousand-file scan doesn't ship a 5 MB
++ * response.
++ */
++
++import { spawn } from 'node:child_process';
++import { stat } from 'node:fs/promises';
++import { join } from 'node:path';
++import { findRepoByName } from './docker-server-snapshots.mjs';
++import { toCsv, writeCsv, safeFilename } from './docker-server-csv.mjs';
++
++const DEFAULT_WINDOW_HOURS = 24;
++const DEFAULT_TOP = 100;
++const MAX_REPOS = 8;
++
++function runCmd(cmd, args, opts = {}) {
++  return new Promise((resolve, reject) => {
++    const child = spawn(cmd, args, opts);
++    let stdout = '';
++    let stderr = '';
++    child.stdout?.on('data', (d) => (stdout += d.toString()));
++    child.stderr?.on('data', (d) => (stderr += d.toString()));
++    child.on('error', reject);
++    child.on('close', (code) => {
++      if (code === 0) resolve(stdout);
++      else reject(new Error(`${cmd} exited ${code}: ${stderr.trim()}`));
++    });
++  });
++}
++
++/**
++ * Parse `git log --pretty=format:%aI --name-only --no-merges` output.
++ * Returns an array of { date: ISO, files: string[] } (one per commit).
++ *
++ * The format alternates:
++ *   <iso-date>\n
++ *   file1\n
++ *   file2\n
++ *   \n   (blank line between commits)
++ */
++function parseLog(stdout) {
++  const commits = [];
++  let date = null;
++  let files = [];
++  for (const rawLine of stdout.split('\n')) {
++    const line = rawLine.trimEnd();
++    if (line === '') {
++      if (date !== null) {
++        commits.push({ date, files });
++        date = null;
++        files = [];
++      }
++      continue;
++    }
++    if (date === null) {
++      date = line;
++      continue;
++    }
++    files.push(line);
++  }
++  if (date !== null) commits.push({ date, files });
++  return commits;
++}
++
++function bucketIdOf(isoDate, windowMs) {
++  const t = Date.parse(isoDate);
++  if (!Number.isFinite(t)) return null;
++  return Math.floor(t / windowMs);
++}
++
++async function handleCouplingCross(url, res, opts) {
++  const reposParam = url.searchParams.get('repos');
++  if (!reposParam) {
++    res.writeHead(400, { 'Content-Type': 'application/json' });
++    res.end(JSON.stringify({ error: 'missing repos (comma-separated)' }));
++    return;
++  }
++  const repoNames = reposParam
++    .split(',')
++    .map((s) => s.trim())
++    .filter(Boolean)
++    .filter((s) => !s.includes('@')) // snapshots don't make sense cross-repo
++    .slice(0, MAX_REPOS);
++  if (repoNames.length < 2) {
++    res.writeHead(400, { 'Content-Type': 'application/json' });
++    res.end(JSON.stringify({ error: 'need at least 2 distinct repos' }));
++    return;
++  }
++
++  const windowHours = Math.max(1, Math.min(720, Number(url.searchParams.get('windowHours')) || DEFAULT_WINDOW_HOURS));
++  const windowMs = windowHours * 3600 * 1000;
++  const top = Math.max(1, Math.min(1000, Number(url.searchParams.get('top')) || DEFAULT_TOP));
++
++  // Resolve each repo and pull its git log. Fail loudly on any
++  // not-found / not-git so the user fixes the input rather than
++  // silently getting empty data.
++  const repos = [];
++  for (const name of repoNames) {
++    const meta = await findRepoByName(name, opts.api);
++    if (!meta) {
++      res.writeHead(404, { 'Content-Type': 'application/json' });
++      res.end(JSON.stringify({ error: `repo not found: ${name}` }));
++      return;
++    }
++    const repoPath = meta.repoPath || meta.path;
++    const hasGit = await stat(join(repoPath, '.git')).catch(() => null);
++    if (!hasGit) {
++      res.writeHead(400, { 'Content-Type': 'application/json' });
++      res.end(JSON.stringify({ error: `${name} at ${repoPath} is not a git repo (cross-repo needs git history)` }));
++      return;
++    }
++    repos.push({ name, repoPath });
++  }
++
++  // Sequential log scans — these are I/O-bound but cheap; parallelizing
++  // doesn't help much and lets stderr from one repo bleed into another.
++  const allCommits = [];
++  for (const r of repos) {
++    let log;
++    try {
++      log = await runCmd('git', [
++        '-C',
++        r.repoPath,
++        'log',
++        '--pretty=format:%aI',
++        '--name-only',
++        '--no-merges',
++      ]);
++    } catch (err) {
++      res.writeHead(500, { 'Content-Type': 'application/json' });
++      res.end(JSON.stringify({ error: `git log failed for ${r.name}: ${err.message}` }));
++      return;
++    }
++    const commits = parseLog(log);
++    for (const c of commits) {
++      for (const f of c.files) {
++        allCommits.push({ repo: r.name, date: c.date, file: f });
++      }
++    }
++  }
++
++  // Build per-bucket sets of (repo, file). Same-bucket = "touched in
++  // the same window". We use a colon-based composite key — neither
++  // repo names from /api/repos nor file paths contain whitespace
++  // sentinels like "~~::~~", so we use that as a delimiter.
++  const SEP = "~~::~~";
++  const PAIR_SEP = "~~//~~";
++  const bucketMembers = new Map();
++  const fileTotals = new Map();
++  const repoEarliest = new Map();
++  const repoLatest = new Map();
++
++  for (const { repo, date, file } of allCommits) {
++    const bid = bucketIdOf(date, windowMs);
++    if (bid === null) continue;
++    const key = repo + SEP + file;
++    let set = bucketMembers.get(bid);
++    if (!set) { set = new Set(); bucketMembers.set(bid, set); }
++    if (!set.has(key)) {
++      set.add(key);
++      fileTotals.set(key, (fileTotals.get(key) || 0) + 1);
++    }
++    if (!repoEarliest.has(repo) || date < repoEarliest.get(repo)) repoEarliest.set(repo, date);
++    if (!repoLatest.has(repo) || date > repoLatest.get(repo)) repoLatest.set(repo, date);
++  }
++
++  const splitEntry = (k) => {
++    const i = k.indexOf(SEP);
++    return [k.slice(0, i), k.slice(i + SEP.length)];
++  };
++
++  // For every bucket, all *cross-repo* pairs of members. Same-repo
++  // pairs are skipped — that is what the single-repo /coupling does.
++  const pairCount = new Map();
++  for (const set of bucketMembers.values()) {
++    if (set.size < 2) continue;
++    const arr = [...set];
++    for (let i = 0; i < arr.length; i++) {
++      const [repoA] = splitEntry(arr[i]);
++      for (let j = i + 1; j < arr.length; j++) {
++        const [repoB] = splitEntry(arr[j]);
++        if (repoA === repoB) continue;
++        const [p, q] = arr[i] < arr[j] ? [arr[i], arr[j]] : [arr[j], arr[i]];
++        const pairKey = p + PAIR_SEP + q;
++        pairCount.set(pairKey, (pairCount.get(pairKey) || 0) + 1);
++      }
++    }
++  }
++
++  // Compute Jaccard per pair.
++  const pairs = [];
++  for (const [key, count] of pairCount) {
++    const sepIdx = key.indexOf(PAIR_SEP);
++    const pa = key.slice(0, sepIdx);
++    const pb = key.slice(sepIdx + PAIR_SEP.length);
++    const [repoA, fileA] = splitEntry(pa);
++    const [repoB, fileB] = splitEntry(pb);
++    const cA = fileTotals.get(pa) || 1;
++    const cB = fileTotals.get(pb) || 1;
++    const jaccard = count / (cA + cB - count);
++    pairs.push({
++      a: { repo: repoA, path: fileA },
++      b: { repo: repoB, path: fileB },
++      count,
++      jaccard,
++    });
++  }
++  pairs.sort((x, y) => y.jaccard - x.jaccard || y.count - x.count);
++  const truncated = pairs.slice(0, top);
++
++  const meta = {
++    repos: repoNames,
++    windowHours,
++    totalBuckets: bucketMembers.size,
++    totalCrossPairs: pairs.length,
++    perRepoSpan: Object.fromEntries(
++      repoNames.map((name) => [
++        name,
++        {
++          earliest: repoEarliest.get(name) || null,
++          latest: repoLatest.get(name) || null,
++        },
++      ]),
++    ),
++  };
++
++  if (url.searchParams.get('format') === 'csv') {
++    const rows = truncated.map((p) => ({
++      repoA: p.a.repo,
++      fileA: p.a.path,
++      repoB: p.b.repo,
++      fileB: p.b.path,
++      coChanges: p.count,
++      jaccard: p.jaccard,
++    }));
++    const csv = toCsv(rows, [
++      { key: 'repoA' },
++      { key: 'fileA' },
++      { key: 'repoB' },
++      { key: 'fileB' },
++      { key: 'coChanges' },
++      { key: 'jaccard' },
++    ]);
++    writeCsv(res, `${safeFilename(repoNames.join('-vs-'))}-coupling-cross.csv`, csv);
++    return;
++  }
++
++  res.writeHead(200, { 'Content-Type': 'application/json' });
++  res.end(JSON.stringify({ ...meta, pairs: truncated }));
++}
++
++export async function handleCouplingCrossRoute(req, url, res, opts) {
++  if (url.pathname === '/coupling/cross' && req.method === 'GET') {
++    await handleCouplingCross(url, res, opts);
 +    return true;
 +  }
 +  return false;
@@ -1107,6 +1404,255 @@ index 0000000..c57e279
 +export async function handleEntropyRoute(req, url, res, opts) {
 +  if (url.pathname === '/entropy' && req.method === 'GET') {
 +    await handleEntropy(url, res, opts);
++    return true;
++  }
++  return false;
++}
+diff --git a/docker-server-growth-cross.mjs b/docker-server-growth-cross.mjs
+new file mode 100644
+index 0000000..7db9b38
+--- /dev/null
++++ b/docker-server-growth-cross.mjs
+@@ -0,0 +1,243 @@
++/**
++ * Cross-repo growth — ROADMAP Tier 1.3.
++ *
++ * Endpoint:
++ *   GET /growth/cross?repos=A,B[,C][&format=csv]
++ *
++ * For each input repo, gather the same per-snapshot counts the
++ * single-repo /growth endpoint produces, then merge them onto a *union
++ * timeline* sorted by date. For each timeline point, every repo
++ * contributes the counts of its most-recent snapshot at or before that
++ * point — so the chart shows a step function per repo, and the user
++ * can see code mass shift between repos over time.
++ *
++ * Use cases:
++ *   - Monolith → microservices migration: total counts in monolith
++ *     plateau or decrease while new-service counts climb.
++ *   - Cross-team workload: which repo carried the most new code in
++ *     the last quarter.
++ *   - Documentation drift: docs-repo growth vs source-repo growth.
++ *
++ * Implementation notes:
++ *   - Per-repo counts come from each snapshot's `meta.json` (cheap, no
++ *     lbug touch) — same pattern as /entropy. This means we never
++ *     contend for the lbug cache, so multi-repo scans stay parallel-safe.
++ *   - Union-timeline interpolation uses a stable "use the most recent
++ *     known counts" rule. Before a repo's first snapshot it contributes
++ *     zeros across every label. The frontend stacks those into a chart
++ *     that naturally tells the migration story.
++ */
++
++import { join } from 'node:path';
++import { readdir, readFile } from 'node:fs/promises';
++import {
++  findRepoByName,
++  SNAPSHOTS_ROOT,
++  safeSnapshotKey,
++} from './docker-server-snapshots.mjs';
++import { toCsv, writeCsv, safeFilename } from './docker-server-csv.mjs';
++
++const MAX_REPOS = 8;
++
++async function readMeta(storagePath) {
++  try {
++    return JSON.parse(await readFile(join(storagePath, 'meta.json'), 'utf8'));
++  } catch {
++    return null;
++  }
++}
++
++async function listSnapshotMetas(repoName) {
++  const dir = join(SNAPSHOTS_ROOT, safeSnapshotKey(repoName));
++  let entries;
++  try {
++    entries = await readdir(dir, { withFileTypes: true });
++  } catch (err) {
++    if (err && err.code === 'ENOENT') return [];
++    throw err;
++  }
++  const out = [];
++  for (const e of entries) {
++    if (!e.isDirectory()) continue;
++    const snapshotDir = join(dir, e.name);
++    let commit = null;
++    try {
++      commit = JSON.parse(await readFile(join(snapshotDir, 'commit.json'), 'utf8'));
++    } catch {
++      continue;
++    }
++    const meta = await readMeta(join(snapshotDir, 'source', '.gitnexus'));
++    out.push({
++      name: `${repoName}@${e.name}`,
++      date: commit.date,
++      isLive: false,
++      stats: meta?.stats || {},
++    });
++  }
++  return out;
++}
++
++async function gatherRepoTimeline(repoName, api) {
++  const liveEntry = await findRepoByName(repoName, api);
++  if (!liveEntry) return null;
++  const liveStats = liveEntry.stats || {};
++  const liveMeta = await readMeta(
++    join('/data/projects', repoName, '.gitnexus'),
++  ).catch(() => null);
++  const livePoint = {
++    name: repoName,
++    date: liveEntry.indexedAt,
++    isLive: true,
++    stats: liveMeta?.stats || liveStats,
++  };
++  const snapshots = await listSnapshotMetas(repoName);
++  return [...snapshots, livePoint].sort((a, b) =>
++    (a.date || '').localeCompare(b.date || ''),
++  );
++}
++
++// Convert one snapshot's raw `meta.stats` into a counts-by-category map
++// shaped like the single-repo /growth endpoint. The mapping mirrors
++// gitnexus stat keys → label names so frontends can share the same
++// color palette across both endpoints.
++function statsToCounts(stats) {
++  const counts = {};
++  if (!stats || typeof stats !== 'object') return counts;
++  for (const [k, v] of Object.entries(stats)) {
++    if (typeof v !== 'number') continue;
++    // Keep gitnexus naming: "nodes", "edges", "files", "communities",
++    // "processes", "embeddings" stay as-is so the frontend's existing
++    // labels-vs-counts logic still works.
++    counts[k] = v;
++  }
++  return counts;
++}
++
++async function handleGrowthCross(url, res, opts) {
++  const reposParam = url.searchParams.get('repos');
++  if (!reposParam) {
++    res.writeHead(400, { 'Content-Type': 'application/json' });
++    res.end(JSON.stringify({ error: 'missing repos (comma-separated)' }));
++    return;
++  }
++  const repoNames = reposParam
++    .split(',')
++    .map((s) => s.trim())
++    .filter(Boolean)
++    .filter((s) => !s.includes('@'))
++    .slice(0, MAX_REPOS);
++  if (repoNames.length < 2) {
++    res.writeHead(400, { 'Content-Type': 'application/json' });
++    res.end(JSON.stringify({ error: 'need at least 2 distinct repos' }));
++    return;
++  }
++
++  const perRepoTimelines = {};
++  for (const name of repoNames) {
++    const tl = await gatherRepoTimeline(name, opts.api);
++    if (!tl) {
++      res.writeHead(404, { 'Content-Type': 'application/json' });
++      res.end(JSON.stringify({ error: `repo not found: ${name}` }));
++      return;
++    }
++    perRepoTimelines[name] = tl;
++  }
++
++  // Union timeline: every distinct date from any repo, sorted ascending.
++  // Using a Set keyed by ISO string is enough — collisions are rare and
++  // would only deduplicate truly-simultaneous events.
++  const dateSet = new Set();
++  for (const tl of Object.values(perRepoTimelines)) {
++    for (const p of tl) dateSet.add(p.date || '');
++  }
++  const dates = [...dateSet].filter(Boolean).sort();
++  if (dates.length < 2) {
++    res.writeHead(200, { 'Content-Type': 'application/json' });
++    res.end(
++      JSON.stringify({
++        repos: repoNames,
++        timeline: [],
++        labels: [],
++        warning: 'Need at least 2 timeline points across the selected repos.',
++      }),
++    );
++    return;
++  }
++
++  // Per-repo cursor walk: for each timeline date, take each repo's most
++  // recent snapshot at-or-before that date. Linear in (dates × repos).
++  const cursors = Object.fromEntries(repoNames.map((n) => [n, 0]));
++  const lastKnown = Object.fromEntries(repoNames.map((n) => [n, null]));
++  const labelsSet = new Set();
++  const enriched = [];
++
++  for (const date of dates) {
++    for (const name of repoNames) {
++      const tl = perRepoTimelines[name];
++      while (cursors[name] < tl.length && (tl[cursors[name]].date || '') <= date) {
++        lastKnown[name] = tl[cursors[name]];
++        cursors[name]++;
++      }
++    }
++    const byRepo = {};
++    for (const name of repoNames) {
++      const point = lastKnown[name];
++      const counts = point ? statsToCounts(point.stats) : {};
++      for (const k of Object.keys(counts)) labelsSet.add(k);
++      byRepo[name] = counts;
++    }
++    enriched.push({ date, byRepo });
++  }
++
++  // Sort labels by max count across all repos, all points — same
++  // convention as /growth so the color palette is stable.
++  const maxPerLabel = {};
++  for (const point of enriched) {
++    for (const name of repoNames) {
++      const counts = point.byRepo[name];
++      for (const [lbl, c] of Object.entries(counts)) {
++        if (!maxPerLabel[lbl] || c > maxPerLabel[lbl]) maxPerLabel[lbl] = c;
++      }
++    }
++  }
++  const labels = Object.keys(maxPerLabel).sort((a, b) => maxPerLabel[b] - maxPerLabel[a]);
++
++  if (url.searchParams.get('format') === 'csv') {
++    // Long-format: (date, repo, label, count) — easier to pivot in
++    // pandas than a wide table per repo.
++    const rows = [];
++    for (const point of enriched) {
++      for (const name of repoNames) {
++        const counts = point.byRepo[name];
++        for (const lbl of labels) {
++          rows.push({ date: point.date, repo: name, label: lbl, count: counts[lbl] || 0 });
++        }
++      }
++    }
++    const csv = toCsv(rows, [
++      { key: 'date' },
++      { key: 'repo' },
++      { key: 'label' },
++      { key: 'count' },
++    ]);
++    writeCsv(res, `${safeFilename(repoNames.join('-vs-'))}-growth-cross.csv`, csv);
++    return;
++  }
++
++  res.writeHead(200, { 'Content-Type': 'application/json' });
++  res.end(
++    JSON.stringify({
++      repos: repoNames,
++      timeline: enriched,
++      labels,
++    }),
++  );
++}
++
++export async function handleGrowthCrossRoute(req, url, res, opts) {
++  if (url.pathname === '/growth/cross' && req.method === 'GET') {
++    await handleGrowthCross(url, res, opts);
 +    return true;
 +  }
 +  return false;
@@ -2638,10 +3184,10 @@ index 0000000..f6f693f
 +  return false;
 +}
 diff --git a/docker-server.mjs b/docker-server.mjs
-index adf84a0..f3cf118 100644
+index adf84a0..31ccf57 100644
 --- a/docker-server.mjs
 +++ b/docker-server.mjs
-@@ -1,12 +1,47 @@
+@@ -1,12 +1,49 @@
 -import { createReadStream } from 'node:fs';
 -import { stat } from 'node:fs/promises';
 +import { createReadStream, createWriteStream } from 'node:fs';
@@ -2661,6 +3207,8 @@ index adf84a0..f3cf118 100644
 +import { handleOwnershipRoute } from './docker-server-ownership.mjs';
 +import { handleDissonanceRoute } from './docker-server-dissonance.mjs';
 +import { handleSemanticLabelsRoute } from './docker-server-semantic-labels.mjs';
++import { handleCouplingCrossRoute } from './docker-server-coupling-cross.mjs';
++import { handleGrowthCrossRoute } from './docker-server-growth-cross.mjs';
  
  const host = '0.0.0.0';
  const port = Number(process.env.PORT || '4173');
@@ -2692,7 +3240,7 @@ index adf84a0..f3cf118 100644
  const contentTypes = {
    '.css': 'text/css; charset=utf-8',
    '.html': 'text/html; charset=utf-8',
-@@ -34,8 +69,476 @@ function resolvePath(urlPath) {
+@@ -34,8 +71,484 @@ function resolvePath(urlPath) {
    return candidate;
  }
  
@@ -3164,6 +3712,14 @@ index adf84a0..f3cf118 100644
 +  }
 +  // Semantic labels cache (ROADMAP Tier 2.1) — LLM call is frontend-side
 +  if (await handleSemanticLabelsRoute(req, url, res, { api: GITNEXUS_API })) {
++    return;
++  }
++  // Cross-repo coupling (ROADMAP Tier 1.2)
++  if (await handleCouplingCrossRoute(req, url, res, { api: GITNEXUS_API })) {
++    return;
++  }
++  // Cross-repo growth (ROADMAP Tier 1.3)
++  if (await handleGrowthCrossRoute(req, url, res, { api: GITNEXUS_API })) {
 +    return;
 +  }
 +
@@ -4335,17 +4891,18 @@ index 0000000..487fd21
 +};
 diff --git a/gitnexus-web/src/components/CouplingPanel.tsx b/gitnexus-web/src/components/CouplingPanel.tsx
 new file mode 100644
-index 0000000..f91c568
+index 0000000..c2ce8b9
 --- /dev/null
 +++ b/gitnexus-web/src/components/CouplingPanel.tsx
-@@ -0,0 +1,204 @@
-+import { useMemo, useState } from 'react';
+@@ -0,0 +1,371 @@
++import { useEffect, useMemo, useState } from 'react';
 +import {
 +  X,
 +  ArrowRight,
 +  AlertCircle,
 +  Loader2,
 +  Download,
++  Layers,
 +} from '@/lib/lucide-icons';
 +import { useAppState } from '../hooks/useAppState';
 +
@@ -4374,12 +4931,67 @@ index 0000000..f91c568
 +    couplingError,
 +    couplingData,
 +    graph,
++    availableRepos,
 +    setHighlightedNodeIds,
 +    exitCouplingMode,
 +  } = useAppState();
 +  const baseRepo = (projectName || '').split('@')[0];
 +  const [minJaccard, setMinJaccard] = useState(0.5);
 +  const [search, setSearch] = useState('');
++
++  // Cross-repo mode (ROADMAP Tier 1.2). Toggled inside this panel
++  // rather than via the global Timeline button — keeps it self-contained
++  // and avoids piling more toggles on the bar. Eligible repos are the
++  // user's real repos minus snapshots and minus the current one.
++  const eligibleCrossRepos = useMemo(
++    () =>
++      availableRepos
++        .map((r) => r.name)
++        .filter((n) => !n.includes('@') && n !== baseRepo),
++    [availableRepos, baseRepo],
++  );
++  const [crossMode, setCrossMode] = useState(false);
++  const [crossData, setCrossData] = useState<{
++    repos: string[];
++    windowHours: number;
++    totalBuckets: number;
++    totalCrossPairs: number;
++    pairs: {
++      a: { repo: string; path: string };
++      b: { repo: string; path: string };
++      count: number;
++      jaccard: number;
++    }[];
++  } | null>(null);
++  const [crossLoading, setCrossLoading] = useState(false);
++  const [crossError, setCrossError] = useState<string | null>(null);
++
++  // Fetch cross-repo data when the user toggles into cross mode. Re-run
++  // when the eligible repo set changes (e.g. user just indexed a new
++  // repo elsewhere).
++  useEffect(() => {
++    if (!crossMode || !couplingActive || eligibleCrossRepos.length === 0) return;
++    let cancelled = false;
++    setCrossLoading(true);
++    setCrossError(null);
++    const repos = [baseRepo, ...eligibleCrossRepos].join(',');
++    fetch(`/coupling/cross?repos=${encodeURIComponent(repos)}&top=100`, {
++      cache: 'no-store',
++    })
++      .then((r) => r.json().then((b) => (r.ok ? b : Promise.reject(b.error || `HTTP ${r.status}`))))
++      .then((d) => {
++        if (!cancelled) setCrossData(d);
++      })
++      .catch((err) => {
++        if (!cancelled) setCrossError(typeof err === 'string' ? err : 'Cross-repo coupling failed');
++      })
++      .finally(() => {
++        if (!cancelled) setCrossLoading(false);
++      });
++    return () => {
++      cancelled = true;
++    };
++  }, [crossMode, couplingActive, baseRepo, eligibleCrossRepos]);
 +
 +  // Build a path → File-node-id index from the live graph so a row click
 +  // can highlight both endpoints. Doing this lazily / memoized keeps the
@@ -4414,12 +5026,39 @@ index 0000000..f91c568
 +    >
 +      {/* Header */}
 +      <div className="flex shrink-0 items-center gap-2 border-b border-border-subtle px-3 py-2">
-+        <span className="text-xs font-semibold text-text-primary">Temporal coupling</span>
-+        {couplingData && (
++        <span className="text-xs font-semibold text-text-primary">
++          {crossMode ? 'Cross-repo coupling' : 'Temporal coupling'}
++        </span>
++        {!crossMode && couplingData && (
 +          <span className="font-mono text-[10px] text-text-muted">
 +            over {couplingData.totalTransitions} transition
 +            {couplingData.totalTransitions > 1 ? 's' : ''}
 +          </span>
++        )}
++        {crossMode && crossData && (
++          <span className="font-mono text-[10px] text-text-muted" title={crossData.repos.join(' + ')}>
++            {crossData.repos.length} repos · {crossData.totalBuckets} windows
++          </span>
++        )}
++        {/* Cross-repo toggle — only useful when there's at least one
++            other indexed repo to compare against. Disabled otherwise. */}
++        {eligibleCrossRepos.length > 0 && (
++          <button
++            type="button"
++            onClick={() => setCrossMode((v) => !v)}
++            className={`shrink-0 cursor-pointer rounded p-1 transition-colors ${
++              crossMode
++                ? 'bg-accent/20 text-accent'
++                : 'text-text-muted hover:bg-hover hover:text-text-primary'
++            }`}
++            title={
++              crossMode
++                ? 'Switch back to single-repo coupling'
++                : `Switch to cross-repo coupling (${eligibleCrossRepos.join(', ')})`
++            }
++          >
++            <Layers className="h-3.5 w-3.5" />
++          </button>
 +        )}
 +        {couplingData && couplingData.pairs.length > 0 && (
 +          <a
@@ -4455,7 +5094,91 @@ index 0000000..f91c568
 +        </div>
 +      )}
 +
-+      {couplingData && !couplingLoading && (
++      {/* Cross-repo mode: completely different data shape, render the
++          pairs with their repo prefixes. Click only highlights when
++          the file lives in the active repo's graph. */}
++      {crossMode && (
++        <>
++          {crossLoading && (
++            <div className="flex items-center justify-center gap-2 py-6 text-xs text-text-muted">
++              <Loader2 className="h-3.5 w-3.5 animate-spin" />
++              Scanning git logs of {1 + eligibleCrossRepos.length} repos…
++            </div>
++          )}
++          {crossError && (
++            <div className="flex items-start gap-2 px-3 py-3 text-xs text-red-400">
++              <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
++              <span>{crossError}</span>
++            </div>
++          )}
++          {crossData && !crossLoading && (
++            <>
++              <div className="flex-1 overflow-y-auto">
++                {crossData.pairs.length === 0 ? (
++                  <div className="px-3 py-4 text-center text-[11px] text-text-muted italic">
++                    No cross-repo co-changes detected. The repos may have no
++                    overlapping commit windows.
++                  </div>
++                ) : (
++                  crossData.pairs.map((p, i) => {
++                    // Only the file in the *active* repo can be highlighted
++                    // since the graph only shows nodes from the active repo.
++                    const localSide =
++                      p.a.repo === baseRepo ? p.a : p.b.repo === baseRepo ? p.b : null;
++                    const fileId = localSide ? fileIdByPath.get(localSide.path) : undefined;
++                    const canHighlight = !!fileId;
++                    return (
++                      <button
++                        key={`${i}-${p.a.repo}-${p.b.repo}`}
++                        type="button"
++                        onClick={() => {
++                          if (canHighlight) setHighlightedNodeIds(new Set([fileId!]));
++                        }}
++                        disabled={!canHighlight}
++                        className="group flex w-full flex-col gap-1 border-b border-border-subtle px-3 py-2 text-left transition-colors hover:bg-hover disabled:cursor-not-allowed disabled:opacity-50"
++                        title={
++                          canHighlight
++                            ? `Highlight ${localSide!.path} in the active graph (${p.count} co-changes)`
++                            : `Neither file lives in the active graph (${p.count} co-changes)`
++                        }
++                      >
++                        <div className="flex min-w-0 items-center gap-1.5 font-mono text-[11px]">
++                          <span
++                            className="shrink-0 rounded bg-accent/15 px-1 py-0 text-[9px] font-semibold text-accent"
++                            title={p.a.repo}
++                          >
++                            {p.a.repo.slice(0, 8)}
++                          </span>
++                          <span className="min-w-0 truncate text-text-primary">{p.a.path}</span>
++                          <ArrowRight className="h-2.5 w-2.5 shrink-0 text-text-muted" />
++                          <span
++                            className="shrink-0 rounded bg-emerald-500/15 px-1 py-0 text-[9px] font-semibold text-emerald-300"
++                            title={p.b.repo}
++                          >
++                            {p.b.repo.slice(0, 8)}
++                          </span>
++                          <span className="min-w-0 truncate text-text-primary">{p.b.path}</span>
++                        </div>
++                        <div className="flex items-center gap-3 text-[10px] text-text-muted">
++                          <span className="rounded bg-accent/15 px-1.5 py-0.5 font-mono text-accent">
++                            {p.jaccard.toFixed(2)}
++                          </span>
++                          <span className="font-mono">{p.count}× together</span>
++                        </div>
++                      </button>
++                    );
++                  })
++                )}
++              </div>
++              <div className="shrink-0 border-t border-border-subtle bg-elevated px-3 py-1.5 text-[10px] text-text-muted">
++                Cross-repo: {crossData.pairs.length} pairs (capped at 100)
++              </div>
++            </>
++          )}
++        </>
++      )}
++
++      {!crossMode && couplingData && !couplingLoading && (
 +        <>
 +          {/* Filters */}
 +          <div className="space-y-2 border-b border-border-subtle px-3 py-2">
@@ -5950,12 +6673,12 @@ index e34fd43..c9f6f19 100644
            className={
 diff --git a/gitnexus-web/src/components/GrowthChart.tsx b/gitnexus-web/src/components/GrowthChart.tsx
 new file mode 100644
-index 0000000..f0d6351
+index 0000000..cedd939
 --- /dev/null
 +++ b/gitnexus-web/src/components/GrowthChart.tsx
-@@ -0,0 +1,305 @@
-+import { useMemo, useState } from 'react';
-+import { X, Loader2, AlertCircle, TrendingUp, Download } from '@/lib/lucide-icons';
+@@ -0,0 +1,523 @@
++import { useEffect, useMemo, useState } from 'react';
++import { X, Loader2, AlertCircle, TrendingUp, Download, Layers } from '@/lib/lucide-icons';
 +import { useAppState } from '../hooks/useAppState';
 +
 +/**
@@ -5999,10 +6722,68 @@ index 0000000..f0d6351
 +const colorFor = (i: number) => PALETTE[i % PALETTE.length];
 +
 +export const GrowthChart = () => {
-+  const { projectName, growthActive, growthLoading, growthError, growthData, exitGrowthMode } = useAppState();
++  const {
++    projectName,
++    growthActive,
++    growthLoading,
++    growthError,
++    growthData,
++    availableRepos,
++    exitGrowthMode,
++  } = useAppState();
 +  const baseRepo = (projectName || '').split('@')[0];
 +  const [hidden, setHidden] = useState<Set<string>>(new Set());
 +  const [hover, setHover] = useState<{ x: number; y: number; idx: number } | null>(null);
++
++  // Cross-repo mode (ROADMAP Tier 1.3). Local state — same rationale
++  // as CouplingPanel. In cross mode we render one line per repo for a
++  // user-picked label, since per-(repo, label) would be too noisy.
++  const eligibleCrossRepos = useMemo(
++    () =>
++      availableRepos
++        .map((r) => r.name)
++        .filter((n) => !n.includes('@') && n !== baseRepo),
++    [availableRepos, baseRepo],
++  );
++  const [crossMode, setCrossMode] = useState(false);
++  const [crossLabel, setCrossLabel] = useState<string>('nodes');
++  const [crossData, setCrossData] = useState<{
++    repos: string[];
++    labels: string[];
++    timeline: { date: string; byRepo: Record<string, Record<string, number>> }[];
++  } | null>(null);
++  const [crossLoading, setCrossLoading] = useState(false);
++  const [crossError, setCrossError] = useState<string | null>(null);
++
++  useEffect(() => {
++    if (!crossMode || !growthActive || eligibleCrossRepos.length === 0) return;
++    let cancelled = false;
++    setCrossLoading(true);
++    setCrossError(null);
++    const repos = [baseRepo, ...eligibleCrossRepos].join(',');
++    fetch(`/growth/cross?repos=${encodeURIComponent(repos)}`, { cache: 'no-store' })
++      .then((r) => r.json().then((b) => (r.ok ? b : Promise.reject(b.error || `HTTP ${r.status}`))))
++      .then((d) => {
++        if (cancelled) return;
++        setCrossData(d);
++        // Default the label to the first one the server returned.
++        if (Array.isArray(d.labels) && d.labels.length > 0 && !d.labels.includes(crossLabel)) {
++          setCrossLabel(d.labels[0]);
++        }
++      })
++      .catch((err) => {
++        if (!cancelled) setCrossError(typeof err === 'string' ? err : 'Cross-repo growth failed');
++      })
++      .finally(() => {
++        if (!cancelled) setCrossLoading(false);
++      });
++    return () => {
++      cancelled = true;
++    };
++    // crossLabel intentionally not in deps — re-selecting the label
++    // just re-renders, no re-fetch.
++    // eslint-disable-next-line react-hooks/exhaustive-deps
++  }, [crossMode, growthActive, baseRepo, eligibleCrossRepos]);
 +
 +  const visibleLabels = useMemo(
 +    () => (growthData?.labels || []).filter((l) => !hidden.has(l)),
@@ -6043,11 +6824,36 @@ index 0000000..f0d6351
 +      {/* Header */}
 +      <div className="flex shrink-0 items-center gap-2 border-b border-border-subtle px-3 py-2">
 +        <TrendingUp className="h-3.5 w-3.5 text-cyan-400" />
-+        <span className="text-xs font-semibold text-text-primary">Growth by category</span>
-+        {growthData && (
++        <span className="text-xs font-semibold text-text-primary">
++          {crossMode ? 'Cross-repo growth' : 'Growth by category'}
++        </span>
++        {!crossMode && growthData && (
 +          <span className="font-mono text-[10px] text-text-muted">
 +            {n} points • {growthData.labels.length} categories
 +          </span>
++        )}
++        {crossMode && crossData && (
++          <span className="font-mono text-[10px] text-text-muted">
++            {crossData.repos.length} repos · {crossData.timeline.length} points
++          </span>
++        )}
++        {eligibleCrossRepos.length > 0 && (
++          <button
++            type="button"
++            onClick={() => setCrossMode((v) => !v)}
++            className={`shrink-0 cursor-pointer rounded p-1 transition-colors ${
++              crossMode
++                ? 'bg-cyan-500/20 text-cyan-300'
++                : 'text-text-muted hover:bg-hover hover:text-text-primary'
++            }`}
++            title={
++              crossMode
++                ? 'Switch back to single-repo growth'
++                : `Switch to cross-repo growth (${eligibleCrossRepos.join(', ')})`
++            }
++          >
++            <Layers className="h-3.5 w-3.5" />
++          </button>
 +        )}
 +        {growthData && (
 +          <a
@@ -6082,7 +6888,142 @@ index 0000000..f0d6351
 +        </div>
 +      )}
 +
-+      {growthData && !growthLoading && (
++      {/* Cross-repo branch: one line per repo for the selected label. */}
++      {crossMode && (
++        <>
++          {crossLoading && (
++            <div className="flex items-center justify-center gap-2 py-8 text-xs text-text-muted">
++              <Loader2 className="h-3.5 w-3.5 animate-spin" />
++              Aggregating snapshots from {1 + eligibleCrossRepos.length} repos…
++            </div>
++          )}
++          {crossError && (
++            <div className="flex items-start gap-2 px-3 py-3 text-xs text-red-400">
++              <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
++              <span>{crossError}</span>
++            </div>
++          )}
++          {crossData && !crossLoading && crossData.timeline.length === 0 && (
++            <div className="px-3 py-4 text-center text-[11px] text-text-muted italic">
++              No timeline points across the selected repos. Capture snapshots first.
++            </div>
++          )}
++          {crossData && !crossLoading && crossData.timeline.length > 0 && (
++            <>
++              {(() => {
++                const ts = crossData.timeline;
++                const cn = ts.length;
++                const xFor = (i: number) =>
++                  cn === 1 ? innerW / 2 : (i / (cn - 1)) * innerW;
++                const repoMax: Record<string, number> = {};
++                let yMaxCross = 1;
++                for (const repo of crossData.repos) {
++                  repoMax[repo] = 0;
++                  for (const p of ts) {
++                    const v = p.byRepo[repo]?.[crossLabel] || 0;
++                    if (v > repoMax[repo]) repoMax[repo] = v;
++                    if (v > yMaxCross) yMaxCross = v;
++                  }
++                }
++                const yFor = (v: number) => innerH - (v / yMaxCross) * innerH;
++                return (
++                  <div className="shrink-0 px-3 pt-2">
++                    {/* Label selector — switching does NOT re-fetch, we
++                        already have all labels in crossData. */}
++                    <div className="mb-2 flex items-center gap-2 text-[10px] text-text-muted">
++                      <span>Metric:</span>
++                      <select
++                        value={crossLabel}
++                        onChange={(e) => setCrossLabel(e.target.value)}
++                        className="cursor-pointer rounded-md border border-border-default bg-void px-1 py-0.5 font-mono text-[10px] text-text-primary outline-none focus:border-accent/40"
++                      >
++                        {crossData.labels.map((lbl) => (
++                          <option key={lbl} value={lbl}>
++                            {lbl}
++                          </option>
++                        ))}
++                      </select>
++                    </div>
++                    <svg
++                      width={width - 24}
++                      height={innerH + CHART_PAD.top + CHART_PAD.bottom}
++                    >
++                      <g transform={`translate(${CHART_PAD.left},${CHART_PAD.top})`}>
++                        {[0, 0.25, 0.5, 0.75, 1].map((t) => {
++                          const y = innerH - t * innerH;
++                          return (
++                            <g key={t}>
++                              <line
++                                x1={0}
++                                x2={innerW}
++                                y1={y}
++                                y2={y}
++                                stroke="#2a2a3a"
++                                strokeDasharray={t === 0 ? '0' : '2,3'}
++                              />
++                              <text
++                                x={-6}
++                                y={y + 3}
++                                textAnchor="end"
++                                fontSize="9"
++                                fill="#5a5a70"
++                                fontFamily="monospace"
++                              >
++                                {Math.round(t * yMaxCross)}
++                              </text>
++                            </g>
++                          );
++                        })}
++                        {crossData.repos.map((repo, i) => {
++                          const stroke = colorFor(i);
++                          const d = ts
++                            .map((p, idx) => {
++                              const v = p.byRepo[repo]?.[crossLabel] || 0;
++                              return `${idx === 0 ? 'M' : 'L'}${xFor(idx)},${yFor(v)}`;
++                            })
++                            .join(' ');
++                          return (
++                            <g key={repo}>
++                              <path d={d} fill="none" stroke={stroke} strokeWidth={1.5} />
++                              {ts.map((p, idx) => (
++                                <circle
++                                  key={`${repo}-${idx}`}
++                                  cx={xFor(idx)}
++                                  cy={yFor(p.byRepo[repo]?.[crossLabel] || 0)}
++                                  r={2}
++                                  fill={stroke}
++                                />
++                              ))}
++                            </g>
++                          );
++                        })}
++                      </g>
++                    </svg>
++                  </div>
++                );
++              })()}
++
++              {/* Legend = repos */}
++              <div className="flex max-h-[100px] flex-wrap gap-1 overflow-y-auto border-t border-border-subtle px-3 py-2">
++                {crossData.repos.map((repo, i) => (
++                  <span
++                    key={repo}
++                    className="flex items-center gap-1 rounded-md border border-border-subtle bg-elevated px-1.5 py-0.5 text-[10px] font-mono text-text-secondary"
++                  >
++                    <span
++                      className="inline-block h-1.5 w-1.5 rounded-full"
++                      style={{ backgroundColor: colorFor(i) }}
++                    />
++                    {repo}
++                  </span>
++                ))}
++              </div>
++            </>
++          )}
++        </>
++      )}
++
++      {!crossMode && growthData && !growthLoading && (
 +        <>
 +          <div className="relative shrink-0 px-3 pt-2">
 +            <svg width={width - 24} height={innerH + CHART_PAD.top + CHART_PAD.bottom}>
