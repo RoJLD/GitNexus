@@ -133,6 +133,71 @@ Théorique : 10 KB / commit. Réel : ?
 
 **Spike** : compter les nodes/edges modified dans 10 commits réels d'hmm_studio, sérialiser, mesurer.
 
+#### ✅ SPIKE v2 EXÉCUTÉ 2026-05-26 — résultats
+
+**Setup** : patcher run-analyze.js compilé (via `scripts/spike-incremental-dump.mjs`) pour serialiser le `subgraph` en JSON juste après `extractChangedSubgraph()` et avant `loadGraphToLbug()`, gated par env vars. Trigger un incremental analyze sur le worktree hmm_studio-spike-v2 après `git checkout 703b927`.
+
+**Gotcha au passage** : MSYS Git Bash convertit `/tmp/dumps` en `C:/Users/.../Temp/dumps` avant `docker exec`. Fix : prefix `MSYS_NO_PATHCONV=1`. À documenter pour qui reprend.
+
+**Shape mesurée** (commit touchant 9 changed + 2 added, BFS importers porte à 40 fichiers) :
+
+```
+hashDiff.changed:    9 files
+hashDiff.added:      2 files
+hashDiff.deleted:    0 files
+hashDiff.toWrite:   11 files (= changed + added)
+effectiveWriteSet:  40 files (BFS importers à depth ≤ 4)
+
+nodesCount:        717
+relationshipsCount: 2806
+
+Node label distribution:
+  File:       35
+  Folder:      5
+  Section:    35
+  Interface:  33
+  Const:     217
+  Function:  140
+  Community:  94  ← GLOBAL (réémis à chaque pass)
+  Process:   158  ← GLOBAL (réémis à chaque pass)
+
+Sample node:
+  { id: "File:CLAUDE.md", label: "File",
+    properties: { name: "CLAUDE.md", filePath: "CLAUDE.md" } }
+
+Sample relationship:
+  { id: "CONTAINS:Folder:docs->Folder:docs/sources", type: "CONTAINS",
+    sourceId: "Folder:docs", targetId: "Folder:docs/sources",
+    confidence: 1, reason: "" }
+
+Storage:
+  Full subgraph JSON: 1005 KB
+  Just node ids+labels: 54.7 KB (×18 plus petit)
+```
+
+**Implications pour Phase C** :
+
+1. **`hashDiff.deleted`** est dans le dump → **les REMOVALS sont trackables** (réponse au problème §3 de l'audit initial). Pas besoin de patch supplémentaire pour les capturer.
+
+2. **Storage brut = 1 MB/commit**. Pour 1000 commits = 1 GB par repo. **Inacceptable tel quel.** Mitigations cumulables :
+   - Drop Community + Process (94+158 = 252 nodes, globaux donc inutiles dans le diff)
+   - Filtrer les relationships aux fichiers in effectiveWriteSet (au lieu du sub-graph complet)
+   - Garder seulement les fields essentiels (drop `confidence`, `reason` quand vides)
+   - Gzip à l'écriture
+
+   Estimation cumulée : **~10-30 KB/commit** → 10-30 MB pour 1000 commits = ✅ faisable.
+
+3. **`subgraph` est ce que loadGraphToLbug **insère** après le delete des fichiers du writeset.** Il contient donc l'ÉTAT POST-COMMIT pour les fichiers touchés, pas un "diff" au sens strict. Pour reconstituer le graph à un commit X :
+   - Baseline = full snapshot existant le plus proche
+   - Pour chaque commit entre baseline et X : appliquer **delete des nodes des fichiers in hashDiff.deleted ∪ hashDiff.toWrite**, puis **add des nodes/edges du subgraph dumped**
+   - C'est exactement ce que gitnexus fait en interne — on le replay côté wrapper
+
+4. **L'effectiveWriteSet (40 files vs 11 touchés) est important** : la BFS importers garantit qu'on capture la propagation cross-file. Sans elle, on raterait les CALLS edges qui ont changé dans un fichier importateur. Donc on ne peut pas simplement filtrer aux 11 hashDiff.toWrite — il faut garder les 40.
+
+5. **L'incremental dump est obtenable via patch JS post-install** — pattern conforme à `patch-lbug-staleness.mjs`. Robuste tant que le marker `const subgraph = extractChangedSubgraph(...)` survit aux bumps upstream.
+
+**Verdict Spike v2** : ✅ **Implémentation Phase C confirmée viable**. Effort estimé maintenu à 12-17 jours.
+
 ### 3.3 Le drift accumulé sur N commits → quand re-baseline ?
 
 Le pipeline upstream reparse tout à chaque pass — donc en théorie pas de drift. Mais si on commence à persister des diffs et reconstruire from baseline, les imports résolus à C^ peuvent ne plus matcher ceux résolus à C (un import a été ajouté dans un fichier non-modifié par le commit qu'on regarde — edge case rare mais possible).
