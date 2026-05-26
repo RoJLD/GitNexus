@@ -51,6 +51,14 @@ L'install npm réussit (warnings EBADENGINE) mais vitest n'exécute pas les test
 | 40-45 | E2E Playwright specs | Playwright config + scripts dépendent de vitest |
 | 50 (smoke run) | Final smoke validation | `npm run test:smoke` |
 
+## Bugs additionnels découverts pendant la dette
+
+À corriger en même temps que le déblocage Phase 1b.
+
+| Date | Découverte | Localisation à patcher | Origine |
+|---|---|---|---|
+| 2026-05-26 | `ApiClient.health()` appelle `GET /health` qui renvoie 404 sur l'API server v1.6.5 (le bon path est `/api/health`). | [`tests/integration/helpers/api-client.mjs`](../../../tests/integration/helpers/api-client.mjs) — méthode `health()` ligne ~16 : remplacer `'/health'` par `'/api/health'`. Côté `wait-ready.mjs`, vérifier que la condition `res.status === 'ok' \|\| res.ok === true` matche bien le shape renvoyé par `/api/health` (sinon adapter). | Smoke loop post-bump v1.6.5 (commit `d4169463`). Le helper a été écrit sur la base v1.6.3 ; soit `/health` a été renommé entre v1.6.3 et v1.6.5, soit il n'a jamais existé et le helper était spéculatif depuis le départ. |
+
 ## Conditions de déblocage
 
 1. Installer Node 22 LTS (≥ 22.12.0).
