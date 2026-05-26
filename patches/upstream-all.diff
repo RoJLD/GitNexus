@@ -2672,10 +2672,10 @@ index 0000000..71f15da
 +}
 diff --git a/docker-server-ghosts.mjs b/docker-server-ghosts.mjs
 new file mode 100644
-index 0000000..1f4d9d1
+index 0000000..2c0f1d0
 --- /dev/null
 +++ b/docker-server-ghosts.mjs
-@@ -0,0 +1,168 @@
+@@ -0,0 +1,297 @@
 +/**
 + * I/O wrapper + route handlers for the roadmap-predictive CORE.
 + * Imports pure fns from docker-server-ghosts-core.mjs.
@@ -2689,6 +2689,129 @@ index 0000000..1f4d9d1
 +import { parseRoadmap, renderRoadmapYml, computeStatus } from './docker-server-ghosts-core.mjs';
 +
 +const execFileP = promisify(execFile);
++
++// --- Plugin-aware ghost-source registry ---
++//
++// A ghost source is `{ name: string, fetchGhosts: async (repoPath) => GhostInput[] }`.
++// The builtin source (`roadmap-md`) parses ROADMAP.md at the repo root and is
++// always registered at module load. External sources can be added via
++// `registerGhostSource`; their ghosts get merged into `syncGhostsForRepo` /
++// `syncGhostsForSnapshot`, with the builtin winning on `id` conflicts.
++//
++// Spec : docs/superpowers/specs/2026-05-26-roadmap-predictive-core-design.md (Update delta b).
++
++const BUILTIN_GHOST_SOURCE_NAME = 'roadmap-md';
++
++/** @type {Map<string, { name: string, fetchGhosts: Function }>} */
++const ghostSources = new Map();
++
++function assertValidSource(source) {
++  if (!source || typeof source !== 'object') {
++    throw new TypeError('registerGhostSource: source must be an object');
++  }
++  if (typeof source.name !== 'string' || source.name.length === 0) {
++    throw new TypeError('registerGhostSource: source.name must be a non-empty string');
++  }
++  if (typeof source.fetchGhosts !== 'function') {
++    throw new TypeError('registerGhostSource: source.fetchGhosts must be an async function');
++  }
++  if (source.fetchGhosts.constructor?.name !== 'AsyncFunction') {
++    throw new TypeError(
++      `registerGhostSource: source.fetchGhosts must be declared async (got ${source.fetchGhosts.constructor?.name || 'function'})`,
++    );
++  }
++}
++
++/**
++ * Public : register an external ghost source. The builtin source `roadmap-md`
++ * cannot be replaced — calling with that name is a no-op + stderr warning.
++ *
++ * @param {{ name: string, fetchGhosts: (repoPath: string) => Promise<Array> }} source
++ */
++export function registerGhostSource(source) {
++  assertValidSource(source);
++  if (source.name === BUILTIN_GHOST_SOURCE_NAME) {
++    console.warn(
++      `[ghosts] registerGhostSource: cannot replace builtin source "${BUILTIN_GHOST_SOURCE_NAME}" — ignoring`,
++    );
++    return;
++  }
++  ghostSources.set(source.name, { name: source.name, fetchGhosts: source.fetchGhosts });
++}
++
++/**
++ * Public : list registered ghost source names (builtin first, then external
++ * in insertion order). Useful for tests and the future Audit/Plane connector.
++ */
++export function listGhostSources() {
++  return [...ghostSources.keys()];
++}
++
++/**
++ * Test-only : clear non-builtin sources. The builtin always persists.
++ * Use in `beforeEach` / `afterEach` to keep integration tests deterministic.
++ */
++export function _resetGhostSourcesForTests() {
++  for (const name of [...ghostSources.keys()]) {
++    if (name !== BUILTIN_GHOST_SOURCE_NAME) ghostSources.delete(name);
++  }
++  // Defensive : re-register builtin if for some reason it was wiped.
++  if (!ghostSources.has(BUILTIN_GHOST_SOURCE_NAME)) {
++    registerBuiltinGhostSource();
++  }
++}
++
++function registerBuiltinGhostSource() {
++  ghostSources.set(BUILTIN_GHOST_SOURCE_NAME, {
++    name: BUILTIN_GHOST_SOURCE_NAME,
++    fetchGhosts: async (repoPath) => parseRoadmap(await readRoadmapMd(repoPath)),
++  });
++}
++
++// Register the builtin at module load. Must come before any consumer can
++// import this module — that's why this block lives at the top of the file.
++registerBuiltinGhostSource();
++
++/**
++ * Internal : iterate all registered sources, fetch their declared ghosts and
++ * merge them by `id`. The builtin (`roadmap-md`) wins on id conflicts. Each
++ * surviving ghost gets a `source: <name>` field added so the runtime JSON
++ * can attribute it.
++ *
++ * Returns an array of GhostInput-like objects with an extra `source` field.
++ */
++async function fetchAndMergeDeclaredGhosts(repoPath) {
++  /** @type {Map<string, any>} */
++  const byId = new Map();
++  // Pull builtin first so it gets to claim its ids unconditionally.
++  const orderedSources = [
++    ghostSources.get(BUILTIN_GHOST_SOURCE_NAME),
++    ...[...ghostSources.values()].filter(s => s.name !== BUILTIN_GHOST_SOURCE_NAME),
++  ].filter(Boolean);
++
++  for (const src of orderedSources) {
++    let ghosts;
++    try {
++      ghosts = await src.fetchGhosts(repoPath);
++    } catch (err) {
++      console.warn(`[ghosts] source "${src.name}" threw — ignoring: ${err?.message || err}`);
++      continue;
++    }
++    if (!Array.isArray(ghosts)) continue;
++    for (const g of ghosts) {
++      if (!g || typeof g.id !== 'string') continue;
++      if (src.name === BUILTIN_GHOST_SOURCE_NAME) {
++        // Builtin always wins. Tag it for downstream consumers.
++        byId.set(g.id, { ...g, source: BUILTIN_GHOST_SOURCE_NAME });
++      } else if (!byId.has(g.id)) {
++        // External : add only if not shadowed by builtin (or an earlier external).
++        byId.set(g.id, { ...g, source: src.name });
++      }
++      // else: shadowed, drop silently.
++    }
++  }
++  return [...byId.values()];
++}
 +
 +async function fileExists(p) {
 +  try { await access(p); return true; } catch { return false; }
@@ -2765,6 +2888,10 @@ index 0000000..1f4d9d1
 +
 +    result.push({
 +      id: declared.id,
++      // Carry the source attribution into the runtime JSON. Falls back to the
++      // builtin when an upstream caller passes a bare GhostInput[] without
++      // attribution (e.g. an older code path).
++      source: declared.source || BUILTIN_GHOST_SOURCE_NAME,
 +      declared,
 +      plannedAt,
 +      materializedAt,
@@ -2788,10 +2915,12 @@ index 0000000..1f4d9d1
 +
 +/**
 + * Public : sync at HEAD, write roadmap.yml + .gitnexus/ghosts.json.
++ * Iterates every registered ghost source and merges them by id (builtin wins).
 + */
 +export async function syncGhostsForRepo(repoPath) {
-+  const md = await readRoadmapMd(repoPath);
-+  const declared = parseRoadmap(md);
++  const declared = await fetchAndMergeDeclaredGhosts(repoPath);
++  // renderRoadmapYml receives the merged-and-deduped declared array — no
++  // double-rendering when builtin + external collide.
 +  const yml = renderRoadmapYml(declared);
 +
 +  let previous = null;
@@ -2811,10 +2940,10 @@ index 0000000..1f4d9d1
 +
 +/**
 + * Public : sync inside a snapshot's directory. Does NOT touch the latest ghosts.json.
++ * Uses the same registry merge as `syncGhostsForRepo`.
 + */
 +export async function syncGhostsForSnapshot(repoPath, snapshotDir, sha) {
-+  const md = await readRoadmapMd(repoPath);
-+  const declared = parseRoadmap(md);
++  const declared = await fetchAndMergeDeclaredGhosts(repoPath);
 +
 +  // For a historical snapshot, we re-derive from the markdown at this commit.
 +  // plannedAt/materializedAt are sealed to this sha if declared-status is
