@@ -248,6 +248,40 @@ const TOOLS = [
     handler: ({ repo, sha }) => callWeb('/commit/footprint', { repo, sha }),
   },
   {
+    name: 'gitnexus_snapshot_from_pr',
+    description: 'PR-mode snapshot on-demand (Phase B of incremental-snapshots design). Resolves two refs (base + head — branch names, tags, SHAs, HEAD~N…) to SHAs, then snapshots both commits if not already done. Returns the two snapshot keys + a `diffUrl` to open the existing diff-visual UI between them. Use dryRun:true first to verify the refs resolve cleanly before paying the snapshot cost (~3-5 min × 2). Generic — does NOT require GitHub integration. For a real PR workflow, pass `base=main&head=feature/x`.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        repo: { type: 'string' },
+        base: { type: 'string', description: 'Base ref: branch / tag / SHA / HEAD~N.' },
+        head: { type: 'string', description: 'Head ref: branch / tag / SHA / HEAD~N.' },
+        dryRun: { type: 'boolean', default: false, description: 'Resolve SHAs + plan without snapshotting.' },
+      },
+      required: ['repo', 'base', 'head'],
+      additionalProperties: false,
+    },
+    handler: async ({ repo, base, head, dryRun }) => {
+      const qs = new URLSearchParams({ repo, base, head });
+      const url = `${WEB_URL}/snapshot/from-pr?${qs.toString()}`;
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+      try {
+        const resp = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ dryRun: !!dryRun }),
+          signal: controller.signal,
+        });
+        const json = await resp.json().catch(() => ({}));
+        if (!resp.ok) throw new Error(json?.error || `HTTP ${resp.status}`);
+        return json;
+      } finally {
+        clearTimeout(timer);
+      }
+    },
+  },
+  {
     name: 'gitnexus_snapshot_auto',
     description: 'Auto-snapshot the most "interesting" commits in a window — those whose entropy delta (per /entropy/commits) is in the top-P percent. Phase A of the incremental-snapshots design. Densifies the snapshot timeline at the moments that matter without forcing a full per-commit pass. ALWAYS call with dryRun:true first to inspect the plan — actual snapshots cost ~3-5 minutes each in compute and ~50 MB each in storage. Hard cap on maxToCreate (≤5 by default, env-overrideable) protects against runaway requests. Source of defaults: `.gitnexus.json > auto_snapshot` if present.',
     inputSchema: {

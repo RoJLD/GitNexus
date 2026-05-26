@@ -1,7 +1,7 @@
 # GitNexus — Roadmap
 
 État vivant des fonctionnalités déjà livrées et des prochaines pistes.
-Dernière mise à jour : 2026-05-26 (Phase A incremental-snapshots livrée : `/snapshot/auto` qui snapshotte les commits aux pics d'entropy avec debounce + cap — densifie la timeline sans exploser le coût).
+Dernière mise à jour : 2026-05-26 (Phase B incremental-snapshots livrée : `/snapshot/from-pr` qui snapshotte 2 refs on-demand pour le workflow PR review — A+B couvrent les use cases sans investir dans le vrai incremental).
 
 > 📋 **Voir aussi** [INVENTORY.md](INVENTORY.md) — état des lieux complet :
 > features upstream + nos ajouts + distance avec upstream. À utiliser
@@ -53,6 +53,7 @@ un nom marketing — et son premier pas concret.
 | 33 | **Snapshot preload (Play smoothness)** : bouton Preload dans la Timeline, fetch parallel pool=3 de tous les snapshots du base repo en mémoire, switchRepo sert depuis le cache → frame swap instantané (pas de LoadingOverlay entre frames du Play loop). Badge "N/M" cached + bouton clear + cancel-able. Invalidation auto au switch de base repo | `useAppState` cache Map + actions, `Timeline` Preload button |
 | 34 | **Commit overlay (Tier 2bis.2 follow-up)** : `GET /commit/footprint?repo=&sha=` retourne files touched + status (A/M/D) via `git show --name-status`. Bouton "Show on graph" dans le drill-down de EntropyCommitTimeline → résout files → node IDs (par `filePath` match dans le graph chargé) → `setHighlightedNodeIds`. Banner partial-match si fichiers non-résolus (deletions, renames, configs non-tracked). MCP tool `gitnexus_commit_footprint`. **Honest framing** : ce n'est PAS le graph reconstruit au commit, c'est le footprint highlighté sur le snapshot le plus proche. Pour le vrai per-commit graph → snapshot incremental (chantier suivant) | `/commit/footprint`, MCP tool, `EntropyCommitTimeline` Show/Hide button |
 | 35 | **Auto-snapshot aux pics — Phase A** : `POST /snapshot/auto?repo=` qui (1) attribue les deltas entropy par commit (réutilise l'algo de /entropy/commits), (2) garde top-P% par \|Δ\|, (3) filtre merges + minDelta + debounce, (4) cap maxToCreate ≤ 5 (HARD_CAP env-overrideable), (5) `dryRun: true` retourne le plan, (6) sinon createSnapshot séquentiel. Surface config `.gitnexus.json > auto_snapshot`. MCP tool `gitnexus_snapshot_auto` (17 tools). Live test : 1 snapshot créé end-to-end en 55s sur hmm_studio | `/snapshot/auto`, `upstream/docker-server-snapshot-auto.mjs`, parser config étendu |
+| 36 | **PR-mode snapshot on-demand — Phase B** : `POST /snapshot/from-pr?repo=&base=&head=` qui résout 2 refs (branches/tags/SHAs/HEAD~N), snapshotte les 2 si pas déjà, retourne `{ base, head, diffUrl }`. Pas de GitHub API — refs génériques, agnostique de la forge. `dryRun: true` valide les refs sans payer le coût. Degenerate case (base==head) géré avec `warning`. MCP tool `gitnexus_snapshot_from_pr` (18 tools) | `/snapshot/from-pr`, `upstream/docker-server-snapshot-from-pr.mjs` |
 
 Toutes les analytics ci-dessus marchent dans un seul repo. La granularité
 est le node gitnexus (File, Function, Class, Section, …).
