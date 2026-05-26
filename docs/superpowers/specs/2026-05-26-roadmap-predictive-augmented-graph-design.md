@@ -244,3 +244,33 @@ Les ghosts `critical` sont aussi ceux que le mécanisme cleanup (cf [sous-spec c
 ### Effort additionnel
 
 **~0.3 jour** : implémentation + test + intégration dans le reducer Sigma (passer `opacity` et `outlineColor` au programme custom).
+
+---
+
+## Update 2026-05-26 — Extension future : "Augmented Timeline" (lecture conv Gemini brute)
+
+Après lecture de la conversation Gemini brute (au-delà du résumé via la [review externe](2026-05-26-ghost-nodes-external-review.md)), une intuition a émergé qui ni notre brainstorm ni la review n'avaient capturée :
+
+Le **"Gantt Structurel"** proposé par Gemini (Y = topologie, slider temporel reconfigure le graphe) **n'est pas le même objet que notre Gantt panel actuel** (vue calendaire tabulaire). C'est en fait la **fusion Augmented graph + Timeline** : faire scrubber le slider Timeline existant tout en affichant les ghosts pertinents pour chaque instant.
+
+### Concept
+
+- Aujourd'hui : Timeline (livré #7) scrub le **passé** avec play/pause sur les snapshots
+- Aujourd'hui : Augmented graph (cette sub-spec) affiche les ghosts du **futur** sur le graph HEAD
+- **Augmented Timeline** = combiner les deux : au temps T :
+  - Affiche les nodes réels de l'état du repo à T (Timeline existante)
+  - Affiche les ghosts qui étaient `planned` à T mais pas encore `materialized`
+  - Quand le slider passe la date `materializedAt` d'un ghost, sa version fantôme disparaît et le node réel apparaît
+  - Démonstration visuelle de la matérialisation au fil du temps
+
+### Statut
+
+**Hors-scope** de cette sub-spec. Note d'extension parquée. À brainstormer comme sous-spec dédiée si demandé après la livraison d'Augmented graph + Gantt.
+
+### Pourquoi pas dans le Gantt panel ?
+
+Le Gantt panel actuel est **complémentaire** : vue calendaire tabulaire pour communiquer un planning, exporter un CSV. L'Augmented Timeline serait **différent** : vue topologique scrubable pour observer l'évolution. Les deux ont leur valeur.
+
+### Effort estimé (si livré)
+
+**~1-2 jours** une fois Augmented graph + Timeline integration trouvée. La mécanique de scrubbing existe déjà côté Timeline ; la mécanique d'overlay ghosts existe déjà côté Augmented graph. Il s'agit de connecter les deux et de filtrer les ghosts selon le temps actif.

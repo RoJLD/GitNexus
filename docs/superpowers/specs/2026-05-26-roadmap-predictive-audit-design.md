@@ -237,3 +237,62 @@ Dans `AuditSummary` (5 cards initialement), ajout d'une **6ème card** "Expired"
 ### Effort additionnel
 
 **~0.3 jour** : pure fn `computeExpired` + endpoint enrichi + card UI + test.
+
+---
+
+## Update 2026-05-26 — 7ème métrique `placementAccuracy` (lecture conv Gemini brute)
+
+Après lecture de la conversation Gemini brute (au-delà du résumé via la [review externe](2026-05-26-ghost-nodes-external-review.md)), le concept de "Delta Engine" — distance entre ghost prévu et matérialisation réelle dans le graph — gagne en clarté.
+
+Reformulé concrètement, ce n'est pas un nouveau "engine" mais **Dissonance appliqué aux ghosts** : quand un ghost se matérialise, le node réel atterrit-il dans la même communauté Leiden que ses expectedLinks ? Si oui, la prédiction architecturale a tenu. Si non, il y a eu une **dérive de placement** entre design et impl.
+
+### Métrique `placementAccuracy`
+
+```json
+"placementAccuracy": {
+  "globalScore": 0.78,                    // % de ghosts bien placés
+  "wellPlaced": 18,                       // matérialization dans la community attendue
+  "drifted": 5,                           // matérialization dans une community différente
+  "noReference": 1,                       // ghost sans expectedLinks matchant un node existant pré-matérialization
+  "topDrifters": [                        // jusqu'à 5
+    {
+      "id": "tier-2-3-what-if-simulator",
+      "expectedCommunity": "components/auth",
+      "actualCommunity": "components/utils",
+      "title": "What-if simulator"
+    }
+  ]
+}
+```
+
+### Algorithme
+
+Pour chaque ghost en status `materialized` :
+1. Récupérer la community Leiden majoritaire des nodes pointés par les `expectedLinks` matchés **avant la matérialization** (utilise un snapshot juste avant `materializedAt.commit`)
+2. Récupérer la community Leiden du node réel qui matche `links[].file` **après la matérialization**
+3. Comparer : si même community → `wellPlaced` ; si différente → `drifted` (record drift)
+4. Si pas de référence (pas d'expectedLinks matchés à l'époque) → `noReference`
+
+### Pourquoi c'est utile
+
+Signale les **divergences silencieuses** entre design et impl. Un ghost qui a `materialized: true` peut quand même indiquer un échec si le code a fini ailleurs. Complémentaire à `slippage` (temporel) et `planChurn` (instabilité de définition).
+
+### Dépendance
+
+Nécessite une **snapshot juste avant `materializedAt.commit`** pour avoir l'état pré-matérialization. Si pas dispo (e.g. ghost matérialisé dans le 1er commit), retourne `noReference`. Pas de drift hallucinée.
+
+### Test additionnel
+
+`tests/unit/ghost-audit-placement.test.mjs` — couvre 3 cas : well-placed, drifted, no-reference.
+
+### Effort additionnel
+
+**~0.4 jour** : pure fn `computePlacementAccuracy` + intégration endpoint + UI card additionnelle.
+
+### Cohérence avec Dissonance
+
+C'est essentiellement le même calcul que Tier 2.2 Dissonance (community détectée vs domaine déclaré), mais appliqué à la dimension **temps** plutôt que **domaine** :
+- **Dissonance** : "le code est-il dans le bon cluster vs où il devrait être thématiquement ?"
+- **placementAccuracy** : "le code matérialisé est-il dans le cluster où il devait atterrir vs où il a été planifié ?"
+
+Réutilisation possible du `clusterPurity` core fn de la Dissonance feature.
