@@ -43,27 +43,71 @@ INVENTORY, add tests if applicable):
    - "Partie B — Nos ajouts" or wherever the relevant section is.
    - The point is that someone reading INVENTORY alone gets the truth.
 
-4. **Commit at the gitnexus folder root** (this folder is the git repo).
-   - Include all three: source files (top level only — `upstream/` is
-     `.gitignore`-d), `patches/upstream-all.diff`, and the doc updates.
+4. **Add the feature to the test pyramid** (see "Tests & CI/CD" below).
+   New endpoint → integration test in `tests/integ/endpoints/`. New
+   React component → component test under `tests/components/`. New pure
+   util → unit test. If you can't tell which tier applies, default to
+   the lowest tier that actually exercises the new code.
+
+5. **Wire the new endpoint into the smoke loop** at the bottom of this
+   file (the `for ep in …; do curl …` block). The smoke loop is the
+   contract for "the stack is up"; an endpoint not in it can silently
+   regress.
+
+6. **Commit at the gitnexus folder root** (this folder is the git repo).
+   - Include all four: source files (top level only — `upstream/` is
+     `.gitignore`-d), `patches/upstream-all.diff`, doc updates, and the
+     new tests.
    - Write a body that names the new endpoints / components.
 
 ## Tests & CI/CD
 
 State of the world (2026-05-26):
 
-- **No automated test suite** at the gitnexus deployment level. Smoke
-  tests are done manually by curl-ing the new endpoints after rebuild.
-- **No CI pipeline.** The closest we have is `docker compose build` —
-  if that fails, the patch is broken.
-- **Patch script `scripts/patch-lbug-staleness.mjs` IS self-validating**:
-  the build fails loudly if upstream's `ensureLbugInitialized` shape
-  changed. That's our only automated guard.
+- **Test pyramid Phase 1 is in flight** — see
+  `docs/superpowers/plans/2026-05-26-cicd-test-pyramid-phase1.md` for
+  the 50-task bite-sized plan and
+  `docs/superpowers/specs/2026-05-26-cicd-test-pyramid-design.md` for
+  the design rationale.
+- **Bootstrap landed** (tasks A.1-A.3, commit `1c85c0c0`): `tests/`
+  scaffold + Vitest configs + `tests/package.json` exist. The directory
+  layout is now stable — do not invent variations.
+- **Helpers, fixtures, real tests not yet landed.** Until they are,
+  the only automated guards are `docker compose build` (fails loudly
+  if a patch is broken) and the self-validating patch script
+  `scripts/patch-lbug-staleness.mjs`.
+- **No GHA workflow yet.** It is task I.49 of the Phase 1 plan.
 
-So the rule for now: when you add a backend endpoint or a new docker-
-server module, **run `docker compose build gitnexus-web` and verify
-the new endpoint responds to `curl`** before declaring the work done.
-If you add a test suite or CI later, codify this requirement here.
+### Rule once Phase 1 has landed
+
+Every new feature MUST integrate into the existing pyramid sections —
+do not create a new test framework, runner, or top-level test directory.
+The pyramid is the contract:
+
+| Feature type | Tier | Lives in |
+|---|---|---|
+| Pure analytics math (entropy, ownership, dissonance, …) | D — Pure units | `tests/unit/` |
+| React component (panel, overlay, toggle) | E — Components | `tests/unit/components/` |
+| New backend endpoint (`/foo`) | G — Endpoints | `tests/integration/endpoints/foo.test.mjs` |
+| New user-facing flow (e.g. click X, see Y) | H — E2E Playwright | `tests/e2e/specs/` |
+| Helper reused across tests | C — Helpers | `tests/integration/helpers/` |
+| Test data | — | `tests/fixtures/` (golden in `tests/fixtures/expected/`) |
+
+If a feature genuinely needs a new pyramid section (new runner, new
+environment), propose the addition to the pyramid spec **first**, then
+land the feature. Don't add it silently — the pyramid's value is that
+it's the single source of truth for what's tested.
+
+### Rule until Phase 1 has landed
+
+When you add a backend endpoint or a new docker-server module:
+
+1. **Run `docker compose build gitnexus-web`** and verify the new
+   endpoint responds to `curl` (smoke loop at the bottom of this file).
+2. **Add the endpoint to the smoke loop** below.
+3. **Note the missing test coverage** in your end-of-task summary so
+   it lands in the Phase 1 backlog (or its successor) rather than
+   silently accruing.
 
 ## After-restart smoke checks (canonical commands)
 
