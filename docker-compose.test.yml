@@ -1,0 +1,45 @@
+name: gitnexus-test
+services:
+  gitnexus-server-test:
+    build:
+      context: .
+      dockerfile: Dockerfile.cli
+    image: gitnexus-cli-test:local
+    container_name: gitnexus-test
+    restart: unless-stopped
+    ports:
+      - "${TEST_PORT:-4747}:4747"
+    environment:
+      - GITNEXUS_HOME=/data/gitnexus
+      - HF_HOME=/data/hf-cache
+      - NODE_ENV=production
+    volumes:
+      - gitnexus-test-data:/data/gitnexus
+      - gitnexus-test-hf-cache:/data/hf-cache
+      - ${TEST_PROJECTS_ROOT:-./tests/fixtures/sample-repo-extracted}:/data/projects:ro
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:4747/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  gitnexus-web-test:
+    build:
+      context: ./upstream
+      dockerfile: Dockerfile.web
+    image: gitnexus-web-test:local
+    container_name: gitnexus-web-test
+    restart: unless-stopped
+    ports:
+      - "${TEST_WEB_PORT:-4173}:4173"
+    depends_on:
+      gitnexus-server-test:
+        condition: service_healthy
+    environment:
+      - VITE_GITNEXUS_BACKEND_URL=http://localhost:${TEST_PORT:-4747}
+
+volumes:
+  gitnexus-test-data:
+    name: gitnexus-test-data
+  gitnexus-test-hf-cache:
+    name: gitnexus-test-hf-cache
