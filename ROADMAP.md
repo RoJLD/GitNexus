@@ -3,6 +3,10 @@
 État vivant des fonctionnalités déjà livrées et des prochaines pistes.
 Dernière mise à jour : 2026-05-22 (Tier 1 livré).
 
+> 📋 **Voir aussi** [INVENTORY.md](INVENTORY.md) — état des lieux complet :
+> features upstream + nos ajouts + distance avec upstream. À utiliser
+> comme base de brainstorming avant de décider du prochain Tier.
+
 L'objectif global : transformer GitNexus en **outil d'archéologie + de
 diagnostic structurel** pour un écosystème de dépôts, pas juste un
 visualiseur de code. Chaque ligne ici décrit une promesse précise — pas
