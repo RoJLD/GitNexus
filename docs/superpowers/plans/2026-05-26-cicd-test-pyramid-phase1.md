@@ -922,16 +922,9 @@ describe('toCsv', () => {
 Run: `cd tests && npm run test:unit -- csv-serializer`
 Expected: 6 tests passed.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 6: Regenerate the upstream patch**
 
-```bash
-git add upstream/docker-server-csv-core.mjs upstream/docker-server-csv.mjs tests/unit/csv-serializer.test.mjs
-git commit -m "test(csv): extract pure serializer + add unit tests
-
-Also regenerate patches/upstream-all.diff in a follow-up commit."
-```
-
-- [ ] **Step 7: Regenerate the upstream patch**
+> **IMPORTANT:** `upstream/` is gitignored. We don't `git add` files there directly — we regenerate `patches/upstream-all.diff` and commit that instead, alongside any tracked files (tests, scripts).
 
 ```bash
 cd upstream
@@ -939,8 +932,13 @@ git add -N .
 git diff HEAD > ../patches/upstream-all.diff
 git reset
 cd ..
-git add patches/upstream-all.diff
-git commit -m "test(csv): regenerate upstream patch after csv-core extraction"
+```
+
+- [ ] **Step 7: Commit the test file + regenerated patch**
+
+```bash
+git add patches/upstream-all.diff tests/unit/csv-serializer.test.mjs
+git commit -m "test(csv): extract pure serializer + add unit tests"
 ```
 
 ---
@@ -1023,14 +1021,14 @@ describe('entropyForSnapshot', () => {
 Run: `cd tests && npm run test:unit -- entropy-math`
 Expected: 6 tests passed.
 
-- [ ] **Step 5: Commit + regenerate patch**
+- [ ] **Step 5: Regenerate patch + commit (single commit)**
+
+> **IMPORTANT:** `upstream/` is gitignored. Regenerate the patch first, then commit the patch alongside the test file.
 
 ```bash
-git add upstream/docker-server-entropy-core.mjs upstream/docker-server-entropy.mjs tests/unit/entropy-math.test.mjs
-git commit -m "test(entropy): extract pure math + add unit tests"
 cd upstream && git add -N . && git diff HEAD > ../patches/upstream-all.diff && git reset && cd ..
-git add patches/upstream-all.diff
-git commit -m "test(entropy): regenerate upstream patch"
+git add patches/upstream-all.diff tests/unit/entropy-math.test.mjs
+git commit -m "test(entropy): extract pure math + add unit tests"
 ```
 
 ---
@@ -1124,14 +1122,14 @@ describe('topAuthors', () => {
 Run: `cd tests && npm run test:unit -- ownership-bus-factor`
 Expected: 7 tests passed.
 
-- [ ] **Step 5: Commit + regen patch**
+- [ ] **Step 5: Regenerate patch + commit (single commit)**
+
+> **IMPORTANT:** `upstream/` is gitignored. Regenerate the patch first, then commit the patch alongside the test file.
 
 ```bash
-git add upstream/docker-server-ownership-core.mjs upstream/docker-server-ownership.mjs tests/unit/ownership-bus-factor.test.mjs
-git commit -m "test(ownership): extract pure bus-factor math + add unit tests"
 cd upstream && git add -N . && git diff HEAD > ../patches/upstream-all.diff && git reset && cd ..
-git add patches/upstream-all.diff
-git commit -m "test(ownership): regenerate upstream patch"
+git add patches/upstream-all.diff tests/unit/ownership-bus-factor.test.mjs
+git commit -m "test(ownership): extract pure bus-factor math + add unit tests"
 ```
 
 ---
@@ -1255,14 +1253,14 @@ describe('misplacedFiles', () => {
 Run: `cd tests && npm run test:unit -- dissonance-overlap`
 Expected: 3 tests passed.
 
-- [ ] **Step 5: Commit + regen patch**
+- [ ] **Step 5: Regenerate patch + commit (single commit)**
+
+> **IMPORTANT:** `upstream/` is gitignored. Regenerate the patch first, then commit the patch alongside the test file.
 
 ```bash
-git add upstream/docker-server-dissonance-core.mjs upstream/docker-server-dissonance.mjs tests/unit/dissonance-overlap.test.mjs
-git commit -m "test(dissonance): extract pure overlap math + add unit tests"
 cd upstream && git add -N . && git diff HEAD > ../patches/upstream-all.diff && git reset && cd ..
-git add patches/upstream-all.diff
-git commit -m "test(dissonance): regenerate upstream patch"
+git add patches/upstream-all.diff tests/unit/dissonance-overlap.test.mjs
+git commit -m "test(dissonance): extract pure overlap math + add unit tests"
 ```
 
 ---
@@ -2734,14 +2732,14 @@ Edit each of `upstream/gitnexus-web/src/components/{Coupling,Growth,Lifespan,Own
 Run: `cd tests && npm run test:e2e -- 03-analytics`
 Expected: 5 tests passed.
 
-- [ ] **Step 4: Commit (test) + regen patch**
+- [ ] **Step 4: Regenerate patch + commit (single commit)**
+
+> **IMPORTANT:** `upstream/` is gitignored. The component edits flow into `patches/upstream-all.diff`, not into git directly.
 
 ```bash
-git add tests/e2e/specs/03-analytics-panels.spec.ts upstream/gitnexus-web/src/components/CouplingPanel.tsx upstream/gitnexus-web/src/components/GrowthChart.tsx upstream/gitnexus-web/src/components/LifespanPanel.tsx upstream/gitnexus-web/src/components/OwnershipPanel.tsx upstream/gitnexus-web/src/components/DissonancePanel.tsx
-git commit -m "test(e2e): analytics panels render + data-testid hooks"
 cd upstream && git add -N . && git diff HEAD > ../patches/upstream-all.diff && git reset && cd ..
-git add patches/upstream-all.diff
-git commit -m "test(e2e): regenerate upstream patch with data-testid hooks"
+git add patches/upstream-all.diff tests/e2e/specs/03-analytics-panels.spec.ts
+git commit -m "test(e2e): analytics panels render + data-testid hooks"
 ```
 
 ---
@@ -2818,14 +2816,14 @@ If missing, edit `upstream/gitnexus-web/src/components/DiffBanner.tsx` to add `d
 Run: `cd tests && npm run test:e2e -- 05-diff`
 Expected: 1 test passed.
 
-- [ ] **Step 3: Commit + regen patch**
+- [ ] **Step 3: Regenerate patch + commit (single commit)**
+
+> **IMPORTANT:** `upstream/` is gitignored. The `DiffBanner.tsx` edit flows into `patches/upstream-all.diff`, not into git directly.
 
 ```bash
-git add tests/e2e/specs/05-diff-view.spec.ts upstream/gitnexus-web/src/components/DiffBanner.tsx
-git commit -m "test(e2e): diff view shows banner"
 cd upstream && git add -N . && git diff HEAD > ../patches/upstream-all.diff && git reset && cd ..
-git add patches/upstream-all.diff
-git commit -m "test(e2e): regenerate patch with diff-banner testid"
+git add patches/upstream-all.diff tests/e2e/specs/05-diff-view.spec.ts
+git commit -m "test(e2e): diff view shows banner + diff-banner testid"
 ```
 
 ---
