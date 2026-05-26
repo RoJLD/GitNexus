@@ -8,6 +8,8 @@ upstream/
 
 # Editor / OS noise
 .vscode/
+# … except the extension's own dev configs — those are deliverables.
+!vscode-extension/.vscode/
 .idea/
 .DS_Store
 Thumbs.db
