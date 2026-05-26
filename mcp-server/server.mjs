@@ -234,6 +234,20 @@ const TOOLS = [
     handler: ({ repo }) => callWeb('/watches', repo ? { repo } : {}),
   },
   {
+    name: 'gitnexus_commit_footprint',
+    description: 'Return the files touched by a single commit with their add/modify/delete status (Tier 2bis.2 follow-up). Used by the frontend to overlay-highlight on the graph, but also useful standalone: ask "what did Marie change in commit abc123?" and get a structured list. Honest framing: this is what the commit TOUCHED, not the graph reconstructed at that commit. For the latter, snapshot the commit explicitly via /snapshot/bulk.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        repo: { type: 'string' },
+        sha: { type: 'string', description: 'Commit SHA, 4-64 hex chars (short SHAs OK).' },
+      },
+      required: ['repo', 'sha'],
+      additionalProperties: false,
+    },
+    handler: ({ repo, sha }) => callWeb('/commit/footprint', { repo, sha }),
+  },
+  {
     name: 'gitnexus_repo_by_id',
     description: 'Resolve a stable repoId (16 hex chars, sha256(firstCommitSha + normalizedRemote) — Tier 2bis.5) back to one or more registered `<base>` names. Useful when a repo was re-cloned with a different folder name and the cross-repo features lost the link. The repoId itself is surfaced by `gitnexus_similarity` under `response.repos[].repoId`.',
     inputSchema: {

@@ -136,6 +136,7 @@ Fichiers à la racine du repo, qui rendent le setup reproductible sur poste Wind
 | `GET /repos/by-id/:repoId` | Résout un repoId stable (`sha256(firstCommitSha + normalizedRemote)[:16]`) vers un ou plusieurs `<base>` indexés. Tier 2bis.5. |
 | `GET /entropy/commits` | Attribue à chaque commit dans la fenêtre sa part du delta entropy observé entre snapshots bracketants (poids = filesTouched). MVP par interpolation, pas de Leiden in-memory. Params: `?repo=&from=&to=&days=&format=csv`. Tier 2bis.2. |
 | `GET /watches` | Liste les watches déclarées dans `.gitnexus.json > watches` à travers tous les repos + leur dernier état d'évaluation in-memory. Le cron interne (interval `WATCH_INTERVAL_MS`, debounce `WATCH_DEBOUNCE_MS`) évalue et fire les webhooks Slack-compatible. 5 métriques supportées : entropy.{density,modularity}, ownership.{busFactor,topAuthorShare}, dissonance.purity. Tier 2bis.3. |
+| `GET /commit/footprint` | Files touched par un commit (status A/M/D) via `git show --name-status`. Params: `?repo=&sha=`. Permet l'overlay commit sur le graph côté frontend (highlight des nodes par `filePath` match). Honest : c'est le footprint, pas le graph reconstruit au commit. Tier 2bis.2 follow-up. |
 | `GET /listdir` | Folder browser server-side |
 | `GET /export` + `POST /import` | Bundle ou index-only, register-only mode |
 | `?format=csv` partout | Serializer partagé `docker-server-csv.mjs` |
@@ -149,7 +150,7 @@ Fichiers à la racine du repo, qui rendent le setup reproductible sur poste Wind
 - `DissonancePanel.tsx` — purity score + misplaced files + bouton ✨ pour générer les labels LLM
 - `WhatIfPanel.tsx` — form rename/move/delete, file queue de mutations, preview qui réutilise le diff coloring
 - `SimilarityPanel.tsx` — matrice N×N OU Galaxy view PCA 2D (toggle), drill-down par paire (scores/warnings/dominant features/policy/per-pair semantic mode badge `emb|lex`), table des identity vectors avec badge version + badges L/E par repo, bouton ✨ Embed labels (Tier 2.5a/b/b.bis/c/2.6). Galaxy view = SVG scatter avec edges proportionnels à la force moyenne du couplage, click-to-select-nearest-pair.
-- `EntropyCommitTimeline.tsx` — sparkline SVG par-commit montée au-dessus de la Timeline (Tier 2bis.2 UI). Toggle "Commit Δ" dans Timeline, switch density/modularity, window input, click sur barre → drill-down avec copy-SHA + snippet git-show.
+- `EntropyCommitTimeline.tsx` — sparkline SVG par-commit montée au-dessus de la Timeline (Tier 2bis.2 UI). Toggle "Commit Δ" dans Timeline, switch density/modularity, window input, click sur barre → drill-down avec copy-SHA + snippet git-show + bouton **Show on graph** qui fetch `/commit/footprint` et highlight les nodes touchés sur le graph courant (commit overlay, Tier 2bis.2 follow-up).
 - `core/llm/agent.ts` — `createEmbeddingsModel(config)` mirror de `createChatModel` (OpenAI/Azure/Gemini/Ollama supportés, autres providers retournent null), `providerSupportsEmbeddings(config)` (Tier 2.5b.bis)
 - `services/semantic-labeler.ts` — étendu avec `embedSemanticLabels({repo, signal, overwrite, onProgress})` : batch embedDocuments + fallback one-by-one + POST avec champs embedding/embeddingProvider/embeddingModel
 - `SnapshotsPanel.tsx`, `BulkSnapshotModal.tsx`, `DiffBanner.tsx`

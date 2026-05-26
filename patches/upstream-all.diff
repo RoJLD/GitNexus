@@ -1,5 +1,5 @@
 diff --git a/Dockerfile.web b/Dockerfile.web
-index b102a70..b801b2b 100644
+index b102a70..02e4d55 100644
 --- a/Dockerfile.web
 +++ b/Dockerfile.web
 @@ -21,7 +21,10 @@ RUN npm run build --prefix gitnexus-shared
@@ -14,7 +14,7 @@ index b102a70..b801b2b 100644
  
  COPY gitnexus-web ./gitnexus-web
  RUN npm run build --prefix gitnexus-web
-@@ -29,15 +32,47 @@ RUN npm run build --prefix gitnexus-web
+@@ -29,15 +32,48 @@ RUN npm run build --prefix gitnexus-web
  # node:22-bookworm-slim
  FROM node:22-bookworm-slim@sha256:9f6d5975c7dca860947d3915877f85607946403fc55349f39b4bc3688448bb6e AS runtime
  
@@ -59,6 +59,7 @@ index b102a70..b801b2b 100644
 +COPY docker-server-repo-id.mjs ./docker-server-repo-id.mjs
 +COPY docker-server-entropy-commits.mjs ./docker-server-entropy-commits.mjs
 +COPY docker-server-watches.mjs ./docker-server-watches.mjs
++COPY docker-server-commit-footprint.mjs ./docker-server-commit-footprint.mjs
 +COPY docker-server-csv.mjs ./docker-server-csv.mjs
  
  RUN chown -R node:node /app
@@ -248,6 +249,207 @@ index 0000000..33f13d2
 +export async function handleChurnRoute(req, url, res, opts) {
 +  if (url.pathname === '/churn' && req.method === 'GET') {
 +    await handleChurn(url, res, opts);
++    return true;
++  }
++  return false;
++}
+diff --git a/docker-server-commit-footprint.mjs b/docker-server-commit-footprint.mjs
+new file mode 100644
+index 0000000..22952d6
+--- /dev/null
++++ b/docker-server-commit-footprint.mjs
+@@ -0,0 +1,195 @@
++/**
++ * Commit footprint — Tier 2bis.2 follow-up (commit overlay on graph).
++ *
++ * Endpoint:
++ *   GET /commit/footprint?repo=<base>&sha=<commit-sha>
++ *
++ * Returns the list of files touched by a single commit, with their
++ * add/modify/delete status. The frontend then resolves these to graph
++ * nodes (any node whose filePath matches a touched file, or whose
++ * owning file does) and highlights them on the currently-loaded graph.
++ *
++ * Result: clicking a bar in EntropyCommitTimeline → seeing exactly
++ * which part of the graph that commit touched, without paying the
++ * cost of snapshotting every commit.
++ *
++ * --- Honest framing ---
++ *
++ * This is NOT "the graph at commit X". It's "what commit X touched,
++ * highlighted on the graph of the nearest available snapshot". If the
++ * commit refactored a file that the snapshot doesn't know about (e.g.
++ * file was renamed twice since), the highlight will be incomplete.
++ *
++ * For real per-commit graphs, the path is incremental snapshotting
++ * (next chantier per ROADMAP — Tier 2bis.6 if/when we get to it).
++ *
++ * --- Response shape ---
++ *
++ *   {
++ *     "repo": "hmm_studio",
++ *     "sha": "abc123def...",
++ *     "shortSha": "abc123d",
++ *     "author": "Robin DENIS",
++ *     "date": "2026-02-10T14:30:00+01:00",
++ *     "message": "feat: add Gini coefficient to similarity v2",
++ *     "filesTouched": [
++ *       { "path": "src/foo.py", "status": "M" },
++ *       { "path": "src/bar.py", "status": "A" },
++ *       { "path": "tests/old_helper.py", "status": "D" }
++ *     ],
++ *     "stats": { "added": 1, "modified": 1, "deleted": 1, "total": 3 }
++ *   }
++ */
++
++import { spawn } from 'node:child_process';
++import { stat } from 'node:fs/promises';
++import { join } from 'node:path';
++import { findRepoByName } from './docker-server-snapshots.mjs';
++
++function runCmd(cmd, args, opts = {}) {
++  return new Promise((resolve, reject) => {
++    const child = spawn(cmd, args, opts);
++    let stdout = '';
++    let stderr = '';
++    child.stdout?.on('data', (d) => (stdout += d.toString()));
++    child.stderr?.on('data', (d) => (stderr += d.toString()));
++    child.on('error', reject);
++    child.on('close', (code) => {
++      if (code === 0) resolve(stdout);
++      else reject(new Error(`${cmd} exited ${code}: ${stderr.trim()}`));
++    });
++  });
++}
++
++// Parse `git show -s --format=…` output where we asked for SHA, ISO
++// date, author, subject (one per line, in that order).
++function parseShowHeader(stdout) {
++  const lines = stdout.split('\n');
++  return {
++    sha: (lines[0] || '').trim(),
++    date: (lines[1] || '').trim(),
++    author: (lines[2] || '').trim(),
++    message: lines.slice(3).join('\n').trim(),
++  };
++}
++
++// Parse `git show --name-status --pretty=format:` output:
++//   "M\tsrc/foo.py"
++//   "A\tsrc/bar.py"
++//   "D\ttests/old_helper.py"
++//   "R100\tsrc/old.py\tsrc/new.py"   (renames — keep the destination
++//                                     and surface it as a Modify since
++//                                     for graph-overlay purposes that's
++//                                     what matters)
++function parseNameStatus(stdout) {
++  const out = [];
++  for (const rawLine of stdout.split('\n')) {
++    const line = rawLine.trim();
++    if (!line) continue;
++    const parts = line.split('\t');
++    const code = parts[0];
++    if (!code) continue;
++    if (code.startsWith('R') || code.startsWith('C')) {
++      const dest = parts[2];
++      if (dest) out.push({ path: dest, status: 'M' });
++    } else if (parts[1]) {
++      let status = code[0];
++      if (status !== 'A' && status !== 'M' && status !== 'D') status = 'M';
++      out.push({ path: parts[1], status });
++    }
++  }
++  return out;
++}
++
++async function handleCommitFootprint(url, res, opts) {
++  const repoName = url.searchParams.get('repo');
++  const sha = url.searchParams.get('sha');
++  if (!repoName) {
++    res.writeHead(400, { 'Content-Type': 'application/json' });
++    res.end(JSON.stringify({ error: 'missing repo' }));
++    return;
++  }
++  if (!sha) {
++    res.writeHead(400, { 'Content-Type': 'application/json' });
++    res.end(JSON.stringify({ error: 'missing sha' }));
++    return;
++  }
++  // Allow short SHAs (≥4 chars per git's minimum), reject obvious
++  // junk to avoid passing weird strings to git.
++  if (!/^[0-9a-f]{4,64}$/i.test(sha)) {
++    res.writeHead(400, { 'Content-Type': 'application/json' });
++    res.end(JSON.stringify({ error: `sha must be 4-64 hex chars, got: ${sha}` }));
++    return;
++  }
++
++  const baseRepo = repoName.split('@')[0];
++  const live = await findRepoByName(baseRepo, opts.api);
++  if (!live) {
++    res.writeHead(404, { 'Content-Type': 'application/json' });
++    res.end(JSON.stringify({ error: `repo not found: ${baseRepo}` }));
++    return;
++  }
++  const repoPath = live.repoPath || live.path;
++  const hasGit = await stat(join(repoPath, '.git')).catch(() => null);
++  if (!hasGit) {
++    res.writeHead(400, { 'Content-Type': 'application/json' });
++    res.end(JSON.stringify({ error: `${baseRepo} is not a git repository` }));
++    return;
++  }
++
++  // Two git invocations: header (sha+date+author+subject) and
++  // name-status. We could fold them with --pretty but parsing two
++  // simple outputs is cleaner than one composite one.
++  let headerOut, nameStatusOut;
++  try {
++    headerOut = await runCmd('git', [
++      '-C', repoPath, 'show', '-s', '--format=%H%n%aI%n%an%n%s', sha,
++    ]);
++  } catch (err) {
++    res.writeHead(404, { 'Content-Type': 'application/json' });
++    res.end(JSON.stringify({ error: `commit not found: ${sha} (${err.message})` }));
++    return;
++  }
++  try {
++    nameStatusOut = await runCmd('git', [
++      '-C', repoPath, 'show', '--name-status', '--no-renames', '--pretty=format:', sha,
++    ]);
++  } catch (err) {
++    res.writeHead(500, { 'Content-Type': 'application/json' });
++    res.end(JSON.stringify({ error: `name-status fetch failed: ${err.message}` }));
++    return;
++  }
++
++  const header = parseShowHeader(headerOut);
++  const filesTouched = parseNameStatus(nameStatusOut);
++  const stats = filesTouched.reduce(
++    (acc, f) => {
++      if (f.status === 'A') acc.added++;
++      else if (f.status === 'D') acc.deleted++;
++      else acc.modified++;
++      acc.total++;
++      return acc;
++    },
++    { added: 0, modified: 0, deleted: 0, total: 0 },
++  );
++
++  res.writeHead(200, { 'Content-Type': 'application/json' });
++  res.end(JSON.stringify({
++    repo: baseRepo,
++    sha: header.sha || sha,
++    shortSha: (header.sha || sha).slice(0, 7),
++    author: header.author,
++    date: header.date,
++    message: header.message,
++    filesTouched,
++    stats,
++  }));
++}
++
++export async function handleCommitFootprintRoute(req, url, res, opts) {
++  if (url.pathname === '/commit/footprint' && req.method === 'GET') {
++    await handleCommitFootprint(url, res, opts);
 +    return true;
 +  }
 +  return false;
@@ -5641,10 +5843,10 @@ index 0000000..c6a7798
 +  return false;
 +}
 diff --git a/docker-server.mjs b/docker-server.mjs
-index 8143eb4..e5c3803 100644
+index 8143eb4..f70bc7f 100644
 --- a/docker-server.mjs
 +++ b/docker-server.mjs
-@@ -1,12 +1,53 @@
+@@ -1,12 +1,54 @@
 -import { createReadStream } from 'node:fs';
 -import { stat } from 'node:fs/promises';
 +import { createReadStream, createWriteStream } from 'node:fs';
@@ -5670,6 +5872,7 @@ index 8143eb4..e5c3803 100644
 +import { handleRepoByIdRoute } from './docker-server-repo-id.mjs';
 +import { handleEntropyCommitsRoute } from './docker-server-entropy-commits.mjs';
 +import { handleWatchesRoute, startWatchesCron } from './docker-server-watches.mjs';
++import { handleCommitFootprintRoute } from './docker-server-commit-footprint.mjs';
  
  const host = '0.0.0.0';
  const port = Number(process.env.PORT || '4173');
@@ -5701,7 +5904,7 @@ index 8143eb4..e5c3803 100644
  const contentTypes = {
    '.css': 'text/css; charset=utf-8',
    '.html': 'text/html; charset=utf-8',
-@@ -20,6 +61,416 @@ const contentTypes = {
+@@ -20,6 +62,416 @@ const contentTypes = {
    '.woff2': 'font/woff2',
  };
  
@@ -6118,7 +6321,7 @@ index 8143eb4..e5c3803 100644
  // Static asset server for the gitnexus-web Docker image.
  //
  // Path-injection containment: the request handler is intentionally a single
-@@ -39,8 +490,59 @@ const contentTypes = {
+@@ -39,8 +491,61 @@ const contentTypes = {
  // the request handler's reassignment paths in vanilla JS. The inline-at-sink
  // shape below is the documented analyzer-friendly idiom.
  const server = createServer(async (req, res) => {
@@ -6174,12 +6377,14 @@ index 8143eb4..e5c3803 100644
 +  if (await handleEntropyCommitsRoute(req, reqUrl, res, { api: GITNEXUS_API })) return;
 +  // Watches + webhook alerting (ROADMAP Tier 2bis.3)
 +  if (await handleWatchesRoute(req, reqUrl, res, { api: GITNEXUS_API })) return;
++  // Commit footprint (Tier 2bis.2 follow-up — commit overlay on graph)
++  if (await handleCommitFootprintRoute(req, reqUrl, res, { api: GITNEXUS_API })) return;
  
 +  // ── Static asset serving (v1.6.5 CodeQL-compliant pipeline) ───────────
    let decoded;
    try {
      decoded = decodeURIComponent(urlPath);
-@@ -117,4 +619,7 @@ const server = createServer(async (req, res) => {
+@@ -117,4 +622,7 @@ const server = createServer(async (req, res) => {
  
  server.listen(port, host, () => {
    console.log(`gitnexus-web listening on http://${host}:${port}`);
@@ -8429,10 +8634,10 @@ index 0000000..07a59b5
 +};
 diff --git a/gitnexus-web/src/components/EntropyCommitTimeline.tsx b/gitnexus-web/src/components/EntropyCommitTimeline.tsx
 new file mode 100644
-index 0000000..635ab08
+index 0000000..01e2d63
 --- /dev/null
 +++ b/gitnexus-web/src/components/EntropyCommitTimeline.tsx
-@@ -0,0 +1,368 @@
+@@ -0,0 +1,427 @@
 +import { useMemo, useState } from 'react';
 +import {
 +  X,
@@ -8442,6 +8647,8 @@ index 0000000..635ab08
 +  Copy,
 +  Check,
 +  Info,
++  Eye,
++  EyeOff,
 +} from '@/lib/lucide-icons';
 +import { useAppState } from '../hooks/useAppState';
 +import type { EntropyCommit } from '../hooks/useAppState';
@@ -8498,6 +8705,11 @@ index 0000000..635ab08
 +    entropyCommitsDays,
 +    setEntropyCommitsDays,
 +    exitEntropyCommitsMode,
++    commitFootprint,
++    commitFootprintLoading,
++    commitFootprintError,
++    loadCommitFootprint,
++    clearCommitFootprint,
 +  } = useAppState();
 +  const [metric, setMetric] = useState<Metric>('density');
 +  const [selected, setSelected] = useState<EntropyCommit | null>(null);
@@ -8793,9 +9005,61 @@ index 0000000..635ab08
 +          ) : (
 +            <span className="italic text-text-muted">straggler · no snapshot bracket</span>
 +          )}
-+          <code className="ml-auto rounded bg-void px-1 font-mono text-[9px] text-text-muted">
++
++          {/* Commit overlay action — fetches /commit/footprint and
++              highlights the matched nodes on the currently-loaded
++              graph. Same button toggles off when the overlay matches
++              the selected commit. */}
++          <button
++            type="button"
++            onClick={() => {
++              if (commitFootprint?.sha === selected.sha) {
++                clearCommitFootprint();
++              } else {
++                void loadCommitFootprint(selected.sha);
++              }
++            }}
++            disabled={commitFootprintLoading}
++            className={`ml-auto flex shrink-0 cursor-pointer items-center gap-1 rounded border px-1.5 py-0.5 text-[9px] font-medium transition-all disabled:cursor-not-allowed disabled:opacity-40 ${
++              commitFootprint?.sha === selected.sha
++                ? 'border-emerald-500/40 bg-emerald-500/15 text-emerald-300'
++                : 'border-border-subtle bg-elevated text-text-secondary hover:bg-hover hover:text-text-primary'
++            }`}
++            title={
++              commitFootprint?.sha === selected.sha
++                ? `${commitFootprint.resolvedNodeIds.length} nodes highlighted on graph — click to clear`
++                : 'Highlight the files this commit touched on the currently-loaded graph (overlay; not a graph reconstructed at this commit)'
++            }
++          >
++            {commitFootprintLoading ? (
++              <Loader2 className="h-2.5 w-2.5 animate-spin" />
++            ) : commitFootprint?.sha === selected.sha ? (
++              <EyeOff className="h-2.5 w-2.5" />
++            ) : (
++              <Eye className="h-2.5 w-2.5" />
++            )}
++            {commitFootprint?.sha === selected.sha
++              ? `${commitFootprint.resolvedNodeIds.length}/${commitFootprint.filesTouched.length} on graph`
++              : 'Show on graph'}
++          </button>
++          <code className="shrink-0 rounded bg-void px-1 font-mono text-[9px] text-text-muted">
 +            git show {selected.shortSha}
 +          </code>
++        </div>
++      )}
++
++      {/* Commit footprint info strip — surfaces partial-match warning */}
++      {commitFootprint && commitFootprint.unresolvedFiles.length > 0 && (
++        <div className="mt-1 rounded border border-amber-500/30 bg-amber-500/5 px-2 py-1 text-[9px] text-amber-200">
++          <span className="font-semibold">{commitFootprint.unresolvedFiles.length} unresolved:</span>{' '}
++          files touched by the commit but not present in the current snapshot's graph (likely
++          deletions, renames the graph didn't follow, or files gitnexus doesn't track).
++        </div>
++      )}
++      {commitFootprintError && (
++        <div className="mt-1 flex items-start gap-1.5 px-1 py-1 text-[10px] text-red-400">
++          <AlertCircle className="mt-0.5 h-3 w-3 shrink-0" />
++          <span className="break-all font-mono">{commitFootprintError}</span>
 +        </div>
 +      )}
 +    </div>
@@ -14045,7 +14309,7 @@ index 49862a9..5c552dd 100644
   * Create a Graph RAG agent
   */
 diff --git a/gitnexus-web/src/hooks/useAppState.tsx b/gitnexus-web/src/hooks/useAppState.tsx
-index 25c5776..2bc431b 100644
+index 25c5776..52d2c64 100644
 --- a/gitnexus-web/src/hooks/useAppState.tsx
 +++ b/gitnexus-web/src/hooks/useAppState.tsx
 @@ -8,7 +8,12 @@ import {
@@ -14103,7 +14367,7 @@ index 25c5776..2bc431b 100644
  
    // Graph data
    graph: KnowledgeGraph | null;
-@@ -192,6 +211,334 @@ interface AppState {
+@@ -192,6 +211,371 @@ interface AppState {
    clearAICodeReferences: () => void;
    clearCodeReferences: () => void;
    codeReferenceFocus: CodeReferenceFocus | null;
@@ -14224,6 +14488,16 @@ index 25c5776..2bc431b 100644
 +  preloadAllSnapshots: () => Promise<void>;
 +  cancelPreload: () => void;
 +  clearSnapshotCache: () => void;
++
++  // Commit footprint overlay (Tier 2bis.2 follow-up). When set, the
++  // file paths of the active commit are highlighted on the currently
++  // loaded graph. Resolution from files → node IDs happens in
++  // loadCommitFootprint by walking the loaded graph.
++  commitFootprint: CommitFootprint | null;
++  commitFootprintLoading: boolean;
++  commitFootprintError: string | null;
++  loadCommitFootprint: (sha: string) => Promise<void>;
++  clearCommitFootprint: () => void;
 +
 +  // Semantic labels (ROADMAP Tier 2.1). LLM-generated human-readable
 +  // labels for each detected Community. Auto-loaded from server cache
@@ -14400,6 +14674,33 @@ index 25c5776..2bc431b 100644
 +  galaxyProjection: { method: 'pca'; dim: 2 } | null;
 +}
 +
++// ── Commit footprint overlay (Tier 2bis.2 follow-up) ────────────────
++
++export interface CommitFootprintFile {
++  path: string;
++  status: 'A' | 'M' | 'D';
++}
++
++export interface CommitFootprint {
++  repo: string;
++  sha: string;
++  shortSha: string;
++  author: string;
++  date: string;
++  message: string;
++  filesTouched: CommitFootprintFile[];
++  stats: { added: number; modified: number; deleted: number; total: number };
++  /** Subset of filesTouched that we successfully matched to graph
++   *  nodes (populated by loadCommitFootprint, not by the backend). */
++  resolvedNodeIds: string[];
++  /** Files in filesTouched that we couldn't find any matching node
++   *  for. Typically deletions (the node is gone), renames the graph
++   *  didn't catch, or files that aren't tracked by gitnexus (configs,
++   *  non-source assets). Surfaced so the user knows the overlay is
++   *  partial. */
++  unresolvedFiles: CommitFootprintFile[];
++}
++
 +// ── Commit-level entropy delta (Tier 2bis.2) ─────────────────────────
 +
 +export interface EntropyCommit {
@@ -14438,7 +14739,7 @@ index 25c5776..2bc431b 100644
  }
  
  const AppStateContext = createContext<AppState | null>(null);
-@@ -205,6 +552,10 @@ export const AppStateProvider = ({ children }: { children: ReactNode }) => (
+@@ -205,6 +589,10 @@ export const AppStateProvider = ({ children }: { children: ReactNode }) => (
  const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
    // View state
    const [viewMode, setViewMode] = useState<ViewMode>('onboarding');
@@ -14449,7 +14750,7 @@ index 25c5776..2bc431b 100644
  
    const {
      graph,
-@@ -343,6 +694,106 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
+@@ -343,6 +731,111 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
    const [isCodePanelOpen, setCodePanelOpen] = useState(false);
    const [codeReferenceFocus, setCodeReferenceFocus] = useState<CodeReferenceFocus | null>(null);
  
@@ -14531,6 +14832,11 @@ index 25c5776..2bc431b 100644
 +  const [preloadError, setPreloadError] = useState<string | null>(null);
 +  const preloadAbortRef = useRef<AbortController | null>(null);
 +
++  // Tier 2bis.2 follow-up: commit footprint overlay.
++  const [commitFootprint, setCommitFootprint] = useState<CommitFootprint | null>(null);
++  const [commitFootprintLoading, setCommitFootprintLoading] = useState(false);
++  const [commitFootprintError, setCommitFootprintError] = useState<string | null>(null);
++
 +  // Semantic labels state.
 +  const [semanticLabels, setSemanticLabels] = useState<Map<string, SemanticLabel>>(new Map());
 +  const [semanticLabelsLoading, setSemanticLabelsLoading] = useState(false);
@@ -14556,7 +14862,7 @@ index 25c5776..2bc431b 100644
    // Map of normalized file path → node ID for graph-based lookups
    const fileNodeByPath = useMemo(() => {
      if (!graph) return new Map<string, string>();
-@@ -1029,6 +1480,62 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
+@@ -1029,6 +1522,62 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
      async (repoName: string) => {
        if (!serverBaseUrl) return;
  
@@ -14619,7 +14925,7 @@ index 25c5776..2bc431b 100644
        setProgress({
          phase: 'extracting',
          percent: 0,
-@@ -1105,6 +1612,13 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
+@@ -1105,6 +1654,13 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
          for (const node of result.nodes) newGraph.addNode(node);
          for (const rel of result.relationships) newGraph.addRelationship(rel);
          setGraph(newGraph);
@@ -14633,7 +14939,7 @@ index 25c5776..2bc431b 100644
        } catch (err: unknown) {
          console.error('Repo switch failed:', err);
          setProgress({
-@@ -1207,9 +1721,659 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
+@@ -1207,9 +1763,732 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
      setCodeReferenceFocus(null);
    }, []);
  
@@ -15158,6 +15464,79 @@ index 25c5776..2bc431b 100644
 +    preloadAbortRef.current = null;
 +  }, [serverBaseUrl, projectName, availableRepos]);
 +
++  // ── Commit footprint overlay ──────────────────────────────────────
++
++  const clearCommitFootprint = useCallback(() => {
++    setCommitFootprint(null);
++    setCommitFootprintError(null);
++    setHighlightedNodeIds(new Set());
++  }, [setHighlightedNodeIds]);
++
++  /**
++   * Fetch the footprint of a single commit (files touched + status)
++   * and highlight the matching nodes on the currently loaded graph.
++   *
++   * Matching strategy: walk every node, keep those whose
++   * `properties.filePath` exactly equals one of the touched paths.
++   * Files we can't match are surfaced in `unresolvedFiles` so the UI
++   * can hint "3/5 highlighted, 2 not found in current graph".
++   */
++  const loadCommitFootprint = useCallback(
++    async (sha: string) => {
++      if (!projectName) {
++        setCommitFootprintError('No active repo.');
++        return;
++      }
++      const baseRepo = projectName.split('@')[0];
++      setCommitFootprintLoading(true);
++      setCommitFootprintError(null);
++      try {
++        const resp = await fetch(
++          `/commit/footprint?repo=${encodeURIComponent(baseRepo)}&sha=${encodeURIComponent(sha)}`,
++          { cache: 'no-store' },
++        );
++        if (!resp.ok) {
++          const body = await resp.json().catch(() => ({}));
++          throw new Error(body?.error || `HTTP ${resp.status}`);
++        }
++        const data = await resp.json();
++        const touchedPaths = new Set<string>(
++          (data.filesTouched || []).map((f: CommitFootprintFile) => f.path),
++        );
++
++        // Resolve files → node IDs by walking the live graph.
++        const resolvedNodeIds: string[] = [];
++        const matchedFiles = new Set<string>();
++        if (graph) {
++          for (const n of graph.nodes) {
++            const fp = (n.properties as Record<string, unknown>)?.filePath;
++            if (typeof fp === 'string' && touchedPaths.has(fp)) {
++              resolvedNodeIds.push(n.id);
++              matchedFiles.add(fp);
++            }
++          }
++        }
++        const unresolvedFiles = (data.filesTouched || []).filter(
++          (f: CommitFootprintFile) => !matchedFiles.has(f.path),
++        );
++
++        const fp: CommitFootprint = {
++          ...data,
++          resolvedNodeIds,
++          unresolvedFiles,
++        };
++        setCommitFootprint(fp);
++        setHighlightedNodeIds(new Set(resolvedNodeIds));
++      } catch (err) {
++        setCommitFootprintError(err instanceof Error ? err.message : 'Failed to load commit footprint');
++        setCommitFootprint(null);
++      } finally {
++        setCommitFootprintLoading(false);
++      }
++    },
++    [projectName, graph, setHighlightedNodeIds],
++  );
++
 +  // Semantic labels: read-only fetch (cheap, idempotent). Called
 +  // automatically when the active repo changes, and manually after a
 +  // generation pass completes.
@@ -15293,7 +15672,7 @@ index 25c5776..2bc431b 100644
      graph,
      setGraph,
      selectedNode,
-@@ -1293,6 +2457,105 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
+@@ -1293,6 +2572,111 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
      clearAICodeReferences,
      clearCodeReferences,
      codeReferenceFocus,
@@ -15379,6 +15758,12 @@ index 25c5776..2bc431b 100644
 +    preloadAllSnapshots,
 +    cancelPreload,
 +    clearSnapshotCache,
++    // Commit footprint overlay
++    commitFootprint,
++    commitFootprintLoading,
++    commitFootprintError,
++    loadCommitFootprint,
++    clearCommitFootprint,
 +    // Semantic labels
 +    semanticLabels,
 +    semanticLabelsLoading,
