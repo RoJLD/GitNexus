@@ -127,12 +127,22 @@ commit({
   },
 });
 
+// Normalise the git repo so tar output is byte-identical across regens.
+// 1. gc packs loose objects and removes non-deterministic loose-object files.
+// 2. read-tree HEAD rewrites .git/index clearing per-file stat cache
+//    (timestamps that git stores for fast-status checks).
+sh('git gc --quiet --prune=all');
+sh('git read-tree HEAD');
+
 console.log('Packing tarball…');
 // Windows tar.exe (GNU tar on Git for Windows) does not accept
 // drive-letter paths (e.g. C:\...) in -f or -C arguments.
 // Work around: cd into _build (parent of sample-repo) and write
 // the tarball with a relative path so no drive letter appears.
 const buildParent = join(REPO, '..');          // …/tests/fixtures/_build
-const tarRelOut   = join('..', 'sample-repo.tar.gz');  // …/tests/fixtures/sample-repo.tar.gz
-execSync(`tar -czf "${tarRelOut}" sample-repo`, { cwd: buildParent, stdio: 'inherit' });
+const tarRelOut   = '../sample-repo.tar.gz';  // Fix B: POSIX literal — avoids Windows backslash
+execSync(
+  `tar -czf "${tarRelOut}" --sort=name --mtime='2025-01-30T11:00:00Z' --owner=0 --group=0 --numeric-owner sample-repo`,
+  { cwd: buildParent, stdio: 'inherit' },
+);
 console.log(`Wrote ${TARBALL}`);
