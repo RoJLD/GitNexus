@@ -2332,10 +2332,10 @@ index 0000000..c57e279
 +}
 diff --git a/docker-server-ghosts-core.mjs b/docker-server-ghosts-core.mjs
 new file mode 100644
-index 0000000..a5ed978
+index 0000000..c6e4b2e
 --- /dev/null
 +++ b/docker-server-ghosts-core.mjs
-@@ -0,0 +1,90 @@
+@@ -0,0 +1,91 @@
 +/**
 + * Pure functions for the roadmap-predictive CORE.
 + * No I/O, no fs, no fetch — testable in isolation.
@@ -2365,7 +2365,7 @@ index 0000000..a5ed978
 +  const links = [];
 +  const ticked = [...cell.matchAll(BACKTICK_RE)].map(m => m[1]);
 +  for (const t of ticked) {
-+    const isPath = t.includes('/') || /\.(mjs|ts|tsx|js|jsx|json|yaml|yml|md|css)$/.test(t);
++    const isPath = t.includes('/') || t.startsWith('?') || /\.(mjs|ts|tsx|js|jsx|json|yaml|yml|md|css)$/.test(t);
 +    links.push({ kind: isPath ? 'path' : 'label', value: t });
 +  }
 +  return links;
@@ -2405,6 +2405,7 @@ index 0000000..a5ed978
 +      continue;
 +    }
 +    if (inTable && tableHasSep) {
++      if (line.trim() === '') continue; // skip blank lines within table
 +      const m = line.match(TABLE_ROW_RE);
 +      if (!m) {
 +        inTable = false;

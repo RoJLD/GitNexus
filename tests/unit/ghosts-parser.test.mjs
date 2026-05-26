@@ -47,4 +47,32 @@ describe('parseRoadmap — table rows', () => {
     const ghosts = parseRoadmap(md);
     expect(ghosts[0].dependsOn).toEqual([]);
   });
+
+  it('classifies query-string endpoints (?format=csv) as path', () => {
+    const md = [
+      '## ✅ Déjà livré', '',
+      '| # | Feature | Endpoint(s) / Composant(s) |',
+      '|---|---|---|',
+      '| 1 | **CSV export** | `?format=csv`, `docker-server-csv.mjs` |',
+      '',
+    ].join('\n');
+    const ghosts = parseRoadmap(md);
+    expect(ghosts[0].expectedLinks).toContainEqual({ kind: 'path', value: '?format=csv' });
+    expect(ghosts[0].expectedLinks).toContainEqual({ kind: 'path', value: 'docker-server-csv.mjs' });
+  });
+
+  it('tolerates blank lines inside the table without dropping subsequent rows', () => {
+    const md = [
+      '## ✅ Déjà livré', '',
+      '| # | Feature | Endpoint(s) / Composant(s) |',
+      '|---|---|---|',
+      '| 1 | **First** | `a.ts` |',
+      '',  // blank line within table
+      '| 2 | **Second** | `b.ts` |',
+      '',
+    ].join('\n');
+    const ghosts = parseRoadmap(md);
+    expect(ghosts).toHaveLength(2);
+    expect(ghosts.map(g => g.title)).toEqual(['First', 'Second']);
+  });
 });
