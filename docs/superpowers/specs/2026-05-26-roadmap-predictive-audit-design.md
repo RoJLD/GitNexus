@@ -1,0 +1,201 @@
+# Roadmap Predictive — Audit view design
+
+**Date** : 2026-05-26
+**Status** : current
+**Auteur** : Robin DENIS (brainstorm Claude Opus 4.7)
+**Depends on** : [`2026-05-26-roadmap-predictive-core-design.md`](2026-05-26-roadmap-predictive-core-design.md) (CORE — ghost lifecycle, sidecars `.gitnexus/ghosts.json` + `.gitnexus/snapshots/<sha>/ghosts.json`)
+**Sibling sub-specs** : Augmented graph, Brainstorm-hook, Gantt — voir [`IDEAS-PARKING-roadmap-predictive.md`](IDEAS-PARKING-roadmap-predictive.md)
+
+---
+
+## 1. Context / problem
+
+Le CORE roadmap-predictive ([spec](2026-05-26-roadmap-predictive-core-design.md)) produit un état runtime des ghosts (planifiés / matérialisés / annulés) avec leur lifecycle dans `.gitnexus/ghosts.json` et un sidecar par snapshot historique. Cette donnée brute existe mais n'est pas exploitable telle quelle : on n'a aucun moyen de répondre à des questions comme **"est-ce que la roadmap glisse ?"**, **"quel est notre rythme de livraison ?"**, **"quels items voient leur plan changer souvent ?"** sans regrouper manuellement les ghosts à coups de jq.
+
+L'utilisateur a 24+ features livrées et 2-3 en attente dans `ROADMAP.md` ; il veut voir l'écart entre prévisions et livraison de façon agrégée, et identifier les ghosts dont le plan instable signale un coût caché.
+
+## 2. Goal
+
+Livrer une **vue d'audit** (regard arrière) composée de 5 métriques agrégées (cancellation rate, lead time, slippage vs `plannedFor`, plan churn cross-snapshot, velocity 28-jour) exposées via :
+- un endpoint HTTP `GET /ghost-audit?repo=<base>` avec cache disque invalidé sur mtime des sidecars sources,
+- un panneau React `AuditPanel.tsx` dans gitnexus-web (summary + 3 charts + table détaillée),
+- un tool MCP `ghost_audit` dans `gitnexus-claude-plugin` pour que Claude puisse répondre à des questions d'audit en langage naturel.
+
+À l'issue, un user (ou Claude) doit pouvoir poser **"on respecte nos délais ?"** et obtenir un chiffre + une visualisation.
+
+## 3. Design
+
+### 3.1 Alternatives considérées
+
+| Alternative | Pourquoi écartée |
+|---|---|
+| UI calcule tout client-side (fetch `/ghosts` + N×`/ghosts/at`) | Plan churn nécessite N+1 fetches sur l'historique, prohibitif. Pattern incohérent avec les autres analytics (`/churn`, `/coupling`) qui ont un endpoint dédié. |
+| Endpoint sans cache | Plan churn walk les snapshots à chaque call (~100ms–1s selon historique). Sur polling UI, ça additionne. Cache mtime-based ajoute 30 lignes de code pour x10 perf répétée. |
+| Cache invalidation événementielle (POST hook) | Plus complexe et fragile que mtime check. Mtime check est idempotent et marche même si le serveur redémarre / si un snapshot est créé par un autre client. |
+| Pas de tool MCP | Casse le pattern Tier 2bis.1 (12 tools MCP existants). Claude ne peut pas répondre aux questions d'audit sans passer par l'UI. |
+| Lib externe pour stats (d3-array, simple-statistics) | Médian/percentiles tiennent en 5 lignes JS. Ajouter une dep pour ça n'est pas justifié. |
+| Histogramme avec D3 / Recharts | Pattern `GrowthChart.tsx` (SVG natif) suffit pour 4 buckets. D3 = dep lourde pour zéro bénéfice. |
+
+### 3.2 Approche retenue : endpoint + cache disque + MCP tool + panneau React
+
+#### Architecture en couches
+
+```
+HTTP (web UI)            MCP (Claude clients)      [CLI : aucune en v1]
+       │                          │
+       ▼                          ▼
+   ────────────────────────────────────────────────
+                          │
+                          ▼
+  docker-server-ghost-audit.mjs   (I/O + cache invalidation)
+      • computeAudit(repoPath)
+          - if cache valid (mtime check) → return cache.json
+          - else → compute via core fns, write cache, return
+      • handleGhostAudit(req, res)      ← HTTP entry
+                          │
+                          ▼
+  docker-server-ghost-audit-core.mjs    (pure fns, testable)
+      • computeSummary(ghosts) → { total, materialized, planned, cancelled, cancellationRate }
+      • computeLeadTime(ghosts) → { medianDays, p25Days, p75Days, maxDays, distribution }
+      • computeSlippage(ghosts) → { early, onTime, late, noTarget, onTimePct }
+      • computePlanChurn(snapshotGhostsArray) → { totalGhostsWithChurn, avgChurnPerGhost, topChurners }
+      • computeVelocity(ghosts, windowDays) → { windowDays, currentCount, history }
+      • parseTargetDate(s) → Date | null  (ISO / YYYY-QX / YYYY-MM)
+                          │
+                          ▼ reads
+  <repo>/.gitnexus/ghosts.json                  (CORE latest)
+  <repo>/.gitnexus/snapshots/<sha>/ghosts.json  (CORE per snapshot — for plan churn)
+  <repo>/.gitnexus/ghost-audit-cache.json       (NEW : cached output)
+```
+
+#### Endpoint shape
+
+`GET /ghost-audit?repo=<base>` retourne (200) :
+
+```json
+{
+  "computedAt": "2026-05-26T...",
+  "cached": true,
+  "summary": { "total": 27, "materialized": 24, "planned": 2, "cancelled": 1, "cancellationRate": 0.037 },
+  "leadTime": {
+    "medianDays": 5.2, "p25Days": 3.0, "p75Days": 8.5, "maxDays": 24,
+    "distribution": [{ "bucket": "0-7d", "count": 12 }, { "bucket": "7-14d", "count": 8 }, ...]
+  },
+  "slippage": { "early": 4, "onTime": 14, "late": 6, "noTarget": 3, "onTimePct": 0.58 },
+  "planChurn": {
+    "totalGhostsWithChurn": 5,
+    "avgChurnPerGhost": 0.7,
+    "topChurners": [{ "id": "...", "churn": 3, "deltas": ["description", "expectedLinks", "description"] }]
+  },
+  "velocity": {
+    "windowDays": 28,
+    "currentCount": 6,
+    "history": [{ "weekStarting": "2026-04-26", "count": 2 }, ...]
+  }
+}
+```
+
+- **404** si `.gitnexus/ghosts.json` n'existe pas (jamais sync). Body : `{ error: "Run POST /ghosts/sync first." }`
+- **200** si la sync a tourné mais `summary.materialized === 0` ; les sections `leadTime` et `slippage` ont `distribution: []` / `onTimePct: null` (UI les masque).
+
+#### Algorithmes (résumé)
+
+| Fonction | Algorithme |
+|---|---|
+| `computeSummary` | Group by `computeStatus(g, ctx)`, ratio cancelled/total. |
+| `computeLeadTime` | Pour chaque ghost matérialisé : `(materializedAt.date - plannedAt.date)/86400000`. Sort + index pour percentiles. 4 buckets : `0-7d / 7-14d / 14-30d / 30d+`. |
+| `computeSlippage` | `parseTargetDate(declared.plannedFor)` essaye ISO, `YYYY-QX` (→ dernier jour du trimestre), `YYYY-MM`, sinon `null`. Comparaison avec `materializedAt.date`, tolérance ±1 jour, 4 buckets {early, onTime, late, noTarget}. `onTimePct = onTime / (early + onTime + late)`. |
+| `computePlanChurn` | Walk snapshots chronologiquement ; pour chaque ghost id, compte les transitions où `declared.description` OU `declared.expectedLinks` changent entre snapshots consécutifs. TopChurners = top 10 par count DESC. |
+| `computeVelocity` | `currentCount` = matérialisations dans la fenêtre `[now-windowDays, now]`. `history` = group by ISO week, count materializations, limité aux 26 dernières semaines. |
+
+#### Cache invalidation (mtime-based)
+
+```js
+async function isCacheValid(cachePath, repoPath) {
+  const cs = await stat(cachePath).catch(() => null);
+  if (!cs) return false;
+  const latest = await stat(join(repoPath, '.gitnexus/ghosts.json')).catch(() => null);
+  if (latest && latest.mtime > cs.mtime) return false;
+  for await (const entry of glob('.gitnexus/snapshots/*/ghosts.json', { cwd: repoPath })) {
+    const s = await stat(join(repoPath, entry));
+    if (s.mtime > cs.mtime) return false;
+  }
+  return true;
+}
+```
+
+Sur `POST /ghosts/sync` ou `POST /snapshot[/bulk]`, les sidecars sont touchés → leur mtime > cache.mtime → invalidation automatique sans hook explicite.
+
+#### Frontend (`AuditPanel.tsx`)
+
+Décomposition en 7 fichiers :
+- `AuditPanel.tsx` — container, gère 2 fetches (`/ghost-audit` + `/ghosts`), states loading/error/success.
+- `audit/AuditSummary.tsx` — 5 cards de chiffres.
+- `audit/LeadTimeHistogram.tsx` — SVG natif 4 buckets, pattern `GrowthChart.tsx`.
+- `audit/SlippageBar.tsx` — barre empilée 4 segments (early/onTime/late/noTarget).
+- `audit/VelocitySparkline.tsx` — SVG ligne 26 semaines + chiffre courant.
+- `audit/PlanChurnList.tsx` — top 10 churners, click → highlight dans `GhostTable`.
+- `audit/GhostTable.tsx` — table triable des ghosts (latest), filtres tier/status, click → propagate vers le graph Sigma pour highlight des `links[]`.
+
+Interactions clés :
+- Click top-churner → highlight row dans GhostTable (state local).
+- Click row → `onFileSelect` (pattern existant) → graph highlight via reducer.
+- Header download CSV → `?format=csv` sur `/ghosts` (réutilise pattern existant).
+- 404 → banner "Run sync" + bouton qui POST /ghosts/sync.
+
+#### MCP tool `ghost_audit`
+
+Dans `gitnexus-claude-plugin/src/tools/ghost_audit.ts`. Schema Zod `{ repo: string }`. Le handler fait `fetch http://localhost:${GITNEXUS_PORT}/ghost-audit?repo=${repo}` et renvoie 2 blocs `content` : un résumé texte lisible (cités par Claude), un dump JSON brut (pour drill-down). Aligné avec le pattern des 12 tools existants livrés en Tier 2bis.1.
+
+Cas d'usage Claude :
+- *"Qu'est-ce qui prend le plus de temps à livrer ?"* → `ghost_audit` → top churners + lead time distribution.
+- *"On respecte nos délais ?"* → `slippage.onTimePct`.
+- *"Notre velocity baisse ?"* → comparer `velocity.history[-4:]` vs `[-8:-4]`.
+
+#### Tests (intégration au test pyramid Phase 1b)
+
+**Pure fns** (Tier D) : 6 fichiers — summary, lead-time, slippage, churn, velocity, cache validation.
+**Components** (Tier E) : 7 fichiers — AuditPanel + 6 sous-composants.
+**Endpoints** (Tier G) : 3 fichiers — basic GET, cache invalidation, MCP tool.
+**E2E** (Tier H) : 1 fichier — open panel, click churner, observe table highlight.
+
+Fixture extension : ajouter un **12ème commit** à `make-fixture.mjs` qui marque un ghost ✅ dans le ROADMAP.md (sinon planChurn/slippage n'ont rien à mâcher).
+
+## 4. Scope boundaries
+
+**In-scope** : endpoint `/ghost-audit` + cache + 5 pure fns + AuditPanel + 6 sous-composants + MCP tool + tests + fixture extension + ROADMAP/INVENTORY/CLAUDE/spec updates.
+
+**Out-of-scope explicite** :
+- Audit cross-repo (`/ghost-audit?repos=A,B,C`) — sous-spec future si besoin.
+- Audit "what changed since last audit" (alertes sur changement de churn) — pas demandé.
+- Export PDF / report mailing — out.
+- Audit projecté (extrapoler future velocity) — out, c'est de la prédiction pas de l'audit (regard arrière).
+- Annotations user sur les ghosts ("on l'a annulé parce que…") — out, le ROADMAP.md sert pour ça.
+- Audit cross-repo aggregation (multi-repo dashboard) — out.
+
+## 5. Open questions
+
+1. **Tolérance slippage** : actuellement ±1 jour. Trop strict pour `plannedFor: "2026-Q3"` (trimestre = 90 jours). **Décision design** : pour les targets de granularité supérieure au jour (QX, MM, YYYY), la tolérance est la durée du bucket — un ghost matérialisé n'importe quand DANS le bucket est `onTime`. Le parser de `parseTargetDate` retourne le **dernier jour** du bucket et la fonction `computeSlippage` voit `early` si avant le 1er jour, `onTime` si dans le bucket, `late` si après. **Marqué résolu pour le plan.**
+2. **Velocity window configurable** : actuellement 28 jours par défaut. `GET /ghost-audit?windowDays=14` pour override. **Marqué résolu pour le plan.**
+3. **Plan churn : compter les ajouts d'`expectedLinks` (extension d'un ghost) ?** Aujourd'hui : OUI si la liste change (longueur ou contenu). Une extension de plan = churn. **Marqué résolu.**
+4. **Cache TTL en plus du mtime ?** Non — mtime suffit. Si plus tard on observe que des changements de cache hors-snapshot (e.g. édition manuelle de roadmap.yml) ne sont pas détectés, on ajoutera un TTL court (30s) en plus. Hors-scope MVP.
+5. **`ghost_audit` MCP tool acceptera-t-il un repo cross-tenant ?** Aujourd'hui chaque tool MCP accepte `{ repo: string }` et frappe le serveur local. Pas de cross-tenant en v1.
+
+## 6. Effort estimé
+
+**5.5 jours** au total. Suppose que le CORE est déjà livré.
+
+| Composant | Effort |
+|---|---|
+| 5 pure fns + cache helper + tests unit | 1 j |
+| Endpoint HTTP + caching + I/O | 0.5 j |
+| MCP tool ghost_audit | 0.5 j |
+| AuditPanel + 6 sous-composants + tests components | 1.5 j |
+| Tests integration + e2e + fixture extension | 1.5 j |
+| Wiring CI + docs (ROADMAP, INVENTORY, CLAUDE smoke loop) + spec Update | 0.5 j |
+
+## 7. Suite
+
+Le plan d'implémentation suit (via `superpowers:writing-plans`) une fois ce spec validé.
+
+Sous-specs encore à brainstormer dans cette session : **Augmented graph**, **Brainstorm-hook**, **Gantt opérationnel**.
