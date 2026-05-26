@@ -1,7 +1,7 @@
 # GitNexus — Roadmap
 
 État vivant des fonctionnalités déjà livrées et des prochaines pistes.
-Mis à jour 2026-05-22.
+Dernière mise à jour : 2026-05-22 (Tier 1 livré).
 
 L'objectif global : transformer GitNexus en **outil d'archéologie + de
 diagnostic structurel** pour un écosystème de dépôts, pas juste un
@@ -25,19 +25,22 @@ un nom marketing — et son premier pas concret.
 | 9 | **Coupling temporel** (paires de fichiers qui changent ensemble) | `/coupling`, `CouplingPanel.tsx` |
 | 10 | **Growth chart** (counts par catégorie sur le temps, SVG natif) | `/growth`, `GrowthChart.tsx` |
 | 11 | **Lifespan analysis** (foundational/recent/discontinued/ephemeral) | `/lifespan`, `LifespanPanel.tsx` |
+| 12 | **Entropy / structural health badge** dans la Timeline (densité + trend) | `/entropy`, `EntropyBadge.tsx` |
+| 13 | **CSV export** sur churn/coupling/growth/lifespan/entropy/ownership | `?format=csv` partout, `docker-server-csv.mjs` |
+| 14 | **Ownership / bus factor** (per-file commit-share + repo-level summary) | `/ownership`, `OwnershipPanel.tsx` |
 
 Toutes les analytics ci-dessus marchent dans un seul repo. La granularité
 est le node gitnexus (File, Function, Class, Section, …).
 
 ---
 
-## 🎯 Tier 1 — Prochaines briques à fort impact
+## 🎯 Tier 1 — Prochaines briques à fort impact ✅ LIVRÉ
 
 > Ces features s'appuient toutes sur ce qui existe déjà. Effort : jours à
 > 2 semaines chacune. ROI immédiat pour le use case "reverse engineering
-> du projet".
+> du projet". **Toutes livrées dans le commit qui suit l'init.**
 
-### 1.1 — Bus factor + knowledge silos
+### 1.1 — Bus factor + knowledge silos ✅
 **Promesse** : par fichier, qui contribue le plus, et quel est le risque
 de bus (un seul dev sur du code critique).
 
@@ -51,7 +54,7 @@ top contributeurs et `bus_factor = ceil(authors_covering_80pct_of_lines)`.
 **UI** : nouveau panneau `OwnershipPanel.tsx` qui liste les fichiers
 critiques (très modifiés via `/churn` × bus_factor ≤ 1).
 
-### 1.2 — Cross-repo coupling
+### 1.2 — Cross-repo coupling ⏳ pending
 **Promesse** : détecte des dépendances invisibles entre dépôts
 (`monorepo-A` change quand `monorepo-B` change).
 
@@ -65,7 +68,7 @@ de temps.
 (fenêtre glissante de 1h, ou commits liés par PR si on intègre l'API
 GitHub plus tard).
 
-### 1.3 — Migration des centres de gravité
+### 1.3 — Migration des centres de gravité ⏳ pending
 **Promesse** : voir le poids de code se déplacer entre repos au fil du
 temps (monolithe → microservices, ou inverse).
 
@@ -75,7 +78,7 @@ Renvoie un timeline aligné avec une série par repo, par catégorie.
 **UI** : option dans `GrowthChart.tsx` pour basculer "single repo /
 multi-repo". En multi-repo, stack-area chart au lieu de multi-line.
 
-### 1.4 — Entropie structurelle
+### 1.4 — Entropie structurelle ✅
 **Promesse** : un seul chiffre — le **Coefficient de Cohérence
 Structurelle** — qui monte quand l'architecture se dégrade et descend
 après refactos. Trackable dans le temps.
@@ -92,7 +95,7 @@ communautés, plus l'entropie est basse.
 snapshot du timeline. Affichage : nouvelle série dans `GrowthChart.tsx`
 ou bandeau dédié au-dessus de la Timeline.
 
-### 1.5 — Export CSV/JSON pour analyse externe
+### 1.5 — Export CSV/JSON pour analyse externe ✅
 **Promesse** : tu balances dans Excel / Jupyter / Looker pour ton propre
 post-mortem.
 

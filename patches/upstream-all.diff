@@ -1,8 +1,8 @@
 diff --git a/Dockerfile.web b/Dockerfile.web
-index 7d20e09..e19afeb 100644
+index 7d20e09..fa63145 100644
 --- a/Dockerfile.web
 +++ b/Dockerfile.web
-@@ -14,19 +14,42 @@ RUN npm run build --prefix gitnexus-shared
+@@ -14,19 +14,45 @@ RUN npm run build --prefix gitnexus-shared
  COPY gitnexus/package.json ./gitnexus/
  
  COPY gitnexus-web/package.json gitnexus-web/package-lock.json ./gitnexus-web/
@@ -44,15 +44,18 @@ index 7d20e09..e19afeb 100644
 +COPY docker-server-coupling.mjs ./docker-server-coupling.mjs
 +COPY docker-server-growth.mjs ./docker-server-growth.mjs
 +COPY docker-server-lifespan.mjs ./docker-server-lifespan.mjs
++COPY docker-server-entropy.mjs ./docker-server-entropy.mjs
++COPY docker-server-ownership.mjs ./docker-server-ownership.mjs
++COPY docker-server-csv.mjs ./docker-server-csv.mjs
  
  RUN chown -R node:node /app
  
 diff --git a/docker-server-churn.mjs b/docker-server-churn.mjs
 new file mode 100644
-index 0000000..dfaeab4
+index 0000000..33f13d2
 --- /dev/null
 +++ b/docker-server-churn.mjs
-@@ -0,0 +1,162 @@
+@@ -0,0 +1,183 @@
 +/**
 + * Churn analytics — Phase 4A of the time-travel feature.
 + *
@@ -90,6 +93,7 @@ index 0000000..dfaeab4
 +import { join } from 'node:path';
 +import { readdir, readFile, stat } from 'node:fs/promises';
 +import { findRepoByName, SNAPSHOTS_ROOT, safeSnapshotKey } from './docker-server-snapshots.mjs';
++import { toCsv, writeCsv, safeFilename } from './docker-server-csv.mjs';
 +
 +async function listSnapshotNamesAndDates(repoName) {
 +  const repoSnapshotsDir = join(SNAPSHOTS_ROOT, safeSnapshotKey(repoName));
@@ -197,6 +201,26 @@ index 0000000..dfaeab4
 +    }
 +  }
 +
++  // CSV branch: one row per node id, with the derived churn score so
++  // downstream tools (Excel, pandas) don't have to recompute it.
++  if (url.searchParams.get('format') === 'csv') {
++    const total = timeline.length;
++    const rows = Object.entries(perNode).map(([id, count]) => ({
++      nodeId: id,
++      presenceCount: count,
++      totalSnapshots: total,
++      churnScore: total > 0 ? 1 - count / total : 0,
++    }));
++    const csv = toCsv(rows, [
++      { key: 'nodeId' },
++      { key: 'presenceCount' },
++      { key: 'totalSnapshots' },
++      { key: 'churnScore' },
++    ]);
++    writeCsv(res, `${safeFilename(baseRepo)}-churn.csv`, csv);
++    return;
++  }
++
 +  res.writeHead(200, { 'Content-Type': 'application/json' });
 +  res.end(
 +    JSON.stringify({
@@ -217,10 +241,10 @@ index 0000000..dfaeab4
 +}
 diff --git a/docker-server-coupling.mjs b/docker-server-coupling.mjs
 new file mode 100644
-index 0000000..f200c60
+index 0000000..24784c2
 --- /dev/null
 +++ b/docker-server-coupling.mjs
-@@ -0,0 +1,242 @@
+@@ -0,0 +1,256 @@
 +/**
 + * Temporal coupling analytics — Phase 4B.
 + *
@@ -261,6 +285,7 @@ index 0000000..f200c60
 +import { readdir, readFile } from 'node:fs/promises';
 +import { join } from 'node:path';
 +import { SNAPSHOTS_ROOT, safeSnapshotKey } from './docker-server-snapshots.mjs';
++import { toCsv, writeCsv, safeFilename } from './docker-server-csv.mjs';
 +
 +async function listSnapshotNamesAndDates(repoName) {
 +  const repoSnapshotsDir = join(SNAPSHOTS_ROOT, safeSnapshotKey(repoName));
@@ -444,13 +469,26 @@ index 0000000..f200c60
 +  }
 +  pairs.sort((x, y) => y.jaccard - x.jaccard || y.count - x.count);
 +
++  const truncated = pairs.slice(0, top);
++
++  if (url.searchParams.get('format') === 'csv') {
++    const csv = toCsv(truncated, [
++      { key: 'a', header: 'fileA' },
++      { key: 'b', header: 'fileB' },
++      { key: 'count', header: 'coChanges' },
++      { key: 'jaccard' },
++    ]);
++    writeCsv(res, `${safeFilename(baseRepo)}-coupling.csv`, csv);
++    return;
++  }
++
 +  res.writeHead(200, { 'Content-Type': 'application/json' });
 +  res.end(
 +    JSON.stringify({
 +      totalTransitions,
 +      timeline,
 +      fileChangeCount,
-+      pairs: pairs.slice(0, top),
++      pairs: truncated,
 +      errors: errors.length ? errors : undefined,
 +    }),
 +  );
@@ -463,12 +501,259 @@ index 0000000..f200c60
 +  }
 +  return false;
 +}
+diff --git a/docker-server-csv.mjs b/docker-server-csv.mjs
+new file mode 100644
+index 0000000..d9de47e
+--- /dev/null
++++ b/docker-server-csv.mjs
+@@ -0,0 +1,57 @@
++/**
++ * Minimal CSV serialization for the analytics endpoints' `?format=csv`
++ * branch. Tiny and self-contained — we don't pull in a CSV lib for the
++ * three operations we actually do (string quoting, joining, header
++ * row).
++ */
++
++/**
++ * Quote a single CSV cell. RFC 4180 rules:
++ *   - wrap in double quotes if the value contains `,`, `"`, CR, or LF
++ *   - inside the quotes, escape `"` as `""`
++ * Numbers / booleans are stringified untouched, null/undefined render
++ * as empty.
++ */
++function csvCell(v) {
++  if (v == null) return '';
++  const s = typeof v === 'string' ? v : String(v);
++  if (/[",\r\n]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
++  return s;
++}
++
++/**
++ * Convert an array of row objects to a CSV string.
++ *   columns: ordered list of { key, header? }
++ * If `header` is omitted, `key` doubles as the header label.
++ *
++ * Streaming wasn't worth the complexity at our scale — analytics
++ * payloads are <100k rows in practice and fit in memory comfortably.
++ */
++export function toCsv(rows, columns) {
++  const header = columns.map((c) => csvCell(c.header ?? c.key)).join(',');
++  const body = rows
++    .map((row) => columns.map((c) => csvCell(row[c.key])).join(','))
++    .join('\n');
++  return header + '\n' + body + (body ? '\n' : '');
++}
++
++/**
++ * Helper for endpoint handlers: write the response with the right
++ * headers and a download-friendly filename derived from the repo name.
++ */
++export function writeCsv(res, filename, csv) {
++  res.writeHead(200, {
++    'Content-Type': 'text/csv; charset=utf-8',
++    'Content-Disposition': `attachment; filename="${filename}"`,
++    'Cache-Control': 'no-store',
++  });
++  res.end(csv);
++}
++
++/**
++ * Sanitize a string so it's safe as part of a CSV filename — keep
++ * alphanumerics, dashes, underscores, dots; replace the rest with `_`.
++ */
++export function safeFilename(s) {
++  return String(s).replace(/[^A-Za-z0-9._-]/g, '_').slice(0, 80) || 'export';
++}
+diff --git a/docker-server-entropy.mjs b/docker-server-entropy.mjs
+new file mode 100644
+index 0000000..c57e279
+--- /dev/null
++++ b/docker-server-entropy.mjs
+@@ -0,0 +1,178 @@
++/**
++ * Structural entropy / health metrics — Tier 1.4 of the ROADMAP.
++ *
++ * Endpoint:
++ *   GET /entropy?repo=<baseRepoName>
++ *
++ * For each snapshot (+ live), exposes a small set of *interpretable*
++ * structural-health metrics extracted from the snapshot's own
++ * `.gitnexus/meta.json`. We deliberately avoid inventing a single
++ * "magic score" — the underlying numbers are simple, defensible, and
++ * the UI can derive a top-line indicator (density delta vs first
++ * snapshot) without us baking opinions into the wire format.
++ *
++ * Returned per point:
++ *   nodes        — total node count (gitnexus stat)
++ *   edges        — total edge count (gitnexus stat)
++ *   communities  — number of communities detected by gitnexus
++ *   density      — graph density = 2*edges / (nodes*(nodes-1)).
++ *                  Range [0, 1]. Real-world healthy projects are
++ *                  typically << 0.01; numbers approaching 0.1 hint at
++ *                  "everything-touches-everything" monolithic shape.
++ *   modularity   — communities / nodes. Higher = more autonomous units
++ *                  (services / packages); lower = monolith.
++ *   filesCount   — file count for cross-referencing growth charts
++ *
++ * Reading from meta.json keeps this endpoint cheap (~5ms total even
++ * for many snapshots) — we never touch the lbug database for these,
++ * so it doesn't trigger the per-path connection cache.
++ */
++
++import { join } from 'node:path';
++import { readdir, readFile } from 'node:fs/promises';
++import {
++  findRepoByName,
++  SNAPSHOTS_ROOT,
++  safeSnapshotKey,
++} from './docker-server-snapshots.mjs';
++import { toCsv, writeCsv, safeFilename } from './docker-server-csv.mjs';
++
++function compute(stats) {
++  const nodes = Number(stats?.nodes) || 0;
++  const edges = Number(stats?.edges) || 0;
++  const communities = Number(stats?.communities) || 0;
++  const filesCount = Number(stats?.files) || 0;
++  // Density: undefined for graphs with <2 nodes (no possible edges).
++  // Reporting 0 in that edge case avoids special-casing in the UI.
++  const denom = nodes * (nodes - 1);
++  const density = denom > 0 ? (2 * edges) / denom : 0;
++  // Modularity ratio: 0 when no communities, else communities/nodes.
++  // Always in [0, 1] (can't have more communities than nodes).
++  const modularity = nodes > 0 ? communities / nodes : 0;
++  return { nodes, edges, communities, density, modularity, filesCount };
++}
++
++async function readMeta(storagePath) {
++  try {
++    return JSON.parse(await readFile(join(storagePath, 'meta.json'), 'utf8'));
++  } catch {
++    return null;
++  }
++}
++
++async function listSnapshotMetas(repoName) {
++  const dir = join(SNAPSHOTS_ROOT, safeSnapshotKey(repoName));
++  let entries;
++  try {
++    entries = await readdir(dir, { withFileTypes: true });
++  } catch (err) {
++    if (err && err.code === 'ENOENT') return [];
++    throw err;
++  }
++  const out = [];
++  for (const e of entries) {
++    if (!e.isDirectory()) continue;
++    const snapshotDir = join(dir, e.name);
++    // commit.json gives us the date, meta.json gives us the stats.
++    let commit = null;
++    let meta = null;
++    try {
++      commit = JSON.parse(await readFile(join(snapshotDir, 'commit.json'), 'utf8'));
++    } catch {
++      continue; // half-built; skip
++    }
++    meta = await readMeta(join(snapshotDir, 'source', '.gitnexus'));
++    out.push({
++      name: `${repoName}@${e.name}`,
++      date: commit.date,
++      isLive: false,
++      stats: meta?.stats || {},
++    });
++  }
++  return out;
++}
++
++async function handleEntropy(url, res, opts) {
++  const repoName = url.searchParams.get('repo');
++  if (!repoName) {
++    res.writeHead(400, { 'Content-Type': 'application/json' });
++    res.end(JSON.stringify({ error: 'missing repo' }));
++    return;
++  }
++  const baseRepo = repoName.split('@')[0];
++  const liveEntry = await findRepoByName(baseRepo, opts.api);
++  if (!liveEntry) {
++    res.writeHead(404, { 'Content-Type': 'application/json' });
++    res.end(JSON.stringify({ error: `repo not found: ${baseRepo}` }));
++    return;
++  }
++
++  // Live stats are right there in the registry response.
++  const liveStats = liveEntry.stats || {};
++  // Live entry needs its meta.json too if we want full parity with snapshots —
++  // the registry view is sometimes thinned. Best-effort fallback.
++  const liveMeta = await readMeta(
++    join('/data/projects', baseRepo, '.gitnexus'),
++  ).catch(() => null);
++  const livePoint = {
++    name: baseRepo,
++    date: liveEntry.indexedAt,
++    isLive: true,
++    stats: liveMeta?.stats || liveStats,
++  };
++
++  const snapshots = await listSnapshotMetas(baseRepo);
++  const points = [...snapshots, livePoint].sort((a, b) =>
++    (a.date || '').localeCompare(b.date || ''),
++  );
++
++  const timeline = points.map((p) => ({
++    name: p.name,
++    date: p.date,
++    isLive: p.isLive,
++    ...compute(p.stats),
++  }));
++
++  // Headline number: density of the most-recent point vs the first.
++  // > 1 = densifying (less modular over time); < 1 = simplifying.
++  const first = timeline[0];
++  const last = timeline[timeline.length - 1];
++  const densityTrend = first && first.density > 0 ? last.density / first.density : null;
++
++  if (url.searchParams.get('format') === 'csv') {
++    const csv = toCsv(timeline, [
++      { key: 'name', header: 'snapshotName' },
++      { key: 'date' },
++      { key: 'isLive' },
++      { key: 'nodes' },
++      { key: 'edges' },
++      { key: 'communities' },
++      { key: 'density' },
++      { key: 'modularity' },
++      { key: 'filesCount' },
++    ]);
++    writeCsv(res, `${safeFilename(baseRepo)}-entropy.csv`, csv);
++    return;
++  }
++
++  res.writeHead(200, { 'Content-Type': 'application/json' });
++  res.end(
++    JSON.stringify({
++      totalPoints: timeline.length,
++      timeline,
++      headline: {
++        currentDensity: last?.density ?? 0,
++        currentModularity: last?.modularity ?? 0,
++        densityTrend,
++      },
++    }),
++  );
++}
++
++export async function handleEntropyRoute(req, url, res, opts) {
++  if (url.pathname === '/entropy' && req.method === 'GET') {
++    await handleEntropy(url, res, opts);
++    return true;
++  }
++  return false;
++}
 diff --git a/docker-server-growth.mjs b/docker-server-growth.mjs
 new file mode 100644
-index 0000000..ea2af59
+index 0000000..4e22daa
 --- /dev/null
 +++ b/docker-server-growth.mjs
-@@ -0,0 +1,158 @@
+@@ -0,0 +1,185 @@
 +/**
 + * Growth-by-category analytics — Phase 4D.
 + *
@@ -506,6 +791,7 @@ index 0000000..ea2af59
 +  SNAPSHOTS_ROOT,
 +  safeSnapshotKey,
 +} from './docker-server-snapshots.mjs';
++import { toCsv, writeCsv, safeFilename } from './docker-server-csv.mjs';
 +
 +async function listSnapshotNamesAndDates(repoName) {
 +  const dir = join(SNAPSHOTS_ROOT, safeSnapshotKey(repoName));
@@ -610,6 +896,32 @@ index 0000000..ea2af59
 +
 +  const labels = Object.keys(maxPerLabel).sort((a, b) => maxPerLabel[b] - maxPerLabel[a]);
 +
++  // CSV emits long-format rows: (snapshot, label, count) — easier to
++  // pivot in pandas/Excel than a wide table with one column per label.
++  if (url.searchParams.get('format') === 'csv') {
++    const rows = [];
++    for (const point of enriched) {
++      for (const lbl of labels) {
++        rows.push({
++          snapshotName: point.name,
++          date: point.date,
++          isLive: point.isLive,
++          label: lbl,
++          count: point.counts[lbl] || 0,
++        });
++      }
++    }
++    const csv = toCsv(rows, [
++      { key: 'snapshotName' },
++      { key: 'date' },
++      { key: 'isLive' },
++      { key: 'label' },
++      { key: 'count' },
++    ]);
++    writeCsv(res, `${safeFilename(baseRepo)}-growth.csv`, csv);
++    return;
++  }
++
 +  res.writeHead(200, { 'Content-Type': 'application/json' });
 +  res.end(
 +    JSON.stringify({
@@ -629,10 +941,10 @@ index 0000000..ea2af59
 +}
 diff --git a/docker-server-lifespan.mjs b/docker-server-lifespan.mjs
 new file mode 100644
-index 0000000..5c9a9fe
+index 0000000..f05ff52
 --- /dev/null
 +++ b/docker-server-lifespan.mjs
-@@ -0,0 +1,225 @@
+@@ -0,0 +1,258 @@
 +/**
 + * Lifespan analytics — Phase 4C.
 + *
@@ -684,6 +996,7 @@ index 0000000..5c9a9fe
 +  SNAPSHOTS_ROOT,
 +  safeSnapshotKey,
 +} from './docker-server-snapshots.mjs';
++import { toCsv, writeCsv, safeFilename } from './docker-server-csv.mjs';
 +
 +const MAX_NODES_PER_BUCKET = 1000;
 +
@@ -839,6 +1152,38 @@ index 0000000..5c9a9fe
 +    }
 +  }
 +
++  if (url.searchParams.get('format') === 'csv') {
++    const rows = [];
++    for (const bucket of Object.keys(buckets)) {
++      for (const n of buckets[bucket]) {
++        rows.push({
++          bucket,
++          id: n.id,
++          label: n.label,
++          name: n.name,
++          path: n.path,
++          firstSeen: n.firstSeen ?? '',
++          firstSeenDate: n.firstSeenDate ?? '',
++          lastSeen: n.lastSeen ?? '',
++          lastSeenDate: n.lastSeenDate ?? '',
++        });
++      }
++    }
++    const csv = toCsv(rows, [
++      { key: 'bucket' },
++      { key: 'id' },
++      { key: 'label' },
++      { key: 'name' },
++      { key: 'path' },
++      { key: 'firstSeen' },
++      { key: 'firstSeenDate' },
++      { key: 'lastSeen' },
++      { key: 'lastSeenDate' },
++    ]);
++    writeCsv(res, `${safeFilename(baseRepo)}-lifespan.csv`, csv);
++    return;
++  }
++
 +  res.writeHead(200, { 'Content-Type': 'application/json' });
 +  res.end(
 +    JSON.stringify({
@@ -854,6 +1199,238 @@ index 0000000..5c9a9fe
 +export async function handleLifespanRoute(req, url, res, opts) {
 +  if (url.pathname === '/lifespan' && req.method === 'GET') {
 +    await handleLifespan(url, res, opts);
++    return true;
++  }
++  return false;
++}
+diff --git a/docker-server-ownership.mjs b/docker-server-ownership.mjs
+new file mode 100644
+index 0000000..b9a666a
+--- /dev/null
++++ b/docker-server-ownership.mjs
+@@ -0,0 +1,226 @@
++/**
++ * Ownership / bus-factor analytics — ROADMAP Tier 1.1.
++ *
++ * Endpoint:
++ *   GET /ownership?repo=<baseRepoName>[&format=csv]
++ *
++ * Walks the *live* git history (a single `git log --name-only` call —
++ * O(commits), much cheaper than running `git blame` per file) and
++ * aggregates, per file:
++ *
++ *   - totalCommits  number of non-merge commits that touched the file
++ *   - authors       top contributors by commit share (max 5)
++ *   - busFactor     smallest N authors whose commits cover ≥ BUS_FACTOR_PCT
++ *                   of the file's history. busFactor=1 means one person
++ *                   owns the file's history — fragile.
++ *
++ * We use commit counts (not blame'd line counts) for cost reasons:
++ * blame is per-file, per-line, on a working-tree clone, while
++ * `git log --name-only` returns everything in one pass. The semantic
++ * difference matters at the edges (someone who wrote a lot but
++ * disappeared shows up in blame but not in recent log activity), but
++ * for the "who owns this code today" question the log-based view is
++ * usually the right one.
++ *
++ * Response (JSON):
++ *   {
++ *     totalFiles: number,
++ *     authorsCount: number,           // distinct authors across the repo
++ *     busFactorThreshold: number,     // the % used to compute busFactor
++ *     files: [{ path, totalCommits, busFactor, authors: [...] }],   // sorted
++ *                                                                    // by busFactor asc, then totalCommits desc
++ *                                                                    // (most fragile + most active first)
++ *     repoBusFactor: number,          // bus factor of the repo as a whole
++ *     repoAuthors: [{ name, commits, share }]
++ *   }
++ */
++
++import { join } from 'node:path';
++import { stat } from 'node:fs/promises';
++import { spawn } from 'node:child_process';
++import { findRepoByName } from './docker-server-snapshots.mjs';
++import { toCsv, writeCsv, safeFilename } from './docker-server-csv.mjs';
++
++const BUS_FACTOR_PCT = 0.8;
++const TOP_AUTHORS_PER_FILE = 5;
++const MAX_FILES = 2000; // cap response size
++
++function runCmd(cmd, args, opts = {}) {
++  return new Promise((resolve, reject) => {
++    const child = spawn(cmd, args, opts);
++    let stdout = '';
++    let stderr = '';
++    child.stdout?.on('data', (d) => (stdout += d.toString()));
++    child.stderr?.on('data', (d) => (stderr += d.toString()));
++    child.on('error', reject);
++    child.on('close', (code) => {
++      if (code === 0) resolve(stdout);
++      else reject(new Error(`${cmd} exited ${code}: ${stderr.trim()}`));
++    });
++  });
++}
++
++/**
++ * Parse `git log --pretty=format:%an --name-only --no-merges` output.
++ * Format alternates:
++ *   <author>\n
++ *   <file1>\n
++ *   <file2>\n
++ *   \n  (blank between commits)
++ * Returns Map<filePath, Map<author, commitCount>>.
++ */
++function parseLog(stdout) {
++  const filesByAuthor = new Map();
++  let currentAuthor = null;
++  for (const rawLine of stdout.split('\n')) {
++    const line = rawLine.trimEnd();
++    if (line === '') {
++      currentAuthor = null;
++      continue;
++    }
++    if (currentAuthor === null) {
++      currentAuthor = line;
++      continue;
++    }
++    const filePath = line;
++    let m = filesByAuthor.get(filePath);
++    if (!m) {
++      m = new Map();
++      filesByAuthor.set(filePath, m);
++    }
++    m.set(currentAuthor, (m.get(currentAuthor) || 0) + 1);
++  }
++  return filesByAuthor;
++}
++
++function busFactorFromAuthors(authorMap) {
++  const sorted = [...authorMap.entries()].sort((a, b) => b[1] - a[1]);
++  const total = sorted.reduce((sum, [, c]) => sum + c, 0);
++  if (total === 0) return { busFactor: 0, authors: [], totalCommits: 0 };
++  let cum = 0;
++  let bf = 0;
++  for (const [, count] of sorted) {
++    bf++;
++    cum += count;
++    if (cum / total >= BUS_FACTOR_PCT) break;
++  }
++  return {
++    busFactor: bf,
++    totalCommits: total,
++    authors: sorted.slice(0, TOP_AUTHORS_PER_FILE).map(([name, commits]) => ({
++      name,
++      commits,
++      share: commits / total,
++    })),
++  };
++}
++
++async function handleOwnership(url, res, opts) {
++  const repoName = url.searchParams.get('repo');
++  if (!repoName) {
++    res.writeHead(400, { 'Content-Type': 'application/json' });
++    res.end(JSON.stringify({ error: 'missing repo' }));
++    return;
++  }
++  const baseRepo = repoName.split('@')[0];
++  const repo = await findRepoByName(baseRepo, opts.api);
++  if (!repo) {
++    res.writeHead(404, { 'Content-Type': 'application/json' });
++    res.end(JSON.stringify({ error: `repo not found: ${baseRepo}` }));
++    return;
++  }
++  const repoPath = repo.repoPath || repo.path;
++  if (!(await stat(join(repoPath, '.git')).catch(() => null))) {
++    res.writeHead(400, { 'Content-Type': 'application/json' });
++    res.end(
++      JSON.stringify({
++        error: `repo at ${repoPath} is not a git repository — ownership requires git history`,
++      }),
++    );
++    return;
++  }
++
++  let logOut;
++  try {
++    logOut = await runCmd('git', [
++      '-C',
++      repoPath,
++      'log',
++      '--pretty=format:%an',
++      '--name-only',
++      '--no-merges',
++    ]);
++  } catch (err) {
++    res.writeHead(500, { 'Content-Type': 'application/json' });
++    res.end(JSON.stringify({ error: `git log failed: ${err.message}` }));
++    return;
++  }
++
++  const filesByAuthor = parseLog(logOut);
++
++  // Per-file bus factor.
++  const fileRows = [];
++  const overallAuthors = new Map();
++  for (const [path, authorMap] of filesByAuthor) {
++    const summary = busFactorFromAuthors(authorMap);
++    fileRows.push({ path, ...summary });
++    for (const [name, count] of authorMap) {
++      overallAuthors.set(name, (overallAuthors.get(name) || 0) + count);
++    }
++  }
++  // Sort: most fragile (low bus factor) first, then most active (commits desc).
++  // That puts "you only have one expert on a hot file" at the top of the list,
++  // which is the exact thing the user wants to see.
++  fileRows.sort((a, b) => a.busFactor - b.busFactor || b.totalCommits - a.totalCommits);
++
++  // Repo-level bus factor: smallest N authors covering 80% of all commits.
++  const repoSummary = busFactorFromAuthors(overallAuthors);
++
++  if (url.searchParams.get('format') === 'csv') {
++    const rows = fileRows.slice(0, MAX_FILES).map((f) => ({
++      path: f.path,
++      busFactor: f.busFactor,
++      totalCommits: f.totalCommits,
++      topAuthor: f.authors[0]?.name || '',
++      topAuthorShare: f.authors[0]?.share ?? 0,
++      secondAuthor: f.authors[1]?.name || '',
++      secondAuthorShare: f.authors[1]?.share ?? 0,
++      thirdAuthor: f.authors[2]?.name || '',
++      thirdAuthorShare: f.authors[2]?.share ?? 0,
++    }));
++    const csv = toCsv(rows, [
++      { key: 'path' },
++      { key: 'busFactor' },
++      { key: 'totalCommits' },
++      { key: 'topAuthor' },
++      { key: 'topAuthorShare' },
++      { key: 'secondAuthor' },
++      { key: 'secondAuthorShare' },
++      { key: 'thirdAuthor' },
++      { key: 'thirdAuthorShare' },
++    ]);
++    writeCsv(res, `${safeFilename(baseRepo)}-ownership.csv`, csv);
++    return;
++  }
++
++  res.writeHead(200, { 'Content-Type': 'application/json' });
++  res.end(
++    JSON.stringify({
++      totalFiles: fileRows.length,
++      authorsCount: overallAuthors.size,
++      busFactorThreshold: BUS_FACTOR_PCT,
++      files: fileRows.slice(0, MAX_FILES),
++      repoBusFactor: repoSummary.busFactor,
++      repoAuthors: repoSummary.authors,
++      truncated: fileRows.length > MAX_FILES ? fileRows.length : undefined,
++    }),
++  );
++}
++
++export async function handleOwnershipRoute(req, url, res, opts) {
++  if (url.pathname === '/ownership' && req.method === 'GET') {
++    await handleOwnership(url, res, opts);
 +    return true;
 +  }
 +  return false;
@@ -1521,10 +2098,10 @@ index 0000000..f6f693f
 +  return false;
 +}
 diff --git a/docker-server.mjs b/docker-server.mjs
-index adf84a0..7bc5995 100644
+index adf84a0..938c2f1 100644
 --- a/docker-server.mjs
 +++ b/docker-server.mjs
-@@ -1,12 +1,43 @@
+@@ -1,12 +1,45 @@
 -import { createReadStream } from 'node:fs';
 -import { stat } from 'node:fs/promises';
 +import { createReadStream, createWriteStream } from 'node:fs';
@@ -1540,6 +2117,8 @@ index adf84a0..7bc5995 100644
 +import { handleCouplingRoute } from './docker-server-coupling.mjs';
 +import { handleGrowthRoute } from './docker-server-growth.mjs';
 +import { handleLifespanRoute } from './docker-server-lifespan.mjs';
++import { handleEntropyRoute } from './docker-server-entropy.mjs';
++import { handleOwnershipRoute } from './docker-server-ownership.mjs';
  
  const host = '0.0.0.0';
  const port = Number(process.env.PORT || '4173');
@@ -1571,7 +2150,7 @@ index adf84a0..7bc5995 100644
  const contentTypes = {
    '.css': 'text/css; charset=utf-8',
    '.html': 'text/html; charset=utf-8',
-@@ -34,8 +65,460 @@ function resolvePath(urlPath) {
+@@ -34,8 +67,468 @@ function resolvePath(urlPath) {
    return candidate;
  }
  
@@ -2027,6 +2606,14 @@ index adf84a0..7bc5995 100644
 +  }
 +  // Lifespan analytics (Phase 4C) — see docker-server-lifespan.mjs
 +  if (await handleLifespanRoute(req, url, res, { api: GITNEXUS_API })) {
++    return;
++  }
++  // Entropy / health metrics (ROADMAP Tier 1.4)
++  if (await handleEntropyRoute(req, url, res, { api: GITNEXUS_API })) {
++    return;
++  }
++  // Ownership / bus factor (ROADMAP Tier 1.1)
++  if (await handleOwnershipRoute(req, url, res, { api: GITNEXUS_API })) {
 +    return;
 +  }
 +
@@ -2581,10 +3168,10 @@ index 836bad7..4c2f756 100644
      "@vitejs/plugin-react": "^5.1.4",
      "@vitest/coverage-v8": "^4.1.5",
 diff --git a/gitnexus-web/src/App.tsx b/gitnexus-web/src/App.tsx
-index 2ee3569..a8c2053 100644
+index 2ee3569..9774ba8 100644
 --- a/gitnexus-web/src/App.tsx
 +++ b/gitnexus-web/src/App.tsx
-@@ -1,9 +1,15 @@
+@@ -1,9 +1,16 @@
  import { useCallback, useEffect, useRef, useState } from 'react';
  import { AppStateProvider, useAppState } from './hooks/useAppState';
  import { DropZone } from './components/DropZone';
@@ -2592,6 +3179,7 @@ index 2ee3569..a8c2053 100644
 +import { CouplingPanel } from './components/CouplingPanel';
 +import { GrowthChart } from './components/GrowthChart';
 +import { LifespanPanel } from './components/LifespanPanel';
++import { OwnershipPanel } from './components/OwnershipPanel';
  import { LoadingOverlay } from './components/LoadingOverlay';
  import { Header } from './components/Header';
 +import { Timeline } from './components/Timeline';
@@ -2600,7 +3188,7 @@ index 2ee3569..a8c2053 100644
  import { RightPanel } from './components/RightPanel';
  import { SettingsPanel } from './components/SettingsPanel';
  import { StatusBar } from './components/StatusBar';
-@@ -45,6 +51,7 @@ const AppContent = () => {
+@@ -45,6 +52,7 @@ const AppContent = () => {
      setAvailableRepos,
      switchRepo,
      setCurrentRepo,
@@ -2608,7 +3196,7 @@ index 2ee3569..a8c2053 100644
    } = useAppState();
  
    const graphCanvasRef = useRef<GraphCanvasHandle>(null);
-@@ -194,6 +201,21 @@ const AppContent = () => {
+@@ -194,6 +202,21 @@ const AppContent = () => {
      initializeAgent();
    }, [refreshLLMSettings, initializeAgent]);
  
@@ -2630,7 +3218,7 @@ index 2ee3569..a8c2053 100644
    // ── Server heartbeat: detect when server goes down while exploring ────────
    // Uses SSE (EventSource) for instant detection — no polling delay.
    // On disconnect: show a reconnecting banner instead of resetting to onboarding.
-@@ -250,22 +272,84 @@ const AppContent = () => {
+@@ -250,22 +273,84 @@ const AppContent = () => {
            // Retry once after 1s if the repo isn't found yet (server may still
            // be reinitializing after the worker completed).
            const url = serverBaseUrl ?? 'http://localhost:4747';
@@ -2716,7 +3304,7 @@ index 2ee3569..a8c2053 100644
                fetchRepos()
                  .then((repos) => setAvailableRepos(repos))
                  .catch(() => {});
-@@ -281,7 +365,21 @@ const AppContent = () => {
+@@ -281,7 +366,26 @@ const AppContent = () => {
  
          {/* Graph area - takes remaining space */}
          <div className="relative min-w-0 flex-1">
@@ -2736,10 +3324,15 @@ index 2ee3569..a8c2053 100644
 +
 +          {/* Lifespan panel — bottom-right. Coexists with all the others. */}
 +          <LifespanPanel />
++
++          {/* Ownership panel — top-right, mutually exclusive with the
++              CouplingPanel because both occupy the same slot. The
++              Timeline toggles handle the exclusion at state level. */}
++          <OwnershipPanel />
  
            {/* Code References Panel (overlay) - does NOT resize the graph, it overlaps on top */}
            {isCodePanelOpen && (codeReferences.length > 0 || !!selectedNode) && (
-@@ -295,6 +393,11 @@ const AppContent = () => {
+@@ -295,6 +399,11 @@ const AppContent = () => {
          {isRightPanelOpen && <RightPanel />}
        </main>
  
@@ -3187,16 +3780,17 @@ index 0000000..487fd21
 +};
 diff --git a/gitnexus-web/src/components/CouplingPanel.tsx b/gitnexus-web/src/components/CouplingPanel.tsx
 new file mode 100644
-index 0000000..2d5d7da
+index 0000000..f91c568
 --- /dev/null
 +++ b/gitnexus-web/src/components/CouplingPanel.tsx
-@@ -0,0 +1,191 @@
+@@ -0,0 +1,204 @@
 +import { useMemo, useState } from 'react';
 +import {
 +  X,
 +  ArrowRight,
 +  AlertCircle,
 +  Loader2,
++  Download,
 +} from '@/lib/lucide-icons';
 +import { useAppState } from '../hooks/useAppState';
 +
@@ -3219,6 +3813,7 @@ index 0000000..2d5d7da
 +
 +export const CouplingPanel = () => {
 +  const {
++    projectName,
 +    couplingActive,
 +    couplingLoading,
 +    couplingError,
@@ -3227,6 +3822,7 @@ index 0000000..2d5d7da
 +    setHighlightedNodeIds,
 +    exitCouplingMode,
 +  } = useAppState();
++  const baseRepo = (projectName || '').split('@')[0];
 +  const [minJaccard, setMinJaccard] = useState(0.5);
 +  const [search, setSearch] = useState('');
 +
@@ -3270,10 +3866,20 @@ index 0000000..2d5d7da
 +            {couplingData.totalTransitions > 1 ? 's' : ''}
 +          </span>
 +        )}
++        {couplingData && couplingData.pairs.length > 0 && (
++          <a
++            href={`/coupling?repo=${encodeURIComponent(baseRepo)}&top=100&format=csv`}
++            download
++            className="ml-auto shrink-0 cursor-pointer rounded p-1 text-text-muted transition-colors hover:bg-hover hover:text-text-primary"
++            title="Download all pairs as CSV"
++          >
++            <Download className="h-3.5 w-3.5" />
++          </a>
++        )}
 +        <button
 +          type="button"
 +          onClick={() => exitCouplingMode()}
-+          className="ml-auto shrink-0 cursor-pointer rounded p-1 text-text-muted transition-colors hover:bg-hover hover:text-text-primary"
++          className={`${couplingData?.pairs.length ? '' : 'ml-auto'} shrink-0 cursor-pointer rounded p-1 text-text-muted transition-colors hover:bg-hover hover:text-text-primary`}
 +          title="Exit coupling mode"
 +        >
 +          <X className="h-3.5 w-3.5" />
@@ -3576,6 +4182,152 @@ index f268eb6..4b02417 100644
            </Crossfade>
          )}
        </div>
+diff --git a/gitnexus-web/src/components/EntropyBadge.tsx b/gitnexus-web/src/components/EntropyBadge.tsx
+new file mode 100644
+index 0000000..07a59b5
+--- /dev/null
++++ b/gitnexus-web/src/components/EntropyBadge.tsx
+@@ -0,0 +1,140 @@
++import { useEffect, useState } from 'react';
++import { Activity, TrendingUp, TrendingDown, Minus } from '@/lib/lucide-icons';
++
++/**
++ * Small always-on health badge in the Timeline bar.
++ *
++ * Pulls /entropy?repo=<base> when the active project changes, then
++ * shows the current density value and a trend arrow comparing it to the
++ * earliest snapshot. The tooltip exposes the underlying counts so the
++ * user can sanity-check the headline number.
++ *
++ * Intentionally lightweight — no global state, no separate panel. The
++ * use case is "glance and move on"; we'll graduate to a full chart in a
++ * future tier if the badge alone proves too thin.
++ */
++
++interface EntropyPoint {
++  name: string;
++  date: string;
++  isLive: boolean;
++  nodes: number;
++  edges: number;
++  communities: number;
++  density: number;
++  modularity: number;
++}
++
++interface EntropyResponse {
++  totalPoints: number;
++  timeline: EntropyPoint[];
++  headline: {
++    currentDensity: number;
++    currentModularity: number;
++    densityTrend: number | null;
++  };
++}
++
++interface EntropyBadgeProps {
++  repoName: string;
++}
++
++export const EntropyBadge = ({ repoName }: EntropyBadgeProps) => {
++  const [data, setData] = useState<EntropyResponse | null>(null);
++  const [loading, setLoading] = useState(false);
++  const [error, setError] = useState<string | null>(null);
++
++  useEffect(() => {
++    if (!repoName) return;
++    const baseRepo = repoName.split('@')[0];
++    let cancelled = false;
++    setLoading(true);
++    setError(null);
++    fetch(`/entropy?repo=${encodeURIComponent(baseRepo)}`, { cache: 'no-store' })
++      .then((r) => (r.ok ? r.json() : r.json().then((b) => Promise.reject(b.error || r.statusText))))
++      .then((d: EntropyResponse) => {
++        if (cancelled) return;
++        setData(d);
++      })
++      .catch((err) => {
++        if (cancelled) return;
++        setError(typeof err === 'string' ? err : 'failed');
++      })
++      .finally(() => {
++        if (!cancelled) setLoading(false);
++      });
++    return () => {
++      cancelled = true;
++    };
++  }, [repoName]);
++
++  // The badge only earns its slot when we have at least 2 points (i.e.
++  // when "trend" actually means something). Otherwise hide silently —
++  // the user gets the Timeline bar regardless.
++  if (loading || error) return null;
++  if (!data || data.totalPoints < 2) return null;
++
++  const { currentDensity, currentModularity, densityTrend } = data.headline;
++  const trend = densityTrend ?? 1;
++  const trendPct = Math.round((trend - 1) * 100);
++  const trendArrow =
++    Math.abs(trendPct) < 5 ? (
++      <Minus className="h-2.5 w-2.5" />
++    ) : trendPct > 0 ? (
++      <TrendingUp className="h-2.5 w-2.5" />
++    ) : (
++      <TrendingDown className="h-2.5 w-2.5" />
++    );
++  const trendColor =
++    Math.abs(trendPct) < 5
++      ? 'text-text-muted'
++      : trendPct > 0
++        ? 'text-amber-300'
++        : 'text-emerald-300';
++
++  // Density is usually tiny (<0.05). Show scientific-ish notation for
++  // sub-1% values, otherwise a plain percentage.
++  const densityStr =
++    currentDensity < 0.01
++      ? currentDensity.toExponential(2)
++      : (currentDensity * 100).toFixed(2) + '%';
++
++  const last = data.timeline[data.timeline.length - 1];
++  const first = data.timeline[0];
++  const tooltip = [
++    `Current point: ${last.isLive ? 'LIVE' : last.name.split('@')[1] || last.name}`,
++    `  nodes: ${last.nodes}`,
++    `  edges: ${last.edges}`,
++    `  communities: ${last.communities}`,
++    `  density: ${last.density.toExponential(3)}`,
++    `  modularity ratio: ${last.modularity.toFixed(4)}`,
++    '',
++    `Baseline: ${first.isLive ? 'LIVE' : first.name.split('@')[1] || first.name}`,
++    `  density: ${first.density.toExponential(3)}`,
++    '',
++    densityTrend !== null
++      ? `Density trend: ×${trend.toFixed(2)} (${trendPct >= 0 ? '+' : ''}${trendPct}%)`
++      : 'Density trend: n/a (baseline has 0 density)',
++    '',
++    'Higher density = more interconnected = harder to refactor in isolation.',
++  ].join('\n');
++
++  return (
++    <div
++      className="flex shrink-0 items-center gap-1 rounded-md border border-border-subtle bg-elevated px-1.5 py-0.5 text-[10px] font-mono"
++      title={tooltip}
++    >
++      <Activity className="h-2.5 w-2.5 text-text-muted" />
++      <span className="text-text-muted">density</span>
++      <span className="font-semibold text-text-primary">{densityStr}</span>
++      <span className={`flex items-center gap-0.5 ${trendColor}`}>
++        {trendArrow}
++        {Math.abs(trendPct) >= 5 ? `${trendPct > 0 ? '+' : ''}${trendPct}%` : 'flat'}
++      </span>
++      <span className="text-text-muted">·</span>
++      <span className="text-text-muted">
++        mod {currentModularity.toFixed(3)}
++      </span>
++    </div>
++  );
++};
 diff --git a/gitnexus-web/src/components/Graph3DCanvas.tsx b/gitnexus-web/src/components/Graph3DCanvas.tsx
 new file mode 100644
 index 0000000..05e7618
@@ -4210,12 +4962,12 @@ index e34fd43..c9f6f19 100644
            className={
 diff --git a/gitnexus-web/src/components/GrowthChart.tsx b/gitnexus-web/src/components/GrowthChart.tsx
 new file mode 100644
-index 0000000..a125abb
+index 0000000..f0d6351
 --- /dev/null
 +++ b/gitnexus-web/src/components/GrowthChart.tsx
-@@ -0,0 +1,294 @@
+@@ -0,0 +1,305 @@
 +import { useMemo, useState } from 'react';
-+import { X, Loader2, AlertCircle, TrendingUp } from '@/lib/lucide-icons';
++import { X, Loader2, AlertCircle, TrendingUp, Download } from '@/lib/lucide-icons';
 +import { useAppState } from '../hooks/useAppState';
 +
 +/**
@@ -4259,7 +5011,8 @@ index 0000000..a125abb
 +const colorFor = (i: number) => PALETTE[i % PALETTE.length];
 +
 +export const GrowthChart = () => {
-+  const { growthActive, growthLoading, growthError, growthData, exitGrowthMode } = useAppState();
++  const { projectName, growthActive, growthLoading, growthError, growthData, exitGrowthMode } = useAppState();
++  const baseRepo = (projectName || '').split('@')[0];
 +  const [hidden, setHidden] = useState<Set<string>>(new Set());
 +  const [hover, setHover] = useState<{ x: number; y: number; idx: number } | null>(null);
 +
@@ -4308,10 +5061,20 @@ index 0000000..a125abb
 +            {n} points • {growthData.labels.length} categories
 +          </span>
 +        )}
++        {growthData && (
++          <a
++            href={`/growth?repo=${encodeURIComponent(baseRepo)}&format=csv`}
++            download
++            className="ml-auto shrink-0 cursor-pointer rounded p-1 text-text-muted transition-colors hover:bg-hover hover:text-text-primary"
++            title="Download long-format CSV (snapshot × label × count)"
++          >
++            <Download className="h-3.5 w-3.5" />
++          </a>
++        )}
 +        <button
 +          type="button"
 +          onClick={() => exitGrowthMode()}
-+          className="ml-auto shrink-0 cursor-pointer rounded p-1 text-text-muted transition-colors hover:bg-hover hover:text-text-primary"
++          className={`${growthData ? '' : 'ml-auto'} shrink-0 cursor-pointer rounded p-1 text-text-muted transition-colors hover:bg-hover hover:text-text-primary`}
 +          title="Close growth chart"
 +        >
 +          <X className="h-3.5 w-3.5" />
@@ -4747,10 +5510,10 @@ index 3061a2e..5b78e27 100644
                        <div className="border-t border-border-subtle bg-accent/5 px-4 py-2.5">
 diff --git a/gitnexus-web/src/components/LifespanPanel.tsx b/gitnexus-web/src/components/LifespanPanel.tsx
 new file mode 100644
-index 0000000..c41de10
+index 0000000..5a069d6
 --- /dev/null
 +++ b/gitnexus-web/src/components/LifespanPanel.tsx
-@@ -0,0 +1,238 @@
+@@ -0,0 +1,251 @@
 +import { useMemo, useState } from 'react';
 +import {
 +  X,
@@ -4759,6 +5522,7 @@ index 0000000..c41de10
 +  AlertCircle,
 +  ChevronRight,
 +  ChevronDown,
++  Download,
 +} from '@/lib/lucide-icons';
 +import { useAppState } from '../hooks/useAppState';
 +import type { LifespanBucket, LifespanNode } from '../hooks/useAppState';
@@ -4816,6 +5580,7 @@ index 0000000..c41de10
 +
 +export const LifespanPanel = () => {
 +  const {
++    projectName,
 +    lifespanActive,
 +    lifespanLoading,
 +    lifespanError,
@@ -4824,6 +5589,7 @@ index 0000000..c41de10
 +    setHighlightedNodeIds,
 +    exitLifespanMode,
 +  } = useAppState();
++  const baseRepo = (projectName || '').split('@')[0];
 +  const [open, setOpen] = useState<Record<LifespanBucket, boolean>>({
 +    foundational: false, // usually huge — collapsed by default
 +    recent: true,
@@ -4888,10 +5654,20 @@ index 0000000..c41de10
 +            over {lifespanData.totalPoints} points
 +          </span>
 +        )}
++        {lifespanData && (
++          <a
++            href={`/lifespan?repo=${encodeURIComponent(baseRepo)}&format=csv`}
++            download
++            className="ml-auto shrink-0 cursor-pointer rounded p-1 text-text-muted transition-colors hover:bg-hover hover:text-text-primary"
++            title="Download all buckets as CSV"
++          >
++            <Download className="h-3.5 w-3.5" />
++          </a>
++        )}
 +        <button
 +          type="button"
 +          onClick={() => exitLifespanMode()}
-+          className="ml-auto shrink-0 cursor-pointer rounded p-1 text-text-muted transition-colors hover:bg-hover hover:text-text-primary"
++          className={`${lifespanData ? '' : 'ml-auto'} shrink-0 cursor-pointer rounded p-1 text-text-muted transition-colors hover:bg-hover hover:text-text-primary`}
 +          title="Close lifespan panel"
 +        >
 +          <X className="h-3.5 w-3.5" />
@@ -4983,6 +5759,249 @@ index 0000000..c41de10
 +                </div>
 +              );
 +            })}
++          </div>
++        </>
++      )}
++    </div>
++  );
++};
+diff --git a/gitnexus-web/src/components/OwnershipPanel.tsx b/gitnexus-web/src/components/OwnershipPanel.tsx
+new file mode 100644
+index 0000000..cf9a466
+--- /dev/null
++++ b/gitnexus-web/src/components/OwnershipPanel.tsx
+@@ -0,0 +1,237 @@
++import { useMemo, useState } from 'react';
++import {
++  X,
++  Users,
++  Loader2,
++  AlertCircle,
++  Download,
++  AlertTriangle,
++} from '@/lib/lucide-icons';
++import { useAppState } from '../hooks/useAppState';
++
++/**
++ * Ownership / bus-factor panel — ROADMAP Tier 1.1.
++ *
++ * Lists files sorted by *fragility*: the lowest bus factor (=1 means one
++ * person has touched 80%+ of the file's history) first. Within the same
++ * bus factor, busier files (more commits) rank higher because they
++ * matter more.
++ *
++ * Filter by path/author. Click a row to highlight the file in the live
++ * graph (skipped if the file no longer exists). A header strip shows
++ * the *repo-level* bus factor — your "how many people could leave
++ * before the codebase is in trouble" number.
++ *
++ * Position: top-right (same slot as CouplingPanel — they're mutually
++ * exclusive, since both are "list of things by metric" panels and
++ * stacking would be noisy).
++ */
++
++const PANEL_WIDTH_PX = 380;
++
++function busFactorColor(bf: number): string {
++  // 1 author owns 80%+ = red flag.
++  // 2 = amber: still fragile, vacation risk.
++  // 3+ = green: healthy.
++  if (bf <= 1) return 'text-red-300 bg-red-500/15 border-red-500/30';
++  if (bf === 2) return 'text-amber-300 bg-amber-500/15 border-amber-500/30';
++  return 'text-emerald-300 bg-emerald-500/15 border-emerald-500/30';
++}
++
++export const OwnershipPanel = () => {
++  const {
++    projectName,
++    ownershipActive,
++    ownershipLoading,
++    ownershipError,
++    ownershipData,
++    graph,
++    setHighlightedNodeIds,
++    exitOwnershipMode,
++  } = useAppState();
++  const baseRepo = (projectName || '').split('@')[0];
++  const [search, setSearch] = useState('');
++  const [maxBusFactor, setMaxBusFactor] = useState(99);
++
++  // Build a path → File-node-id index so a row click can highlight in
++  // the graph. Same trick CouplingPanel uses.
++  const fileIdByPath = useMemo(() => {
++    const m = new Map<string, string>();
++    if (!graph) return m;
++    for (const n of graph.nodes) {
++      if (n.label === 'File' && n.properties.filePath) {
++        m.set(n.properties.filePath, n.id);
++      }
++    }
++    return m;
++  }, [graph]);
++
++  const filtered = useMemo(() => {
++    if (!ownershipData) return [];
++    const q = search.trim().toLowerCase();
++    return ownershipData.files.filter((f) => {
++      if (f.busFactor > maxBusFactor) return false;
++      if (!q) return true;
++      if (f.path.toLowerCase().includes(q)) return true;
++      return f.authors.some((a) => a.name.toLowerCase().includes(q));
++    });
++  }, [ownershipData, search, maxBusFactor]);
++
++  if (!ownershipActive && !ownershipLoading && !ownershipError) return null;
++
++  return (
++    <div
++      className="pointer-events-auto absolute top-3 right-3 z-30 flex flex-col overflow-hidden rounded-xl border border-border-subtle bg-surface/95 shadow-xl backdrop-blur"
++      style={{ width: PANEL_WIDTH_PX, maxHeight: 'calc(100% - 1.5rem)' }}
++    >
++      <div className="flex shrink-0 items-center gap-2 border-b border-border-subtle px-3 py-2">
++        <Users className="h-3.5 w-3.5 text-rose-300" />
++        <span className="text-xs font-semibold text-text-primary">Ownership · Bus factor</span>
++        {ownershipData && (
++          <a
++            href={`/ownership?repo=${encodeURIComponent(baseRepo)}&format=csv`}
++            download
++            className="ml-auto shrink-0 cursor-pointer rounded p-1 text-text-muted transition-colors hover:bg-hover hover:text-text-primary"
++            title="Download per-file ownership as CSV"
++          >
++            <Download className="h-3.5 w-3.5" />
++          </a>
++        )}
++        <button
++          type="button"
++          onClick={() => exitOwnershipMode()}
++          className={`${ownershipData ? '' : 'ml-auto'} shrink-0 cursor-pointer rounded p-1 text-text-muted transition-colors hover:bg-hover hover:text-text-primary`}
++          title="Close panel"
++        >
++          <X className="h-3.5 w-3.5" />
++        </button>
++      </div>
++
++      {ownershipLoading && (
++        <div className="flex items-center justify-center gap-2 py-6 text-xs text-text-muted">
++          <Loader2 className="h-3.5 w-3.5 animate-spin" />
++          Running git log…
++        </div>
++      )}
++      {ownershipError && (
++        <div className="flex items-start gap-2 px-3 py-3 text-xs text-red-400">
++          <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
++          <span>{ownershipError}</span>
++        </div>
++      )}
++
++      {ownershipData && !ownershipLoading && (
++        <>
++          {/* Repo-level summary strip */}
++          <div className="space-y-1 border-b border-border-subtle bg-elevated px-3 py-2">
++            <div className="flex items-center gap-2 text-[11px]">
++              <span className="text-text-muted">Repo bus factor:</span>
++              <span
++                className={`rounded border px-1.5 py-0.5 font-mono font-semibold ${busFactorColor(ownershipData.repoBusFactor)}`}
++                title={`Smallest set of authors covering ≥${Math.round(ownershipData.busFactorThreshold * 100)}% of commits`}
++              >
++                {ownershipData.repoBusFactor}
++              </span>
++              <span className="text-text-muted">
++                · {ownershipData.authorsCount} authors total · {ownershipData.totalFiles} files
++              </span>
++            </div>
++            <div className="text-[10px] text-text-muted">
++              Top:{' '}
++              {ownershipData.repoAuthors
++                .slice(0, 3)
++                .map((a) => `${a.name} (${Math.round(a.share * 100)}%)`)
++                .join(', ')}
++            </div>
++          </div>
++
++          {/* Filters */}
++          <div className="space-y-2 border-b border-border-subtle px-3 py-2">
++            <input
++              type="text"
++              value={search}
++              onChange={(e) => setSearch(e.target.value)}
++              placeholder="Filter by path or author…"
++              className="w-full rounded-md border border-border-default bg-void px-2 py-1 font-mono text-[11px] text-text-primary outline-none placeholder:text-text-muted focus:border-accent/40"
++              spellCheck={false}
++              autoComplete="off"
++            />
++            <div className="flex items-center gap-2 text-[10px] text-text-muted">
++              <span className="shrink-0">Max bus factor:</span>
++              <input
++                type="range"
++                min={1}
++                max={10}
++                value={maxBusFactor === 99 ? 10 : maxBusFactor}
++                onChange={(e) => {
++                  const v = parseInt(e.target.value, 10);
++                  setMaxBusFactor(v === 10 ? 99 : v);
++                }}
++                className="flex-1 accent-accent"
++              />
++              <span className="shrink-0 font-mono">
++                {maxBusFactor === 99 ? '∞' : `≤${maxBusFactor}`}
++              </span>
++            </div>
++          </div>
++
++          <div className="flex-1 overflow-y-auto">
++            {filtered.length === 0 ? (
++              <div className="px-3 py-4 text-center text-[11px] text-text-muted italic">
++                No files match the filters.
++              </div>
++            ) : (
++              filtered.map((f) => {
++                const fileId = fileIdByPath.get(f.path);
++                const canHighlight = !!fileId;
++                return (
++                  <button
++                    key={f.path}
++                    type="button"
++                    onClick={() => {
++                      if (!canHighlight) return;
++                      setHighlightedNodeIds(new Set([fileId!]));
++                    }}
++                    disabled={!canHighlight}
++                    className="group flex w-full flex-col gap-0.5 border-b border-border-subtle px-3 py-2 text-left transition-colors hover:bg-hover disabled:cursor-not-allowed disabled:opacity-50"
++                    title={canHighlight ? `Highlight in graph (${f.totalCommits} commits)` : 'Not in live graph any more'}
++                  >
++                    <div className="flex min-w-0 items-center gap-2 font-mono text-[11px]">
++                      <span
++                        className={`shrink-0 rounded border px-1.5 py-0 font-semibold ${busFactorColor(f.busFactor)}`}
++                      >
++                        BF {f.busFactor}
++                      </span>
++                      <span className="truncate text-text-primary">{f.path}</span>
++                      {f.busFactor === 1 && (
++                        <AlertTriangle
++                          className="h-3 w-3 shrink-0 text-red-400"
++                          aria-label="Single owner — fragile"
++                        />
++                      )}
++                    </div>
++                    <div className="flex min-w-0 items-center gap-2 truncate text-[10px] text-text-muted">
++                      <span className="font-mono">{f.totalCommits} commits</span>
++                      <span>·</span>
++                      <span className="truncate">
++                        {f.authors
++                          .slice(0, 3)
++                          .map((a) => `${a.name} ${Math.round(a.share * 100)}%`)
++                          .join(', ')}
++                      </span>
++                    </div>
++                  </button>
++                );
++              })
++            )}
++            {ownershipData.truncated && (
++              <div className="px-3 py-2 text-[10px] text-text-muted italic">
++                Showing first {ownershipData.files.length} of {ownershipData.truncated} files (capped server-side).
++              </div>
++            )}
 +          </div>
 +        </>
 +      )}
@@ -6138,10 +7157,10 @@ index 0000000..5c77c1a
 +}
 diff --git a/gitnexus-web/src/components/Timeline.tsx b/gitnexus-web/src/components/Timeline.tsx
 new file mode 100644
-index 0000000..ee17258
+index 0000000..0828669
 --- /dev/null
 +++ b/gitnexus-web/src/components/Timeline.tsx
-@@ -0,0 +1,436 @@
+@@ -0,0 +1,488 @@
 +import { useEffect, useMemo, useRef, useState } from 'react';
 +import {
 +  Play,
@@ -6153,8 +7172,10 @@ index 0000000..ee17258
 +  GitBranch,
 +  TrendingUp,
 +  History,
++  Users,
 +} from '@/lib/lucide-icons';
 +import { useAppState } from '../hooks/useAppState';
++import { EntropyBadge } from './EntropyBadge';
 +
 +/**
 + * Horizontal timeline rendered between the graph and the status bar.
@@ -6209,6 +7230,11 @@ index 0000000..ee17258
 +    lifespanError,
 +    enterLifespanMode,
 +    exitLifespanMode,
++    ownershipActive,
++    ownershipLoading,
++    ownershipError,
++    enterOwnershipMode,
++    exitOwnershipMode,
 +  } = useAppState();
 +  const [snapshots, setSnapshots] = useState<
 +    Array<{
@@ -6343,6 +7369,10 @@ index 0000000..ee17258
 +        Timeline
 +      </div>
 +
++      {/* Structural-health badge — silently hides when we have <2 points
++          so we don't show a misleading "trend" without a baseline. */}
++      <EntropyBadge repoName={projectName} />
++
 +      {/* Churn heatmap toggle. Mutually exclusive with diff mode at the
 +          state level — if diff is on, this button is disabled to avoid
 +          confusing dual-color situations. The active state shows a
@@ -6413,6 +7443,7 @@ index 0000000..ee17258
 +          }
 +          if (diffMode) await exitDiffMode();
 +          if (churnActive) exitChurnMode();
++          if (ownershipActive) exitOwnershipMode();
 +          await enterCouplingMode();
 +        }}
 +        disabled={!!diffMode || couplingLoading}
@@ -6519,6 +7550,46 @@ index 0000000..ee17258
 +        </div>
 +      )}
 +
++      {/* Ownership / bus factor — same top-right slot as Coupling, so
++          we close one when opening the other. The data isn't snapshot-
++          based; it always reads live git history. Hidden in diff mode. */}
++      <button
++        type="button"
++        onClick={async () => {
++          if (ownershipActive) {
++            exitOwnershipMode();
++            return;
++          }
++          if (couplingActive) exitCouplingMode();
++          await enterOwnershipMode();
++        }}
++        disabled={!!diffMode || ownershipLoading}
++        className={`flex shrink-0 cursor-pointer items-center gap-1 rounded-md border px-1.5 py-0.5 text-[10px] font-medium transition-all disabled:cursor-not-allowed disabled:opacity-40 ${
++          ownershipActive
++            ? 'border-rose-500/40 bg-rose-500/15 text-rose-300'
++            : 'border-border-subtle bg-elevated text-text-secondary hover:bg-hover hover:text-text-primary'
++        }`}
++        title={
++          diffMode
++            ? 'Exit diff mode first'
++            : ownershipActive
++              ? 'Hide ownership panel'
++              : 'Files sorted by bus factor (who owns the code, who can leave safely)'
++        }
++      >
++        {ownershipLoading ? (
++          <Loader2 className="h-2.5 w-2.5 animate-spin" />
++        ) : (
++          <Users className="h-2.5 w-2.5" />
++        )}
++        Ownership
++      </button>
++      {ownershipError && !ownershipActive && (
++        <div className="shrink-0 truncate text-[10px] text-red-400" title={ownershipError}>
++          {ownershipError}
++        </div>
++      )}
++
 +      {/* The bar itself: line + dots */}
 +      <div className="relative h-8 flex-1">
 +        <div className="absolute top-1/2 right-0 left-0 h-px -translate-y-1/2 bg-border-default" />
@@ -6579,7 +7650,7 @@ index 0000000..ee17258
 +  );
 +};
 diff --git a/gitnexus-web/src/hooks/useAppState.tsx b/gitnexus-web/src/hooks/useAppState.tsx
-index 25c5776..3a98eee 100644
+index 25c5776..8c03f4b 100644
 --- a/gitnexus-web/src/hooks/useAppState.tsx
 +++ b/gitnexus-web/src/hooks/useAppState.tsx
 @@ -8,7 +8,12 @@ import {
@@ -6629,7 +7700,7 @@ index 25c5776..3a98eee 100644
  
    // Graph data
    graph: KnowledgeGraph | null;
-@@ -192,6 +203,96 @@ interface AppState {
+@@ -192,6 +203,126 @@ interface AppState {
    clearAICodeReferences: () => void;
    clearCodeReferences: () => void;
    codeReferenceFocus: CodeReferenceFocus | null;
@@ -6682,6 +7753,15 @@ index 25c5776..3a98eee 100644
 +  lifespanData: LifespanData | null;
 +  enterLifespanMode: () => Promise<void>;
 +  exitLifespanMode: () => void;
++
++  // Ownership / bus factor (ROADMAP Tier 1.1). Per-file commit-share
++  // breakdown computed from `git log --name-only` on the live repo.
++  ownershipActive: boolean;
++  ownershipLoading: boolean;
++  ownershipError: string | null;
++  ownershipData: OwnershipData | null;
++  enterOwnershipMode: () => Promise<void>;
++  exitOwnershipMode: () => void;
 +}
 +
 +export interface CouplingPair {
@@ -6723,10 +7803,31 @@ index 25c5776..3a98eee 100644
 +  timeline: { name: string; date: string; isLive: boolean }[];
 +  counts: Record<LifespanBucket, number>;
 +  nodes: Record<LifespanBucket, LifespanNode[]>;
++}
++
++export interface OwnershipAuthor {
++  name: string;
++  commits: number;
++  share: number;
++}
++export interface OwnershipFile {
++  path: string;
++  busFactor: number;
++  totalCommits: number;
++  authors: OwnershipAuthor[];
++}
++export interface OwnershipData {
++  totalFiles: number;
++  authorsCount: number;
++  busFactorThreshold: number;
++  files: OwnershipFile[];
++  repoBusFactor: number;
++  repoAuthors: OwnershipAuthor[];
++  truncated?: number;
  }
  
  const AppStateContext = createContext<AppState | null>(null);
-@@ -205,6 +306,10 @@ export const AppStateProvider = ({ children }: { children: ReactNode }) => (
+@@ -205,6 +336,10 @@ export const AppStateProvider = ({ children }: { children: ReactNode }) => (
  const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
    // View state
    const [viewMode, setViewMode] = useState<ViewMode>('onboarding');
@@ -6737,7 +7838,7 @@ index 25c5776..3a98eee 100644
  
    const {
      graph,
-@@ -343,6 +448,40 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
+@@ -343,6 +478,46 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
    const [isCodePanelOpen, setCodePanelOpen] = useState(false);
    const [codeReferenceFocus, setCodeReferenceFocus] = useState<CodeReferenceFocus | null>(null);
  
@@ -6775,10 +7876,16 @@ index 25c5776..3a98eee 100644
 +  const [lifespanError, setLifespanError] = useState<string | null>(null);
 +  const [lifespanData, setLifespanData] = useState<LifespanData | null>(null);
 +
++  // Ownership / bus factor state.
++  const [ownershipActive, setOwnershipActive] = useState(false);
++  const [ownershipLoading, setOwnershipLoading] = useState(false);
++  const [ownershipError, setOwnershipError] = useState<string | null>(null);
++  const [ownershipData, setOwnershipData] = useState<OwnershipData | null>(null);
++
    // Map of normalized file path → node ID for graph-based lookups
    const fileNodeByPath = useMemo(() => {
      if (!graph) return new Map<string, string>();
-@@ -1207,9 +1346,240 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
+@@ -1207,9 +1382,271 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
      setCodeReferenceFocus(null);
    }, []);
  
@@ -7010,6 +8117,37 @@ index 25c5776..3a98eee 100644
 +    setLifespanActive(false);
 +  }, []);
 +
++  // Ownership: reads the *live* git history (not snapshots) — bus factor
++  // is a property of "right now", not of the timeline. Fast: a single
++  // `git log --name-only` call on the server.
++  const enterOwnershipMode = useCallback(async () => {
++    if (!projectName) return;
++    const baseRepo = projectName.split('@')[0];
++    setOwnershipLoading(true);
++    setOwnershipError(null);
++    try {
++      const resp = await fetch(`/ownership?repo=${encodeURIComponent(baseRepo)}`, {
++        cache: 'no-store',
++      });
++      if (!resp.ok) {
++        const body = await resp.json().catch(() => ({}));
++        throw new Error(body.error || `HTTP ${resp.status}`);
++      }
++      const data = await resp.json();
++      setOwnershipData(data);
++      setOwnershipActive(true);
++    } catch (err) {
++      setOwnershipError(err instanceof Error ? err.message : 'Failed to fetch ownership');
++      setOwnershipActive(false);
++    } finally {
++      setOwnershipLoading(false);
++    }
++  }, [projectName]);
++
++  const exitOwnershipMode = useCallback(() => {
++    setOwnershipActive(false);
++  }, []);
++
    const value: AppState = {
      viewMode,
      setViewMode,
@@ -7019,7 +8157,7 @@ index 25c5776..3a98eee 100644
      graph,
      setGraph,
      selectedNode,
-@@ -1293,6 +1663,42 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
+@@ -1293,6 +1730,49 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
      clearAICodeReferences,
      clearCodeReferences,
      codeReferenceFocus,
@@ -7059,6 +8197,13 @@ index 25c5776..3a98eee 100644
 +    lifespanData,
 +    enterLifespanMode,
 +    exitLifespanMode,
++    // Ownership / bus factor
++    ownershipActive,
++    ownershipLoading,
++    ownershipError,
++    ownershipData,
++    enterOwnershipMode,
++    exitOwnershipMode,
    };
  
    return <AppStateContext.Provider value={value}>{children}</AppStateContext.Provider>;
@@ -7343,10 +8488,18 @@ index 0000000..b1722fa
 +  };
 +}
 diff --git a/gitnexus-web/src/lib/lucide-icons.tsx b/gitnexus-web/src/lib/lucide-icons.tsx
-index 05676e5..561b89f 100644
+index 05676e5..a09f293 100644
 --- a/gitnexus-web/src/lib/lucide-icons.tsx
 +++ b/gitnexus-web/src/lib/lucide-icons.tsx
-@@ -50,12 +50,15 @@ export {
+@@ -42,6 +42,7 @@ import { forwardRef } from 'react';
+ import type { LucideProps } from 'lucide-react';
+ 
+ export {
++  Activity,
+   AlertCircle,
+   AlertTriangle,
+   ArrowDown,
+@@ -50,12 +51,15 @@ export {
    Brain,
    Box,
    Braces,
@@ -7362,7 +8515,7 @@ index 05676e5..561b89f 100644
    Eye,
    EyeOff,
    FileArchive,
-@@ -69,6 +72,7 @@ export {
+@@ -69,6 +73,7 @@ export {
    Globe,
    Hash,
    Heart,
@@ -7370,14 +8523,27 @@ index 05676e5..561b89f 100644
    HelpCircle,
    Home,
    Key,
-@@ -100,6 +104,7 @@ export {
+@@ -78,6 +83,7 @@ export {
+   List,
+   Loader2,
+   Maximize2,
++  Minus,
+   MousePointerClick,
+   PanelLeft,
+   PanelLeftClose,
+@@ -100,9 +106,12 @@ export {
    Target,
    Terminal,
    Trash2,
++  TrendingDown,
 +  TrendingUp,
    Type,
    Upload,
    User,
++  Users,
+   Variable,
+   X,
+   Zap,
 diff --git a/gitnexus-web/src/services/backend-client.ts b/gitnexus-web/src/services/backend-client.ts
 index ebc18c1..630643f 100644
 --- a/gitnexus-web/src/services/backend-client.ts
