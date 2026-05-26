@@ -1,7 +1,7 @@
 # GitNexus — Roadmap
 
 État vivant des fonctionnalités déjà livrées et des prochaines pistes.
-Dernière mise à jour : 2026-05-26 (Tier 2bis.1 livré : MCP stdio sidecar exposant 12 tools — analytics queryables par Claude Code / Cursor / Windsurf en langage naturel).
+Dernière mise à jour : 2026-05-26 (Tier 2bis Phase 1 complet : 2bis.1 MCP sidecar + 2bis.4 unified config + 2bis.5 stable repoId — plate-forme prête pour Tier 3).
 
 > 📋 **Voir aussi** [INVENTORY.md](INVENTORY.md) — état des lieux complet :
 > features upstream + nos ajouts + distance avec upstream. À utiliser
@@ -44,7 +44,9 @@ un nom marketing — et son premier pas concret.
 | 24 | **Cross-repo similarity v1.c** : Identity Vector v2 (10 dims = v1 + `growthRate`, `churnConcentration`, `fileSizePareto`, `languageDiversity`, `treeDepth`), opt-out via `?identityVersion=1` | `/similarity?identityVersion=…`, badge "v2 · 10 dims" dans le panel |
 | 25 | **Galaxy view (Tier 2.6)** : projection 2D PCA des identity vectors (SVG scatter avec edges pour les paires fortes, click-to-select-nearest-pair). Power-iteration pure JS, zéro dep | `/similarity` (`galaxyXY[]`, `galaxyProjection`), `SimilarityPanel` `<GalaxyView>` + toggle Matrix/Galaxy |
 | 26 | **Galaxy UMAP (Tier 2.6.bis)** : toggle PCA/UMAP dans le panel, calcul client-side (dynamic import de `umap-js` → out-of-bundle pour les users qui n'ouvrent jamais la galaxy), seed mulberry32 keyé sur le repo-set pour stabilité, nNeighbors adaptatif | dep `umap-js@^1.4.0` ajoutée, GalaxyView `setMethod('pca' \| 'umap')` |
-| 27 | **MCP analytics sidecar (Tier 2bis.1)** : serveur stdio JSON-RPC 2.0 pure Node zéro-dep, 12 tools wrappant les endpoints REST (`list_repos`, `entropy`, `churn`, `coupling`, `growth`, `lifespan`, `ownership`, `dissonance`, `semantic_labels`, `coupling_cross`, `growth_cross`, `similarity`). Sibling de `npx gitnexus mcp` upstream. Smoke 6/6 ✓ contre la stack live | `mcp-server/server.mjs`, `mcp-server/README.md`, `mcp-server/smoke.mjs` |
+| 27 | **MCP analytics sidecar (Tier 2bis.1)** : serveur stdio JSON-RPC 2.0 pure Node zéro-dep, 13 tools wrappant les endpoints REST (`list_repos`, `entropy`, `churn`, `coupling`, `growth`, `lifespan`, `ownership`, `dissonance`, `semantic_labels`, `coupling_cross`, `growth_cross`, `similarity`, `repo_by_id`). Sibling de `npx gitnexus mcp` upstream. Smoke 6/6 ✓ contre la stack live | `mcp-server/server.mjs`, `mcp-server/README.md`, `mcp-server/smoke.mjs` |
+| 28 | **Unified `.gitnexus.json` config (Tier 2bis.4)** : un seul fichier par repo avec sections `domains` / `policy` / `budgets` (réservé 3.6) / `watches` (réservé 2bis.3). Backward-compat sur `.gitnexus-domains.json` + `.gitnexus-policy.json` avec deprecation warning stderr. JSON (pas YAML) par cohérence avec le reste du codebase | `upstream/docker-server-config.mjs`, `patches/example-gitnexus.json` (+ legacy files marqués DEPRECATED) |
+| 29 | **Stable repoId (Tier 2bis.5)** : identifiant 16 hex chars = `sha256(firstCommitSha + normalizedRemote)[:16]`. Cache `<repoPath>/.gitnexus/repo-id.json`. Surface dans `/similarity` (`response.repos[].repoId` + `normalizedRemote`) et résoluble via `GET /repos/by-id/:repoId`. Survit aux re-clones et débloque la détection FN-2 de 2.5 (legacy + rewrite) | `upstream/docker-server-repo-id.mjs`, route `/repos/by-id/:repoId`, MCP tool `gitnexus_repo_by_id` |
 
 Toutes les analytics ci-dessus marchent dans un seul repo. La granularité
 est le node gitnexus (File, Function, Class, Section, …).
@@ -428,7 +430,18 @@ seuils "normaux" — ça relève d'un Tier 3 ML.
 
 **Effort** : 1-2 semaines.
 
-### 2bis.4 — Unified `.gitnexus.yaml`
+### 2bis.4 — Unified `.gitnexus.yaml` ✅ LIVRÉ (en JSON)
+**État** : livré 2026-05-26 sous le nom `.gitnexus.json` (pas YAML —
+Node n'a toujours pas de parser YAML stdlib, déjà tranché à 2.2 et
+2.5). Sections supportées : `domains`, `policy`, `budgets` (réservé
+3.6), `watches` (réservé 2bis.3). Parser dans
+[`upstream/docker-server-config.mjs`](upstream/docker-server-config.mjs).
+Backward-compatibilité : `.gitnexus-domains.json` et
+`.gitnexus-policy.json` continuent de marcher avec deprecation
+warning stderr ; précédence = unifié > legacy. Endpoints consommateurs
+mis à jour : `/dissonance` et `/similarity`. Exemple canonique :
+[`patches/example-gitnexus.json`](patches/example-gitnexus.json).
+
 **Promesse** : consolider tous les fichiers de config par-repo sous un
 unique `.gitnexus.yaml` avec sections. Évite l'explosion à 4-5 fichiers
 config disjoints quand on empile policy, budget, alerting.
@@ -465,7 +478,24 @@ watches:                          # consommé par Tier 2bis.3 (alerting)
 
 **Effort** : 2-3 jours.
 
-### 2bis.5 — Repo ID stable
+### 2bis.5 — Repo ID stable ✅ LIVRÉ (MVP)
+**État** : livré 2026-05-26. Formule = `sha256(firstCommitSha + '\n' +
+normalizedRemote)[:16]` (16 hex chars, 64 bits d'entropie — collision
+négligeable au scale qu'on cible). `normalizedRemote` strip scheme +
+user@ + `.git` + query/fragment, lowercase l'host, garde le path
+case-sensitive (GitHub-style). Cache disque par-repo dans
+`<repoPath>/.gitnexus/repo-id.json` avec la provenance (firstCommitSha
++ normalizedRemote + computedAt). Surface :
+- `/similarity` → `response.repos[].repoId` + `normalizedRemote`
+- `GET /repos/by-id/:repoId` → résout vers tous les `<base>` connus
+- MCP tool `gitnexus_repo_by_id`
+
+**Hors scope du MVP** (laissé à 2bis.5b) : refactor des cross-repo
+endpoints (`/coupling/cross`, `/growth/cross`, `/similarity`) pour
+accepter `<repoId>` interchangeablement avec `<base>`. La surface est
+là, la migration des consommateurs viendra avec les premiers cas
+d'usage réels (re-clone qui casse la similarité).
+
 **Promesse** : chaque repo a un identifiant stable basé sur (a) le SHA
 du premier commit et (b) le `git remote origin` normalisé. Survit aux
 re-clones avec noms de dossier différents.
@@ -819,12 +849,12 @@ fin. Tout ce qui suit s'appuie sur Tier 1 + Tier 2.1-2.4 ✅ déjà livrés.
 - ✅ Tier 1 complet (1.1 à 1.5)
 - ✅ Tier 2.1 (semantic labels), 2.2 (dissonance), 2.3 (what-if), 2.4 (VSCode MVP)
 
-### Phase 1 — Plate-forme (avant toute nouvelle feature horizontale)
-1. ✅ **2bis.1 MCP exposure** — livré sous forme sidecar `mcp-server/`. 12 tools, smoke 6/6.
-2. **2bis.4 Unified `.gitnexus.yaml`** — avant que les configs explosent. ~2-3j.
-3. **2bis.5 Repo ID stable** — pré-requis cross-repo robuste. ~3-5j.
+### Phase 1 — Plate-forme (avant toute nouvelle feature horizontale) ✅ COMPLET
+1. ✅ **2bis.1 MCP exposure** — sidecar `mcp-server/`, 13 tools, smoke 6/6.
+2. ✅ **2bis.4 Unified `.gitnexus.json`** — parser `docker-server-config.mjs`, sections `domains` / `policy` / `budgets` (réservé 3.6) / `watches` (réservé 2bis.3), backward-compat sur les legacy avec deprecation warning.
+3. ✅ **2bis.5 Repo ID stable** — `sha256(firstCommit + normalizedRemote)[:16]`, cache disque, endpoint `/repos/by-id/:repoId`, surface dans `/similarity`.
 
-> **Sortie de Phase 1** : ~2 semaines. Tout le reste devient plus facile et plus puissant.
+> **Sortie de Phase 1** : la plate-forme est prête. Phase 2 (diagnostic fin) et le reste de Tier 3 peuvent maintenant s'empiler proprement.
 
 ### Phase 2 — Diagnostic fin
 4. **2bis.2 Commit-level entropy delta** — identifie la PR exacte qui dégrade. ~1 semaine.

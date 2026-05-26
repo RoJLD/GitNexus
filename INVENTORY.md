@@ -132,7 +132,8 @@ Fichiers à la racine du repo, qui rendent le setup reproductible sur poste Wind
 | `GET /semantic-labels` + `POST` | Cache des labels LLM par community (LLM appelé côté frontend) |
 | `GET /coupling/cross` | Couplage cross-repo via bucketing temporel sur `git log` multi-repo |
 | `GET /growth/cross` | Timeline union des snapshots avec counts par-repo (migration des centres de gravité) |
-| `GET /similarity` | Vecteur d'Identité (v1=5 dims, v2=10 dims via `?identityVersion=2` par défaut, opt-out `?identityVersion=1`) + cube 2×2×2 (structural × semantic × temporal) par paire, lit `.gitnexus-policy.json` + auto warnings (LICENSE / age / auteurs). Axe sémantique = dense cosine sur embedding centroids quand ≥80% des labels embeddés (Tier 2.5b.bis), sinon cosine BoW lexical (Tier 2.5b), sinon null (param `?lexicalSemantic=false` pour désactiver). Réponse inclut aussi `galaxyXY[]` par repo (Tier 2.6) — projection PCA 2D pure JS (power iteration + deflation), zéro dep. |
+| `GET /similarity` | Vecteur d'Identité (v1=5 dims, v2=10 dims via `?identityVersion=2` par défaut, opt-out `?identityVersion=1`) + cube 2×2×2 (structural × semantic × temporal) par paire, lit `.gitnexus.json > policy` (ou legacy `.gitnexus-policy.json`) + auto warnings (LICENSE / age / auteurs). Axe sémantique = dense cosine sur embedding centroids quand ≥80% des labels embeddés (Tier 2.5b.bis), sinon cosine BoW lexical (Tier 2.5b), sinon null (param `?lexicalSemantic=false` pour désactiver). Réponse inclut `galaxyXY[]` par repo (Tier 2.6, projection PCA 2D pure JS) + `repoId` + `normalizedRemote` (Tier 2bis.5). |
+| `GET /repos/by-id/:repoId` | Résout un repoId stable (`sha256(firstCommitSha + normalizedRemote)[:16]`) vers un ou plusieurs `<base>` indexés. Tier 2bis.5. |
 | `GET /listdir` | Folder browser server-side |
 | `GET /export` + `POST /import` | Bundle ou index-only, register-only mode |
 | `?format=csv` partout | Serializer partagé `docker-server-csv.mjs` |
@@ -205,7 +206,9 @@ Fichiers à la racine du repo, qui rendent le setup reproductible sur poste Wind
 - ✅ 2.6.bis Galaxy UMAP — toggle PCA/UMAP dans le GalaxyView, calcul client-side (dynamic import `umap-js` → out-of-bundle pour les users qui n'ouvrent pas la galaxy), seed mulberry32 keyé sur le repo-set pour stabilité au refetch, nNeighbors adaptatif min(15, N-1). Tier 2 100% complet.
 
 **Livré (Tier 2bis — plate-forme)** :
-- ✅ 2bis.1 MCP analytics sidecar — [`mcp-server/`](mcp-server/) — serveur stdio JSON-RPC 2.0 pure Node zéro-dep, 12 tools wrappant `/api/repos` + tous les endpoints analytics REST. Coexiste avec `npx gitnexus mcp` upstream (pas de patch dans `upstream/`). Smoke 6/6 ✓ (`mcp-server/smoke.mjs`).
+- ✅ 2bis.1 MCP analytics sidecar — [`mcp-server/`](mcp-server/) — serveur stdio JSON-RPC 2.0 pure Node zéro-dep, 13 tools (12 endpoints + `gitnexus_repo_by_id`). Coexiste avec `npx gitnexus mcp` upstream (pas de patch dans `upstream/`). Smoke 6/6 ✓ (`mcp-server/smoke.mjs`).
+- ✅ 2bis.4 Unified `.gitnexus.json` — parser [`upstream/docker-server-config.mjs`](upstream/docker-server-config.mjs) avec sections `domains` / `policy` / `budgets` (réservé 3.6) / `watches` (réservé 2bis.3). Backward-compat sur `.gitnexus-domains.json` + `.gitnexus-policy.json` avec deprecation warning stderr (one-shot par `repoPath:fichier`). JSON et pas YAML (pas de YAML stdlib Node, déjà tranché à 2.2). Exemple canonique [`patches/example-gitnexus.json`](patches/example-gitnexus.json).
+- ✅ 2bis.5 Stable repoId — [`upstream/docker-server-repo-id.mjs`](upstream/docker-server-repo-id.mjs) — `sha256(firstCommitSha + normalizedRemote)[:16]`, cache `<repoPath>/.gitnexus/repo-id.json`. Endpoint `GET /repos/by-id/:repoId` résout vers les `<base>`. Surface dans `/similarity > response.repos[].repoId`. MCP tool `gitnexus_repo_by_id`. **MVP scope** : pas encore consommé par les endpoints cross-repo (refactor à `2bis.5b` quand un re-clone cassera la similarité).
 
 **Pending — Tier 2bis (plate-forme, ~3 semaines cumulées, à livrer avant le reste)** :
 - ⏳ 2bis.1 MCP exposure des analytics time-travel (3-5j)

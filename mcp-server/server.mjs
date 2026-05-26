@@ -208,8 +208,21 @@ const TOOLS = [
     handler: ({ repos }) => callWeb('/growth/cross', { repos: repos.join(',') }),
   },
   {
+    name: 'gitnexus_repo_by_id',
+    description: 'Resolve a stable repoId (16 hex chars, sha256(firstCommitSha + normalizedRemote) — Tier 2bis.5) back to one or more registered `<base>` names. Useful when a repo was re-cloned with a different folder name and the cross-repo features lost the link. The repoId itself is surfaced by `gitnexus_similarity` under `response.repos[].repoId`.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        repoId: { type: 'string', pattern: '^[a-f0-9]{16}$', description: '16 lowercase hex chars.' },
+      },
+      required: ['repoId'],
+      additionalProperties: false,
+    },
+    handler: ({ repoId }) => callWeb(`/repos/by-id/${repoId}`),
+  },
+  {
     name: 'gitnexus_similarity',
-    description: 'Cross-repo similarity: per-repo identity vector (v1=5 dims, v2=10 dims default) + per-pair cube 2×2×2 (structural × semantic × temporal). Returns quadrant + recommendation per pair, plus 2D Galaxy projection (PCA). Reads `.gitnexus-policy.json` per repo to neutralize compliance/multi-tenant false positives.',
+    description: 'Cross-repo similarity: per-repo identity vector (v1=5 dims, v2=10 dims default) + per-pair cube 2×2×2 (structural × semantic × temporal). Returns quadrant + recommendation per pair, plus 2D Galaxy projection (PCA) and stable repoId per repo (Tier 2bis.5). Reads unified `.gitnexus.json > policy` (or legacy `.gitnexus-policy.json`) per repo to neutralize compliance/multi-tenant false positives.',
     inputSchema: {
       type: 'object',
       properties: {

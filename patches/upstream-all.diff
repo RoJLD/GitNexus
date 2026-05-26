@@ -1,5 +1,5 @@
 diff --git a/Dockerfile.web b/Dockerfile.web
-index b102a70..4f74bf0 100644
+index b102a70..db09e40 100644
 --- a/Dockerfile.web
 +++ b/Dockerfile.web
 @@ -21,7 +21,10 @@ RUN npm run build --prefix gitnexus-shared
@@ -14,7 +14,7 @@ index b102a70..4f74bf0 100644
  
  COPY gitnexus-web ./gitnexus-web
  RUN npm run build --prefix gitnexus-web
-@@ -29,15 +32,43 @@ RUN npm run build --prefix gitnexus-web
+@@ -29,15 +32,45 @@ RUN npm run build --prefix gitnexus-web
  # node:22-bookworm-slim
  FROM node:22-bookworm-slim@sha256:9f6d5975c7dca860947d3915877f85607946403fc55349f39b4bc3688448bb6e AS runtime
  
@@ -55,6 +55,8 @@ index b102a70..4f74bf0 100644
 +COPY docker-server-coupling-cross.mjs ./docker-server-coupling-cross.mjs
 +COPY docker-server-growth-cross.mjs ./docker-server-growth-cross.mjs
 +COPY docker-server-similarity.mjs ./docker-server-similarity.mjs
++COPY docker-server-config.mjs ./docker-server-config.mjs
++COPY docker-server-repo-id.mjs ./docker-server-repo-id.mjs
 +COPY docker-server-csv.mjs ./docker-server-csv.mjs
  
  RUN chown -R node:node /app
@@ -248,6 +250,286 @@ index 0000000..33f13d2
 +  }
 +  return false;
 +}
+diff --git a/docker-server-config.mjs b/docker-server-config.mjs
+new file mode 100644
+index 0000000..dab6b8e
+--- /dev/null
++++ b/docker-server-config.mjs
+@@ -0,0 +1,274 @@
++/**
++ * Unified per-repo configuration parser — ROADMAP Tier 2bis.4.
++ *
++ * One file per repo to rule them all: `.gitnexus.json` at the repo
++ * root, with up to four sections:
++ *
++ *   {
++ *     "domains": {                            // consumed by /dissonance (Tier 2.2)
++ *       "auth":    ["src/auth/**", "src/middleware/auth*.py"],
++ *       "billing": ["src/billing/**"]
++ *     },
++ *     "policy": {                             // consumed by /similarity (Tier 2.5)
++ *       "isolation_required": false,
++ *       "reason": "",
++ *       "allow_merge_with": []
++ *     },
++ *     "budgets": {                            // reserved for Tier 3.6 (Architectural CI)
++ *       "entropy_max": 0.6,
++ *       "coupling_max_per_file": 5,
++ *       "bus_factor_min": 2
++ *     },
++ *     "watches": [                            // reserved for Tier 2bis.3 (alerting)
++ *       { "metric": "entropy", "threshold": 0.6, "op": ">", "webhook": "https://hooks..." }
++ *     ]
++ *   }
++ *
++ * --- Why JSON and not YAML ---
++ *
++ * Same rationale as `.gitnexus-domains.json` (Tier 2.2): Node has no
++ * YAML in stdlib. Pulling a YAML parser for a config file with 4
++ * top-level keys isn't worth it. The ROADMAP shows YAML as the spec
++ * example because that's how the original Phase 1 doc was written,
++ * but JSON is more honest about our dependency surface.
++ *
++ * --- Backward-compatibility ---
++ *
++ * The two legacy files keep working:
++ *
++ *   `.gitnexus-domains.json` (Tier 2.2)  →  emits a deprecation
++ *                                            warning to stderr on read,
++ *                                            still parsed into the
++ *                                            `domains` section
++ *   `.gitnexus-policy.json`  (Tier 2.5)  →  same, parsed into `policy`
++ *
++ * Precedence: `.gitnexus.json` wins. If both unified + legacy are
++ * present, unified takes priority and we log a warning that the
++ * legacy file is being shadowed.
++ *
++ * The two endpoints that currently read config (`/dissonance`,
++ * `/similarity`) go through `getConfig(repoPath)` instead of reading
++ * their respective legacy file directly. The legacy code paths in
++ * those endpoints are removed; the legacy file format is handled
++ * here. The example files in `patches/example-gitnexus-*.json` are
++ * kept as reference but the new canonical example is
++ * `patches/example-gitnexus.json`.
++ */
++
++import { readFile, stat } from 'node:fs/promises';
++import { join } from 'node:path';
++
++const UNIFIED_FILENAME = '.gitnexus.json';
++const LEGACY_DOMAINS_FILENAME = '.gitnexus-domains.json';
++const LEGACY_POLICY_FILENAME = '.gitnexus-policy.json';
++
++// One-shot warnings keyed by `${repoPath}:${legacyName}` so we don't
++// spam the log on every request hitting the same repo. Reset would
++// require a server restart which is fine for a deprecation hint.
++const _warnedFor = new Set();
++
++function warnOnce(repoPath, legacyName, msg) {
++  const key = `${repoPath}:${legacyName}`;
++  if (_warnedFor.has(key)) return;
++  _warnedFor.add(key);
++  process.stderr.write(`[gitnexus-config] ${msg}\n`);
++}
++
++async function readJsonIfExists(path) {
++  try {
++    const raw = await readFile(path, 'utf8');
++    return { exists: true, raw };
++  } catch (err) {
++    if (err && err.code === 'ENOENT') return { exists: false, raw: null };
++    throw err;
++  }
++}
++
++function parseDomains(parsed, source) {
++  const domains = parsed?.domains;
++  if (!domains || typeof domains !== 'object' || Array.isArray(domains)) {
++    throw new Error(`${source}: "domains" must be an object { name: ["glob", ...], ... }`);
++  }
++  const out = {};
++  for (const [name, globs] of Object.entries(domains)) {
++    if (typeof name !== 'string' || name.length === 0) continue;
++    if (!Array.isArray(globs)) {
++      throw new Error(`${source}: domain "${name}" must map to an array of globs`);
++    }
++    const cleaned = globs.filter((g) => typeof g === 'string' && g.length > 0);
++    if (cleaned.length === 0) continue;
++    out[name] = cleaned;
++  }
++  return out;
++}
++
++function parsePolicy(parsed, source) {
++  const policy = parsed?.policy ?? parsed; // legacy file = top-level shape
++  if (!policy || typeof policy !== 'object' || Array.isArray(policy)) {
++    return null;
++  }
++  return {
++    isolation_required: !!policy.isolation_required,
++    reason: typeof policy.reason === 'string' ? policy.reason : null,
++    allow_merge_with: Array.isArray(policy.allow_merge_with)
++      ? policy.allow_merge_with.filter((s) => typeof s === 'string')
++      : [],
++    _source: source,
++  };
++}
++
++function parseBudgets(parsed) {
++  const budgets = parsed?.budgets;
++  if (!budgets || typeof budgets !== 'object') return null;
++  // Reserved for Tier 3.6 — minimal validation, just numeric coercion.
++  const out = {};
++  for (const [k, v] of Object.entries(budgets)) {
++    const n = Number(v);
++    if (Number.isFinite(n)) out[k] = n;
++  }
++  return Object.keys(out).length > 0 ? out : null;
++}
++
++function parseWatches(parsed) {
++  const watches = parsed?.watches;
++  if (!Array.isArray(watches)) return null;
++  // Reserved for Tier 2bis.3 — pass through with light validation.
++  return watches
++    .filter((w) => w && typeof w === 'object' && typeof w.metric === 'string')
++    .map((w) => ({
++      metric: w.metric,
++      threshold: Number(w.threshold),
++      op: typeof w.op === 'string' ? w.op : '>',
++      webhook: typeof w.webhook === 'string' ? w.webhook : null,
++    }));
++}
++
++/**
++ * Load and merge per-repo configuration from disk.
++ *
++ *   const cfg = await getConfig('/data/projects/hmm_studio');
++ *   // cfg = {
++ *   //   domains: { auth: ['src/auth/**'], ... } | null,
++ *   //   policy:  { isolation_required, reason, allow_merge_with, _source } | null,
++ *   //   budgets: { entropy_max, ... } | null,
++ *   //   watches: [{ metric, threshold, op, webhook }, ...] | null,
++ *   //   _sources: { domains: 'unified'|'legacy'|null, policy: 'unified'|'legacy'|null }
++ *   // }
++ *
++ * Every section can be null when the corresponding declaration is
++ * absent from the file (or no file exists). Callers must handle null.
++ * Never throws on missing-file; only throws on malformed JSON or
++ * structurally invalid sections.
++ */
++export async function getConfig(repoPath) {
++  if (!repoPath) {
++    return { domains: null, policy: null, budgets: null, watches: null, _sources: {} };
++  }
++
++  // Read all three candidates in parallel — they're tiny and most
++  // repos have at most one of them.
++  const [unified, legacyDomains, legacyPolicy] = await Promise.all([
++    readJsonIfExists(join(repoPath, UNIFIED_FILENAME)),
++    readJsonIfExists(join(repoPath, LEGACY_DOMAINS_FILENAME)),
++    readJsonIfExists(join(repoPath, LEGACY_POLICY_FILENAME)),
++  ]);
++
++  let domains = null;
++  let policy = null;
++  let budgets = null;
++  let watches = null;
++  const sources = { domains: null, policy: null };
++
++  if (unified.exists) {
++    let parsed;
++    try {
++      parsed = JSON.parse(unified.raw);
++    } catch (err) {
++      throw new Error(`Invalid JSON in ${UNIFIED_FILENAME}: ${err.message}`);
++    }
++    if (parsed?.domains) {
++      domains = parseDomains(parsed, UNIFIED_FILENAME);
++      sources.domains = 'unified';
++    }
++    if (parsed?.policy) {
++      policy = parsePolicy(parsed, UNIFIED_FILENAME);
++      sources.policy = 'unified';
++    }
++    budgets = parseBudgets(parsed);
++    watches = parseWatches(parsed);
++
++    if (legacyDomains.exists) {
++      warnOnce(
++        repoPath,
++        LEGACY_DOMAINS_FILENAME,
++        `${repoPath}: ${LEGACY_DOMAINS_FILENAME} shadowed by ${UNIFIED_FILENAME}.domains — please delete the legacy file.`,
++      );
++    }
++    if (legacyPolicy.exists) {
++      warnOnce(
++        repoPath,
++        LEGACY_POLICY_FILENAME,
++        `${repoPath}: ${LEGACY_POLICY_FILENAME} shadowed by ${UNIFIED_FILENAME}.policy — please delete the legacy file.`,
++      );
++    }
++  }
++
++  // Fall back to legacy files for sections still unset.
++  if (domains === null && legacyDomains.exists) {
++    let parsed;
++    try {
++      parsed = JSON.parse(legacyDomains.raw);
++    } catch (err) {
++      throw new Error(`Invalid JSON in ${LEGACY_DOMAINS_FILENAME}: ${err.message}`);
++    }
++    domains = parseDomains(parsed, LEGACY_DOMAINS_FILENAME);
++    sources.domains = 'legacy';
++    warnOnce(
++      repoPath,
++      LEGACY_DOMAINS_FILENAME,
++      `${repoPath}: ${LEGACY_DOMAINS_FILENAME} is deprecated, migrate to ${UNIFIED_FILENAME}.domains (Tier 2bis.4).`,
++    );
++  }
++
++  if (policy === null && legacyPolicy.exists) {
++    let parsed;
++    try {
++      parsed = JSON.parse(legacyPolicy.raw);
++    } catch (err) {
++      throw new Error(`Invalid JSON in ${LEGACY_POLICY_FILENAME}: ${err.message}`);
++    }
++    policy = parsePolicy(parsed, LEGACY_POLICY_FILENAME);
++    sources.policy = 'legacy';
++    warnOnce(
++      repoPath,
++      LEGACY_POLICY_FILENAME,
++      `${repoPath}: ${LEGACY_POLICY_FILENAME} is deprecated, migrate to ${UNIFIED_FILENAME}.policy (Tier 2bis.4).`,
++    );
++  }
++
++  return { domains, policy, budgets, watches, _sources: sources };
++}
++
++/**
++ * Used by /dissonance to surface the "no config" error with an
++ * example payload. Exposed so the example stays single-source.
++ */
++export const EXAMPLE_UNIFIED_CONFIG = {
++  domains: {
++    auth: ['src/auth/**', 'src/middleware/auth*.py'],
++    billing: ['src/billing/**', 'tests/billing/**'],
++    data: ['src/db/**', 'src/models/**'],
++  },
++  policy: {
++    isolation_required: false,
++    reason: '',
++    allow_merge_with: [],
++  },
++};
++
++/** Filename constants exposed for diagnostics / docs. */
++export const CONFIG_FILENAMES = {
++  unified: UNIFIED_FILENAME,
++  legacyDomains: LEGACY_DOMAINS_FILENAME,
++  legacyPolicy: LEGACY_POLICY_FILENAME,
++};
 diff --git a/docker-server-coupling-cross.mjs b/docker-server-coupling-cross.mjs
 new file mode 100644
 index 0000000..0f8e30e
@@ -870,10 +1152,10 @@ index 0000000..d9de47e
 +}
 diff --git a/docker-server-dissonance.mjs b/docker-server-dissonance.mjs
 new file mode 100644
-index 0000000..53700ab
+index 0000000..405a8c3
 --- /dev/null
 +++ b/docker-server-dissonance.mjs
-@@ -0,0 +1,355 @@
+@@ -0,0 +1,337 @@
 +/**
 + * Dissonance analytics — ROADMAP Tier 2.2.
 + *
@@ -927,8 +1209,9 @@ index 0000000..53700ab
 +import { join } from 'node:path';
 +import { findRepoByName } from './docker-server-snapshots.mjs';
 +import { toCsv, writeCsv, safeFilename } from './docker-server-csv.mjs';
++import { getConfig, CONFIG_FILENAMES, EXAMPLE_UNIFIED_CONFIG } from './docker-server-config.mjs';
 +
-+const DOMAINS_FILENAME = '.gitnexus-domains.json';
++const DOMAINS_FILENAME = CONFIG_FILENAMES.legacyDomains;
 +
 +/**
 + * Convert a glob with `**` and `*` into a RegExp. Anchored at both
@@ -946,26 +1229,16 @@ index 0000000..53700ab
 +  return new RegExp('^' + re + '$');
 +}
 +
-+function loadDomains(jsonText) {
-+  let parsed;
-+  try {
-+    parsed = JSON.parse(jsonText);
-+  } catch (err) {
-+    throw new Error(`Invalid JSON in ${DOMAINS_FILENAME}: ${err.message}`);
-+  }
-+  const domains = parsed?.domains;
-+  if (!domains || typeof domains !== 'object' || Array.isArray(domains)) {
-+    throw new Error(`${DOMAINS_FILENAME} must have a top-level "domains" object`);
-+  }
-+  // Compile globs once.
-+  const out = [];
-+  for (const [name, patterns] of Object.entries(domains)) {
-+    if (!Array.isArray(patterns)) {
-+      throw new Error(`Domain "${name}" must be an array of glob strings`);
-+    }
-+    out.push({ name, patterns, regexes: patterns.map(globToRegex) });
-+  }
-+  return out;
++// Compile a validated { name: [globs] } map (from getConfig) into the
++// [{ name, patterns, regexes }] shape this module operates on. Globs
++// → regexes once, reused per request. Validation (presence, shape)
++// happens inside getConfig — this function only compiles.
++function compileDomains(domainsMap) {
++  return Object.entries(domainsMap).map(([name, patterns]) => ({
++    name,
++    patterns,
++    regexes: patterns.map(globToRegex),
++  }));
 +}
 +
 +function classifyFile(filePath, domains) {
@@ -1052,38 +1325,29 @@ index 0000000..53700ab
 +    return;
 +  }
 +  const repoPath = repo.repoPath || repo.path;
-+  const domainsPath = join(repoPath, DOMAINS_FILENAME);
 +
-+  let domainsText;
++  // Tier 2bis.4: read via the unified config parser. Returns the
++  // domains section whether it comes from .gitnexus.json or the
++  // legacy .gitnexus-domains.json (with deprecation warning).
++  let cfg;
 +  try {
-+    domainsText = await readFile(domainsPath, 'utf8');
-+  } catch (err) {
-+    if (err && err.code === 'ENOENT') {
-+      res.writeHead(404, { 'Content-Type': 'application/json' });
-+      res.end(
-+        JSON.stringify({
-+          error: `No ${DOMAINS_FILENAME} at ${repoPath}. Create one to enable dissonance analysis.`,
-+          example: {
-+            domains: {
-+              auth: ['src/auth/**', 'src/middleware/auth*.py'],
-+              data: ['src/db/**', 'src/models/**'],
-+            },
-+          },
-+        }),
-+      );
-+      return;
-+    }
-+    throw err;
-+  }
-+
-+  let domains;
-+  try {
-+    domains = loadDomains(domainsText);
++    cfg = await getConfig(repoPath);
 +  } catch (err) {
 +    res.writeHead(400, { 'Content-Type': 'application/json' });
 +    res.end(JSON.stringify({ error: err.message }));
 +    return;
 +  }
++  if (!cfg.domains || Object.keys(cfg.domains).length === 0) {
++    res.writeHead(404, { 'Content-Type': 'application/json' });
++    res.end(
++      JSON.stringify({
++        error: `No domain mapping at ${repoPath}. Create either ${CONFIG_FILENAMES.unified} (preferred — unified config) or ${CONFIG_FILENAMES.legacyDomains} (legacy) to enable dissonance analysis.`,
++        example: EXAMPLE_UNIFIED_CONFIG,
++      }),
++    );
++    return;
++  }
++  const domains = compileDomains(cfg.domains);
 +
 +  // Get the file→community map. If gitnexus has no communities for this
 +  // repo (e.g. it hasn't been analyzed with that phase), we still emit
@@ -2349,6 +2613,302 @@ index 0000000..b9a666a
 +  }
 +  return false;
 +}
+diff --git a/docker-server-repo-id.mjs b/docker-server-repo-id.mjs
+new file mode 100644
+index 0000000..ae8e0f6
+--- /dev/null
++++ b/docker-server-repo-id.mjs
+@@ -0,0 +1,290 @@
++/**
++ * Repo ID stable — ROADMAP Tier 2bis.5.
++ *
++ * Every git repo gets a stable identifier independent of:
++ *   - the folder name it was cloned into
++ *   - the absolute path on this machine
++ *   - re-clones with a different layout
++ *
++ * Formula:
++ *   repoId = sha256(firstCommitSha + '\n' + normalizedRemote)[:16]
++ *
++ * 16 hex chars = 64 bits of entropy. Collision probability negligible
++ * for the scale we care about (typically <50 repos per deployment, in
++ * the worst case <10k for an enterprise OSS dataset). 16 chars is short
++ * enough to be readable in URLs and panels, long enough to never
++ * collide in practice.
++ *
++ * --- Why these two inputs and not others ---
++ *
++ *   - **firstCommitSha**: invariant by definition. A repo's first
++ *     commit is the only commit that exists in every fork, every
++ *     re-clone, every mirror. Renaming or rebasing later commits
++ *     doesn't change it. Genuinely-different repos that happen to be
++ *     forks of the same source ARE the same repo by this measure —
++ *     which is what we want for the cross-repo similarity FN-2
++ *     "legacy + rewrite" case.
++ *   - **normalizedRemote**: lower-cased, scheme-stripped, .git-suffix-
++ *     stripped form of `git config --get remote.origin.url`. Two
++ *     mirrors of the same logical project (github + gitlab) get
++ *     different IDs — we treat them as different deployments. Repos
++ *     with no remote (purely local) get an empty-string remote, so
++ *     they're identified purely by their first commit (acceptable for
++ *     local exploration).
++ *
++ * --- Storage ---
++ *
++ * The id is cached per repo at `<repoPath>/.gitnexus/repo-id.json`
++ * with the inputs alongside, so the computation never repeats on the
++ * same repo and the user can verify what's been hashed.
++ *
++ * Stored shape:
++ *   {
++ *     "schemaVersion": 1,
++ *     "repoId": "a1b2c3d4e5f60718",
++ *     "firstCommitSha": "abc123...",
++ *     "normalizedRemote": "github.com/owner/repo",
++ *     "computedAt": "2026-05-26T11:30:00.000Z"
++ *   }
++ *
++ * The first-time computation invokes `git` twice (rev-list +
++ * config get); subsequent calls just read the JSON.
++ *
++ * --- Endpoint ---
++ *
++ *   GET /repos/by-id/:repoId
++ *     →  { repoId, matches: [{ name, repoPath, lastIndexedAt }, ...] }
++ *
++ * Iterates all repos via `/api/repos`, computes (or reads cache for)
++ * each, returns the ones whose repoId equals the requested one. Used
++ * by the cross-repo features when a `<base>` no longer matches because
++ * the repo was re-cloned, and as a sanity check that `<base>` and
++ * `repoId` refer to the same thing.
++ *
++ * --- What 2bis.5 does NOT do (deliberately) ---
++ *
++ * Cross-repo endpoints (`/coupling/cross`, `/growth/cross`,
++ * `/similarity`) still take `?repos=<base>,<base>,…`. Switching them
++ * to accept `<repoId>` interchangeably is a separate follow-up — the
++ * MVP here is "compute + expose the ID" so downstream features can
++ * start consuming it without a big refactor.
++ */
++
++import { createHash } from 'node:crypto';
++import { spawn } from 'node:child_process';
++import { readFile, writeFile, mkdir, stat } from 'node:fs/promises';
++import { join, dirname } from 'node:path';
++
++const CACHE_PATH_PARTS = ['.gitnexus', 'repo-id.json'];
++const SCHEMA_VERSION = 1;
++
++function runCmd(cmd, args, opts = {}) {
++  return new Promise((resolve, reject) => {
++    const child = spawn(cmd, args, opts);
++    let stdout = '';
++    let stderr = '';
++    child.stdout?.on('data', (d) => (stdout += d.toString()));
++    child.stderr?.on('data', (d) => (stderr += d.toString()));
++    child.on('error', reject);
++    child.on('close', (code) => {
++      if (code === 0) resolve(stdout.trim());
++      else reject(new Error(`${cmd} exited ${code}: ${stderr.trim() || stdout.trim()}`));
++    });
++  });
++}
++
++/**
++ * Strip the noisy parts off a git remote URL so two equivalent URLs
++ * yield the same string:
++ *   git@github.com:owner/repo.git       → github.com/owner/repo
++ *   https://github.com/owner/repo.git   → github.com/owner/repo
++ *   ssh://git@github.com/owner/repo     → github.com/owner/repo
++ *   https://github.com/owner/repo/      → github.com/owner/repo
++ * Empty string in / out is fine (local-only repo with no remote).
++ */
++export function normalizeRemote(rawUrl) {
++  if (!rawUrl || typeof rawUrl !== 'string') return '';
++  let s = rawUrl.trim();
++  if (!s) return '';
++  // git@host:owner/repo → ssh-like
++  const scpMatch = s.match(/^([\w-]+)@([\w.-]+):(.+)$/);
++  if (scpMatch) {
++    s = `${scpMatch[2]}/${scpMatch[3]}`;
++  } else {
++    // Drop scheme.
++    s = s.replace(/^[a-z]+:\/\//i, '');
++    // Drop user@ inside the URL.
++    s = s.replace(/^[\w-]+@/, '');
++  }
++  // Drop trailing .git, then query/fragment, then trailing slashes.
++  // (Previous version had a bug stripping the path too — `[/?#]` should
++  // be `[?#]`.)
++  s = s.replace(/\.git$/i, '').replace(/[?#].*$/, '').replace(/\/+$/g, '');
++  // Re-canonicalize the case for the host part (everything before the
++  // first slash). The path part (owner/repo) is case-sensitive on
++  // GitHub-like hosts so we leave it alone.
++  const slash = s.indexOf('/');
++  if (slash > 0) {
++    s = s.slice(0, slash).toLowerCase() + s.slice(slash);
++  } else {
++    s = s.toLowerCase();
++  }
++  return s;
++}
++
++/**
++ * Compute the repoId from its two inputs. Pure function, no I/O.
++ * Exposed so callers (tests, the resolve endpoint) can verify against
++ * a known input pair without going through the cache.
++ */
++export function computeRepoId(firstCommitSha, normalizedRemoteStr) {
++  const h = createHash('sha256');
++  h.update(String(firstCommitSha || '') + '\n' + String(normalizedRemoteStr || ''));
++  return h.digest('hex').slice(0, 16);
++}
++
++async function loadCache(cachePath) {
++  try {
++    const raw = await readFile(cachePath, 'utf8');
++    const parsed = JSON.parse(raw);
++    if (parsed?.schemaVersion === SCHEMA_VERSION && typeof parsed.repoId === 'string') {
++      return parsed;
++    }
++    return null;
++  } catch (err) {
++    if (err && err.code === 'ENOENT') return null;
++    return null;
++  }
++}
++
++async function saveCache(cachePath, payload) {
++  await mkdir(dirname(cachePath), { recursive: true });
++  await writeFile(cachePath, JSON.stringify(payload, null, 2), 'utf8');
++}
++
++/**
++ * Get the cached repoId for a repo path, computing + persisting it
++ * if the cache is missing. Returns null when the repo isn't a git
++ * working tree (no `.git/`), since we can't compute the ID then.
++ *
++ *   const info = await getOrComputeRepoId('/data/projects/hmm_studio');
++ *   // info = {
++ *   //   repoId: 'a1b2c3d4e5f60718',
++ *   //   firstCommitSha: 'abc...',
++ *   //   normalizedRemote: 'github.com/owner/repo',
++ *   //   computedAt: '2026-...'
++ *   // } | null
++ */
++export async function getOrComputeRepoId(repoPath) {
++  if (!repoPath) return null;
++  const cachePath = join(repoPath, ...CACHE_PATH_PARTS);
++  const cached = await loadCache(cachePath);
++  if (cached) return cached;
++
++  const hasGit = await stat(join(repoPath, '.git')).catch(() => null);
++  if (!hasGit) return null;
++
++  let firstCommitSha = '';
++  let remoteUrl = '';
++  try {
++    firstCommitSha = await runCmd('git', ['-C', repoPath, 'rev-list', '--max-parents=0', 'HEAD']);
++    // A repo can have multiple root commits (merged unrelated histories).
++    // Take the first line; deterministic because git sorts by commit order.
++    firstCommitSha = firstCommitSha.split('\n')[0].trim();
++  } catch {
++    // No commits yet → no repoId possible.
++    return null;
++  }
++  try {
++    remoteUrl = await runCmd('git', ['-C', repoPath, 'config', '--get', 'remote.origin.url']);
++  } catch {
++    // No origin remote — fine, identify purely by first commit.
++    remoteUrl = '';
++  }
++  const normalizedRemote = normalizeRemote(remoteUrl);
++  const repoId = computeRepoId(firstCommitSha, normalizedRemote);
++  const payload = {
++    schemaVersion: SCHEMA_VERSION,
++    repoId,
++    firstCommitSha,
++    normalizedRemote,
++    computedAt: new Date().toISOString(),
++  };
++  try {
++    await saveCache(cachePath, payload);
++  } catch {
++    // Best-effort cache; if we can't write (perms, read-only mount),
++    // we still return the computed value. Next request will recompute.
++  }
++  return payload;
++}
++
++/**
++ * Resolve a repoId back to one or more registered `<base>` names by
++ * iterating /api/repos and computing the id for each.
++ *
++ * Cache-friendly: each repo's id read is cheap (one file read after
++ * the first computation), so resolving 10 repos is ~10 small reads.
++ *
++ * Returns the resolution payload for the route handler.
++ */
++async function resolveRepoId(targetId, opts) {
++  const resp = await fetch(`${opts.api}/api/repos`);
++  if (!resp.ok) throw new Error(`/api/repos failed: HTTP ${resp.status}`);
++  const data = await resp.json();
++  const list = Array.isArray(data) ? data : data?.repos;
++  if (!Array.isArray(list)) return { repoId: targetId, matches: [] };
++
++  const matches = [];
++  for (const repo of list) {
++    const repoPath = repo.repoPath || repo.path;
++    if (!repoPath) continue;
++    const info = await getOrComputeRepoId(repoPath);
++    if (info && info.repoId === targetId) {
++      matches.push({
++        name: repo.name,
++        repoPath,
++        lastIndexedAt: repo.indexedAt || null,
++        firstCommitSha: info.firstCommitSha,
++        normalizedRemote: info.normalizedRemote,
++      });
++    }
++  }
++  return { repoId: targetId, matches };
++}
++
++// ── Route handler ────────────────────────────────────────────────────
++
++async function handleRepoById(url, res, opts) {
++  // Path looks like /repos/by-id/<hex16>. Extract the id and validate.
++  const parts = url.pathname.split('/').filter(Boolean);
++  const repoId = parts[parts.length - 1];
++  if (!/^[a-f0-9]{16}$/.test(repoId)) {
++    res.writeHead(400, { 'Content-Type': 'application/json' });
++    res.end(JSON.stringify({ error: `repoId must be 16 lowercase hex chars, got: ${repoId}` }));
++    return;
++  }
++  let result;
++  try {
++    result = await resolveRepoId(repoId, opts);
++  } catch (err) {
++    res.writeHead(502, { 'Content-Type': 'application/json' });
++    res.end(JSON.stringify({ error: `resolve failed: ${err.message}` }));
++    return;
++  }
++  if (result.matches.length === 0) {
++    res.writeHead(404, { 'Content-Type': 'application/json' });
++    res.end(JSON.stringify({ repoId, matches: [], error: 'no indexed repo with this id' }));
++    return;
++  }
++  res.writeHead(200, { 'Content-Type': 'application/json' });
++  res.end(JSON.stringify(result));
++}
++
++export async function handleRepoByIdRoute(req, url, res, opts) {
++  if (req.method === 'GET' && url.pathname.startsWith('/repos/by-id/')) {
++    await handleRepoById(url, res, opts);
++    return true;
++  }
++  return false;
++}
 diff --git a/docker-server-semantic-labels.mjs b/docker-server-semantic-labels.mjs
 new file mode 100644
 index 0000000..254682a
@@ -2548,10 +3108,10 @@ index 0000000..254682a
 +}
 diff --git a/docker-server-similarity.mjs b/docker-server-similarity.mjs
 new file mode 100644
-index 0000000..f63b16a
+index 0000000..14bf10f
 --- /dev/null
 +++ b/docker-server-similarity.mjs
-@@ -0,0 +1,1064 @@
+@@ -0,0 +1,1074 @@
 +/**
 + * Cross-repo similarity — ROADMAP Tier 2.5 (a + b).
 + *
@@ -2625,6 +3185,8 @@ index 0000000..f63b16a
 +import { join } from 'node:path';
 +import { findRepoByName, SNAPSHOTS_ROOT, safeSnapshotKey } from './docker-server-snapshots.mjs';
 +import { readdir } from 'node:fs/promises';
++import { getConfig } from './docker-server-config.mjs';
++import { getOrComputeRepoId } from './docker-server-repo-id.mjs';
 +
 +const MAX_REPOS = 8;
 +const DEFAULT_WINDOW_DAYS = 90;
@@ -2634,7 +3196,9 @@ index 0000000..f63b16a
 +const COUPLING_BUCKET_HOURS = 24;
 +const STALE_REPO_DAYS = 180;
 +const LICENSE_FILENAMES = ['LICENSE', 'LICENSE.md', 'LICENSE.txt', 'LICENCE', 'COPYING'];
-+const POLICY_FILENAME = '.gitnexus-policy.json';
++// Policy file name now lives in docker-server-config.mjs (Tier 2bis.4
++// unified config). The legacy filename is still supported via
++// getConfig() fallback.
 +const SEMANTIC_LABELS_PATH = ['.gitnexus', 'semantic-labels.json'];
 +
 +// Identity Vector versions:
@@ -2702,17 +3266,16 @@ index 0000000..f63b16a
 +  }
 +}
 +
++// Tier 2bis.4: policy read via the unified config parser. Falls back
++// to .gitnexus-policy.json with deprecation warning. Returns null when
++// no policy is declared (most common case). Returns { _error } on
++// malformed JSON so the caller can surface it without aborting the
++// pair scan.
 +async function readPolicy(repoPath) {
 +  try {
-+    const raw = await readFile(join(repoPath, POLICY_FILENAME), 'utf8');
-+    const parsed = JSON.parse(raw);
-+    return {
-+      isolation_required: !!parsed.isolation_required,
-+      reason: typeof parsed.reason === 'string' ? parsed.reason : null,
-+      allow_merge_with: Array.isArray(parsed.allow_merge_with) ? parsed.allow_merge_with : [],
-+    };
++    const cfg = await getConfig(repoPath);
++    return cfg.policy;
 +  } catch (err) {
-+    if (err && err.code === 'ENOENT') return null;
 +    return { _error: err.message };
 +  }
 +}
@@ -3257,6 +3820,10 @@ index 0000000..f63b16a
 +
 +  const policy = await readPolicy(repoPath);
 +  const license = await readLicense(repoPath);
++  // Tier 2bis.5: stable repo ID (sha256 of first commit + normalized
++  // remote). Computed/cached per-repo. Null when the repo isn't a git
++  // working tree or has no commits.
++  const repoIdInfo = await getOrComputeRepoId(repoPath);
 +  const semanticData = await readSemanticLabels(repoPath);
 +  const labelBow = bowVectorFromLabels(semanticData.labels);
 +  // Per-repo: do we trust embeddings? Yes if ≥80% of labels are
@@ -3285,6 +3852,7 @@ index 0000000..f63b16a
 +    lastCommitMs,
 +    license,
 +    policy,
++    repoIdInfo,
 +    semanticLabelsCount: semanticData.labels.length,
 +    semanticEmbeddingsCount: semanticData.embeddings.length,
 +    labelBow,
@@ -3538,6 +4106,8 @@ index 0000000..f63b16a
 +    semanticLabelsCount: s.semanticLabelsCount,
 +    semanticEmbeddingsCount: s.semanticEmbeddingsCount,
 +    hasLabelCentroid: !!s.labelCentroid,
++    repoId: s.repoIdInfo?.repoId || null,
++    normalizedRemote: s.repoIdInfo?.normalizedRemote || null,
 +    galaxyXY: projection2D ? [roundN(projection2D[i][0], 4), roundN(projection2D[i][1], 4)] : null,
 +  }));
 +
@@ -4279,10 +4849,10 @@ index 0000000..f6f693f
 +  return false;
 +}
 diff --git a/docker-server.mjs b/docker-server.mjs
-index 8143eb4..d999d95 100644
+index 8143eb4..86fa198 100644
 --- a/docker-server.mjs
 +++ b/docker-server.mjs
-@@ -1,12 +1,50 @@
+@@ -1,12 +1,51 @@
 -import { createReadStream } from 'node:fs';
 -import { stat } from 'node:fs/promises';
 +import { createReadStream, createWriteStream } from 'node:fs';
@@ -4305,6 +4875,7 @@ index 8143eb4..d999d95 100644
 +import { handleCouplingCrossRoute } from './docker-server-coupling-cross.mjs';
 +import { handleGrowthCrossRoute } from './docker-server-growth-cross.mjs';
 +import { handleSimilarityRoute } from './docker-server-similarity.mjs';
++import { handleRepoByIdRoute } from './docker-server-repo-id.mjs';
  
  const host = '0.0.0.0';
  const port = Number(process.env.PORT || '4173');
@@ -4336,7 +4907,7 @@ index 8143eb4..d999d95 100644
  const contentTypes = {
    '.css': 'text/css; charset=utf-8',
    '.html': 'text/html; charset=utf-8',
-@@ -20,6 +58,416 @@ const contentTypes = {
+@@ -20,6 +59,416 @@ const contentTypes = {
    '.woff2': 'font/woff2',
  };
  
@@ -4753,7 +5324,7 @@ index 8143eb4..d999d95 100644
  // Static asset server for the gitnexus-web Docker image.
  //
  // Path-injection containment: the request handler is intentionally a single
-@@ -39,8 +487,53 @@ const contentTypes = {
+@@ -39,8 +488,55 @@ const contentTypes = {
  // the request handler's reassignment paths in vanilla JS. The inline-at-sink
  // shape below is the documented analyzer-friendly idiom.
  const server = createServer(async (req, res) => {
@@ -4803,6 +5374,8 @@ index 8143eb4..d999d95 100644
 +  if (await handleGrowthCrossRoute(req, reqUrl, res, { api: GITNEXUS_API })) return;
 +  // Cross-repo similarity (ROADMAP Tier 2.5)
 +  if (await handleSimilarityRoute(req, reqUrl, res, { api: GITNEXUS_API })) return;
++  // Stable repo ID resolver (ROADMAP Tier 2bis.5)
++  if (await handleRepoByIdRoute(req, reqUrl, res, { api: GITNEXUS_API })) return;
  
 +  // ── Static asset serving (v1.6.5 CodeQL-compliant pipeline) ───────────
    let decoded;

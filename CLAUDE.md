@@ -164,6 +164,13 @@ curl -s -o /dev/null -w "growth/cross: HTTP %{http_code}\n" \
 curl -s -o /dev/null -w "similarity: HTTP %{http_code}\n" \
   "http://localhost:4173/similarity?repos=hmm_studio,Experiment.Crypto.2026S1.RobinDenis"
 
+# Stable repoId resolver (Tier 2bis.5) — extract one of the repoIds
+# from /similarity then resolve it back to its <base> name.
+REPO_ID=$(curl -s "http://localhost:4173/similarity?repos=hmm_studio,Experiment.Crypto.2026S1.RobinDenis" \
+  | grep -oE '"repoId":"[a-f0-9]+"' | head -1 | sed -E 's/"repoId":"([a-f0-9]+)"/\1/')
+curl -s -o /dev/null -w "repos/by-id: HTTP %{http_code}\n" \
+  "http://localhost:4173/repos/by-id/$REPO_ID"
+
 # MCP sidecar — stdio JSON-RPC against the live stack. Exercises the
 # wrapper layer that exposes our analytics to Claude Code / Cursor.
 node mcp-server/smoke.mjs

@@ -1,5 +1,5 @@
 {
-  "_comment": "Example .gitnexus-domains.json for hmm_studio. Copy to <repo>/.gitnexus-domains.json and tweak. Globs support ** (any path), * (no slashes), and literals. First match wins, so order most-specific first.",
+  "_comment": "DEPRECATED — prefer the unified config (Tier 2bis.4). See ./example-gitnexus.json for the new canonical format. This legacy file still works (with a deprecation warning to stderr), but new repos should use `.gitnexus.json > domains` instead. Example .gitnexus-domains.json for hmm_studio: copy to <repo>/.gitnexus-domains.json and tweak. Globs support ** (any path), * (no slashes), and literals. First match wins, so order most-specific first.",
   "domains": {
     "hmm-core": [
       "src/hmm_core/**",
