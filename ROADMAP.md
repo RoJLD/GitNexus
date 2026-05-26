@@ -1,7 +1,7 @@
 # GitNexus — Roadmap
 
 État vivant des fonctionnalités déjà livrées et des prochaines pistes.
-Dernière mise à jour : 2026-05-26 (Tier 2.5 — Cross-repo similarity ajouté).
+Dernière mise à jour : 2026-05-26 (Tier 2.5 enrichi : cube 2×2×2, `.gitnexus-policy.yaml`, warnings auto, vue Galaxie UMAP).
 
 > 📋 **Voir aussi** [INVENTORY.md](INVENTORY.md) — état des lieux complet :
 > features upstream + nos ajouts + distance avec upstream. À utiliser
@@ -176,11 +176,13 @@ Effort : 1-2 semaines pour un MVP minimal, plus si on veut une vraie
 intégration polishée.
 
 ### 2.5 — Cross-repo similarity (Score de Correspondance)
-**Promesse** : pour 2+ repos indexés, un score unique de ressemblance qui
-combine structure, comportement et sémantique. Diagnostique chaque paire
-dans une grille 2×2 (Jumeaux / Patterns partagés / Collision /
-Indépendants) avec une recommandation associée (extraire en lib /
-standardiser outillage / orchestrer via API).
+**Promesse** : pour 2+ repos indexés, un diagnostic à **3 axes**
+(structurel, sémantique, couplage temporel) qui classe chaque paire dans
+une grille **2×2×2** avec une recommandation par cellule. Garde-fou
+manuel via `.gitnexus-policy.yaml` pour neutraliser les faux positifs
+(compliance, multi-tenant, freeze legacy, fork OSS), et heuristiques
+automatiques de `warnings` (licence divergente, last-commit-age, sets
+d'auteurs disjoints).
 
 **Vecteur d'Identité** (par repo, features normalisées) :
 - `entropy` (via `/entropy`)
@@ -191,28 +193,100 @@ standardiser outillage / orchestrer via API).
 - `top_N_semantic_labels` embedded — moyenne des embeddings des labels
   LLM des N plus gros clusters (via `/semantic-labels`)
 
-**Score** : cosine similarity sur le vecteur structurel (5 premières
-features) + score sémantique séparé sur les labels embedded. Position
-dans la grille 2×2 = combinaison des deux axes (seuils par défaut à
-0.7 / 0.7, ajustables par query param).
+**Score à 3 axes** :
+- `structuralScore` = cosine similarity sur les 5 premières features du
+  Vecteur d'Identité.
+- `semanticScore` = cosine similarity sur les labels embedded.
+- `temporalCoupling` = densité du couplage cross-repo via
+  `/coupling/cross` sur une fenêtre récente (90 jours par défaut).
 
-**Premier pas** : `GET /similarity?repos=A,B[,C,...]` qui agrège les
-features depuis les endpoints existants (pas de re-calcul) et calcule la
-matrice N×N. Embedding via le même chemin LLM que `/semantic-labels`.
-Réponse : `{ pairs: [{ a, b, structuralScore, semanticScore, quadrant, dominantFeatures }] }`.
+Position dans le **cube 2×2×2** selon trois seuils (0.7 / 0.7 / 0.5 par
+défaut, ajustables par query param) :
 
-**UI** : nouveau panneau `SimilarityPanel.tsx` — matrice N×N color-coded
-par quadrant, drill-down par paire sur les features dominantes,
-recommandation textuelle dérivée du quadrant.
+| Structurel | Sémantique | Couplé | Diagnostic | Recommandation |
+|---|---|---|---|---|
+| Haut | Haut | Haut | Jumeaux actifs | Extraire en lib partagée |
+| Haut | Haut | Bas | Jumeaux isolés | **Suspect** — vérifier `.gitnexus-policy.yaml` |
+| Haut | Bas | Haut | Patterns + collision | Standardiser outillage |
+| Haut | Bas | Bas | Patterns partagés | Standardiser (sans urgence) |
+| Bas | Haut | Haut | Collision réelle | Orchestrer via API Gateway |
+| Bas | Haut | Bas | Domaines parallèles | Surveiller, pas d'action |
+| Bas | Bas | Haut | Couplage caché | Découpler |
+| Bas | Bas | Bas | Indépendants | Aucune action |
 
-**Limitation honnête** : le vrai "Score de Collision" (modifient-ils la
-même donnée métier / schema DB partagé ?) reste hors scope. Le couplage
-temporel `/coupling/cross` est la meilleure approximation disponible.
-Détection AST-pattern (design patterns récurrents type DI, Factory) =
-Tier 3 ultérieur — nécessite un extracteur de patterns sur Tree-sitter.
+**`.gitnexus-policy.yaml`** (optionnel, par-repo, même mécanique que
+`.gitnexus-domains.yaml` de 2.2) :
+```yaml
+isolation_required: true
+reason: "PCI compliance — code identique mais doit rester séparé"
+allow_merge_with: []   # whitelist optionnelle d'autres repos OK pour merge
+```
+Quand `isolation_required: true`, le quadrant "Jumeaux actifs" devient
+"Jumeaux (isolation intentionnelle)" et la reco merge est supprimée.
 
-**Effort** : 1-2 semaines (endpoint + panneau) si les analytics existants
-suffisent. +2-3 semaines pour AST-fingerprint si on l'inclut au MVP.
+**Heuristiques de `warnings[]`** (auto-générées par l'endpoint) :
+- `LICENSE files diverge` — comparaison du fichier `LICENSE` à la racine
+  de chaque repo.
+- `Last commit > Xmo` — un repo gelé suggère version freeze ou
+  abandonware.
+- `Distinct author sets` — aucun committer en commun → fork ou équipes
+  disjointes.
+- `Domain names mismatched` — déclarés divergents dans
+  `.gitnexus-domains.yaml`.
+
+**Premier pas** : `GET /similarity?repos=A,B[,C,...]` qui :
+1. Agrège les features de chaque repo depuis les endpoints existants
+   (pas de re-calcul).
+2. Embed les top-N labels via le même chemin LLM que `/semantic-labels`.
+3. Charge `.gitnexus-policy.yaml` de chaque repo s'il existe.
+4. Calcule les 3 scores + applique les heuristiques `warnings`.
+5. Retourne :
+```json
+{
+  "pairs": [{
+    "a": "repo-A", "b": "repo-B",
+    "structuralScore": 0.84, "semanticScore": 0.72, "temporalCoupling": 0.12,
+    "quadrant": "Jumeaux isolés",
+    "recommendation": "Suspect — vérifier .gitnexus-policy.yaml",
+    "warnings": ["LICENSE files diverge", "Last commit on B > 6mo"],
+    "dominantFeatures": ["entropy", "churn_concentration"],
+    "policyApplied": null
+  }]
+}
+```
+
+**UI** : nouveau panneau `SimilarityPanel.tsx` avec deux vues :
+- **Matrice** N×N color-coded par quadrant (8 couleurs), drill-down par
+  paire, warnings affichés en bandeau.
+- **Galaxie** (à partir de 5+ repos) — projection UMAP 2D du Vecteur
+  d'Identité, chaque repo = un point, distance euclidienne ≈ similarité.
+  Clusters de points proches = familles technologiques. Points isolés =
+  "exotiques" ou anomalies.
+
+**Modes d'échec à surveiller** :
+
+| # | Scénario | Le modèle dit | Réalité | Mitigation |
+|---|---|---|---|---|
+| FP-1 | Réplication compliance (PCI / non-PCI, EU / US) | Jumeaux → merge | Isolation requise | `.gitnexus-policy.yaml` |
+| FP-2 | Multi-tenant par isolation (1 repo / client) | Jumeaux → merge | Data leak si merge | `.gitnexus-policy.yaml` |
+| FP-3 | Version freeze pour client legacy | Jumeaux → merge | Contrat figé | Warning `last_commit_age` |
+| FP-4 | Fork OSS interne vs upstream public | Jumeaux → merge | Licences incompatibles | Warning `LICENSE diverge` |
+| FN-1 | Même domaine, stacks opposés (Python ORM vs Go raw SQL) | Indépendants | Convergence ratée | `semanticScore` seul peut basculer en "Collision" |
+| FN-2 | Legacy + rewrite | Indépendants | Réconciliation requise | Détection git remote ancestor (post-MVP) |
+| FN-3 | Public API + private impl (contract coupling) | Indépendants | Collision sur le contrat | Axe `temporalCoupling` capture ce cas |
+
+**Limitation honnête** : le vrai "Score de Collision" sur la donnée
+métier (mêmes tables DB modifiées par les deux repos) reste hors scope —
+demanderait l'annotation des schemas ou la lecture des migrations. L'axe
+`temporalCoupling` via `/coupling/cross` est la meilleure approximation
+disponible. Détection AST-pattern (design patterns récurrents type DI,
+Factory) = Tier 3 ultérieur — nécessite un extracteur de patterns sur
+Tree-sitter.
+
+**Effort** : 2-3 semaines pour l'endpoint complet (Vecteur + 3 axes +
+warnings + policy parser) + panneau matrice. +1 semaine pour la vue
+Galaxie (UMAP). +2-3 semaines pour AST-fingerprint si on l'inclut au
+MVP.
 
 ---
 
@@ -294,7 +368,7 @@ Ordonné par **ratio impact / effort** sur ton use case réel
 5. **2.2 Dissonance score** — directement utile pour le "trouve les patterns qui marchent". ~1 semaine.
 6. **1.2 Cross-repo coupling + 1.3 Cross-repo growth** — quand tu auras 3+ repos indexés. ~1 semaine.
 7. **2.4 VSCode extension** — le multiplicateur de valeur quotidien. ~2 semaines pour MVP.
-8. **2.5 Cross-repo similarity** — quand 3+ repos sont indexés, agrège les analytics existantes en un Score de Correspondance + grille 2×2 de recommandations. ~1-2 semaines.
+8. **2.5 Cross-repo similarity** — quand 3+ repos sont indexés, agrège les analytics existantes en un Score de Correspondance à 3 axes (structurel × sémantique × couplage temporel), cube 2×2×2 de recommandations, policy YAML pour gérer les faux positifs compliance/multi-tenant. ~2-3 semaines (+1 pour la vue Galaxie UMAP).
 9. **2.3 What-if simulator** — utile pour refactos importants. ~1-2 semaines.
 10. **3.x** — selon les besoins (instrumentation runtime, audit social, auto-PR).
 
