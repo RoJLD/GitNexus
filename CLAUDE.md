@@ -9,6 +9,27 @@ own at this folder's root (`Dockerfile.cli`, `docker-compose.yml`,
 The general workspace rules in `../CLAUDE.md` apply. The rules below
 are gitnexus-specific.
 
+## Commit identity (mandatory)
+
+**All commits in this repo MUST use the GitHub identity**, not the Alten work email:
+
+| Field | Value |
+|---|---|
+| `user.email` | `roblastar@live.fr` |
+| `user.name` | `Robin DENIS` |
+
+This is set in `.git/config` (local) for this repo. Never override with
+`--author` flags or `git -c user.email=...` to use `robin.denis@alten.com`.
+If you see a commit being prepared with the wrong identity, **stop and
+fix the config first**. The Alten email leaked here once (commits before
+2026-05-26) and the history was rewritten — don't reintroduce it.
+
+Sanity-check before committing:
+```bash
+git config user.email   # → roblastar@live.fr
+git var GIT_AUTHOR_IDENT  # confirm full identity git would use
+```
+
 ## Source-of-truth references (read before non-trivial work)
 
 | File | What it tells you |
