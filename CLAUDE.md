@@ -171,6 +171,18 @@ REPO_ID=$(curl -s "http://localhost:4173/similarity?repos=hmm_studio,Experiment.
 curl -s -o /dev/null -w "repos/by-id: HTTP %{http_code}\n" \
   "http://localhost:4173/repos/by-id/$REPO_ID"
 
+# Commit-level entropy delta (Tier 2bis.2) — needs ≥2 snapshots to
+# attribute any delta; returns commits-with-null otherwise.
+curl -s -o /dev/null -w "entropy/commits: HTTP %{http_code}\n" \
+  "http://localhost:4173/entropy/commits?repo=hmm_studio&days=30"
+
+# Watches engine (Tier 2bis.3) — lists declared watches across all
+# repos + their in-memory eval state. The cron itself fires every
+# WATCH_INTERVAL_MS (default 5min); check `docker logs gitnexus-web | grep watches`
+# to see it ran.
+curl -s -o /dev/null -w "watches: HTTP %{http_code}\n" \
+  "http://localhost:4173/watches"
+
 # MCP sidecar — stdio JSON-RPC against the live stack. Exercises the
 # wrapper layer that exposes our analytics to Claude Code / Cursor.
 node mcp-server/smoke.mjs

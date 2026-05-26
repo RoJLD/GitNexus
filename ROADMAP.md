@@ -1,7 +1,7 @@
 # GitNexus — Roadmap
 
 État vivant des fonctionnalités déjà livrées et des prochaines pistes.
-Dernière mise à jour : 2026-05-26 (Tier 2bis Phase 1 complet : 2bis.1 MCP sidecar + 2bis.4 unified config + 2bis.5 stable repoId — plate-forme prête pour Tier 3).
+Dernière mise à jour : 2026-05-26 (Tier 2bis Phase 2 complet : 2bis.2 entropy/commits + 2bis.3 watches/webhooks — plate-forme + diagnostic fin tous livrés).
 
 > 📋 **Voir aussi** [INVENTORY.md](INVENTORY.md) — état des lieux complet :
 > features upstream + nos ajouts + distance avec upstream. À utiliser
@@ -47,6 +47,8 @@ un nom marketing — et son premier pas concret.
 | 27 | **MCP analytics sidecar (Tier 2bis.1)** : serveur stdio JSON-RPC 2.0 pure Node zéro-dep, 13 tools wrappant les endpoints REST (`list_repos`, `entropy`, `churn`, `coupling`, `growth`, `lifespan`, `ownership`, `dissonance`, `semantic_labels`, `coupling_cross`, `growth_cross`, `similarity`, `repo_by_id`). Sibling de `npx gitnexus mcp` upstream. Smoke 6/6 ✓ contre la stack live | `mcp-server/server.mjs`, `mcp-server/README.md`, `mcp-server/smoke.mjs` |
 | 28 | **Unified `.gitnexus.json` config (Tier 2bis.4)** : un seul fichier par repo avec sections `domains` / `policy` / `budgets` (réservé 3.6) / `watches` (réservé 2bis.3). Backward-compat sur `.gitnexus-domains.json` + `.gitnexus-policy.json` avec deprecation warning stderr. JSON (pas YAML) par cohérence avec le reste du codebase | `upstream/docker-server-config.mjs`, `patches/example-gitnexus.json` (+ legacy files marqués DEPRECATED) |
 | 29 | **Stable repoId (Tier 2bis.5)** : identifiant 16 hex chars = `sha256(firstCommitSha + normalizedRemote)[:16]`. Cache `<repoPath>/.gitnexus/repo-id.json`. Surface dans `/similarity` (`response.repos[].repoId` + `normalizedRemote`) et résoluble via `GET /repos/by-id/:repoId`. Survit aux re-clones et débloque la détection FN-2 de 2.5 (legacy + rewrite) | `upstream/docker-server-repo-id.mjs`, route `/repos/by-id/:repoId`, MCP tool `gitnexus_repo_by_id` |
+| 30 | **Commit-level entropy delta (Tier 2bis.2)** : `GET /entropy/commits?repo=<base>&days=N` (ou `from/to` = SHA ou ISO date) attribue à chaque commit sa part du delta entropy observé entre snapshots bracketants (proportionnel à filesTouched). MVP par interpolation, pas de Leiden in-memory — assume des snapshots suffisamment denses. Stragglers (commits hors fenêtre snapshot) retournés avec `attributedDensityDelta: null` | `/entropy/commits`, MCP tool `gitnexus_entropy_commits` |
+| 31 | **Watches + webhooks (Tier 2bis.3 MVP)** : cron interne toutes les `WATCH_INTERVAL_MS` (5 min default), debounce `WATCH_DEBOUNCE_MS` (1h default), POST webhook Slack-compatible quand seuil franchi. Watches déclarées dans `.gitnexus.json > watches` (déjà parsées par 2bis.4). 5 métriques supportées : entropy.{density,modularity}, ownership.{busFactor,topAuthorShare}, dissonance.purity. `GET /watches` liste les watches + leur dernier état | `/watches`, MCP tool `gitnexus_watches` |
 
 Toutes les analytics ci-dessus marchent dans un seul repo. La granularité
 est le node gitnexus (File, Function, Class, Section, …).
@@ -379,7 +381,20 @@ chaque endpoint REST en MCP tool avec description claire :
 **Effort** : 3-5 jours. Wrapper + tests manuels via Claude Code chat
 ("compare l'entropie de hmm_studio entre janvier et mars").
 
-### 2bis.2 — Commit-level entropy delta
+### 2bis.2 — Commit-level entropy delta ✅ LIVRÉ (MVP par interpolation)
+**État** : livré 2026-05-26 via [`upstream/docker-server-entropy-commits.mjs`](upstream/docker-server-entropy-commits.mjs).
+Endpoint `GET /entropy/commits?repo=<base>[&from=&to=][&days=N][&format=csv]`.
+**Méthode MVP** : pas de Leiden in-memory (trop coûteux). À la place, pour
+chaque commit dans la fenêtre, on attribue sa part du delta entropy
+observé entre les snapshots bracketants, proportionnel à `filesTouched`.
+Commits hors-fenêtre snapshot ressortent en `stragglers` avec
+`attributedDensityDelta: null`. Honest framing : co-commits dans le
+même bracket ne sont pas démêlables (split proportionnel). Pour du
+vrai per-commit causal entropy, snapshotter chaque commit (déjà
+supporté via `/snapshot/bulk`). MCP tool `gitnexus_entropy_commits`.
+Test live sur hmm_studio : 99 commits sur 180j → 66 attribués, 33
+stragglers, 4 windows dérivés de 5 snapshots.
+
 **Promesse** : actuellement entropie calculée par snapshot. Étendre à un
 **delta par commit** → identifie la PR exacte qui démarre la dégradation
 de cohérence. Combo killer avec `git blame` → "cette PR a démarré la
@@ -397,7 +412,37 @@ click sur un pic → diff visuel du commit + lien blame.
 
 **Effort** : ~1 semaine.
 
-### 2bis.3 — Alerting continu (watch + webhook)
+### 2bis.3 — Alerting continu (watch + webhook) ✅ LIVRÉ (MVP)
+**État** : livré 2026-05-26 via [`upstream/docker-server-watches.mjs`](upstream/docker-server-watches.mjs).
+Cron interne démarré au boot par `startWatchesCron()` :
+- Période `WATCH_INTERVAL_MS` (default 5 min)
+- Debounce `WATCH_DEBOUNCE_MS` (default 1h) par (repo, watch)
+- Désactivable via `WATCHES_ENABLED=false`
+
+**Source des watches** : `.gitnexus.json > watches` de chaque repo,
+parsé par 2bis.4. Pas de POST/DELETE au MVP — la déclarativité prime,
+le user édite le JSON. La surface dynamique reste pour un 2bis.3b
+quand un cas d'usage la justifie.
+
+**5 métriques supportées** :
+- `entropy.density` (du `/entropy` timeline, last point)
+- `entropy.modularity` (idem)
+- `ownership.busFactor` (repoBusFactor)
+- `ownership.topAuthorShare` (repoAuthors[0].share)
+- `dissonance.purity` (skip si pas de domains déclarés)
+
+**Webhook payload Slack-compatible** : champs structurés
+(`repoBase`, `metric`, `threshold`, `op`, `currentValue`, `triggeredAt`,
+`source`) + un champ `text` pré-formaté pour Slack incoming webhooks
+zéro-config.
+
+**Endpoint** : `GET /watches[?repo=<base>]` → liste les watches + leur
+dernier état d'évaluation (in-memory, perd l'historique au restart —
+documenté). MCP tool `gitnexus_watches`.
+
+**Limitation MVP** : seuils statiques. Apprentissage des seuils
+normaux = Tier 3 ML, pas dans ce round.
+
 **Promesse** : transformer GitNexus de "dashboard pull-only" à
 "garde-fou actif". Endpoint `/watch` qui SSE des events quand un seuil
 est franchi, couplé à webhooks (Slack / Email / Discord / Teams).
@@ -850,15 +895,15 @@ fin. Tout ce qui suit s'appuie sur Tier 1 + Tier 2.1-2.4 ✅ déjà livrés.
 - ✅ Tier 2.1 (semantic labels), 2.2 (dissonance), 2.3 (what-if), 2.4 (VSCode MVP)
 
 ### Phase 1 — Plate-forme (avant toute nouvelle feature horizontale) ✅ COMPLET
-1. ✅ **2bis.1 MCP exposure** — sidecar `mcp-server/`, 13 tools, smoke 6/6.
-2. ✅ **2bis.4 Unified `.gitnexus.json`** — parser `docker-server-config.mjs`, sections `domains` / `policy` / `budgets` (réservé 3.6) / `watches` (réservé 2bis.3), backward-compat sur les legacy avec deprecation warning.
+1. ✅ **2bis.1 MCP exposure** — sidecar `mcp-server/`, 15 tools, smoke 6/6.
+2. ✅ **2bis.4 Unified `.gitnexus.json`** — parser `docker-server-config.mjs`, sections `domains` / `policy` / `budgets` (réservé 3.6) / `watches` (consommé par 2bis.3 livré), backward-compat sur les legacy avec deprecation warning.
 3. ✅ **2bis.5 Repo ID stable** — `sha256(firstCommit + normalizedRemote)[:16]`, cache disque, endpoint `/repos/by-id/:repoId`, surface dans `/similarity`.
 
 > **Sortie de Phase 1** : la plate-forme est prête. Phase 2 (diagnostic fin) et le reste de Tier 3 peuvent maintenant s'empiler proprement.
 
-### Phase 2 — Diagnostic fin
-4. **2bis.2 Commit-level entropy delta** — identifie la PR exacte qui dégrade. ~1 semaine.
-5. **2bis.3 Alerting continu** — garde-fou actif via webhook. ~1-2 semaines.
+### Phase 2 — Diagnostic fin ✅ COMPLET
+4. ✅ **2bis.2 Commit-level entropy delta** — `/entropy/commits` MVP par interpolation snapshot-bracketing.
+5. ✅ **2bis.3 Alerting continu** — `/watches` + cron + webhook Slack-compatible, 5 métriques, debounce 1h.
 
 ### Phase 3 — Cross-repo (quand ≥3 repos indexés)
 6. **2.5 Cross-repo similarity** — Score de Correspondance + cube 2×2×2. ~2-3 semaines.

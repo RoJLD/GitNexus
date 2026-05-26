@@ -208,6 +208,32 @@ const TOOLS = [
     handler: ({ repos }) => callWeb('/growth/cross', { repos: repos.join(',') }),
   },
   {
+    name: 'gitnexus_entropy_commits',
+    description: 'Commit-level entropy delta (Tier 2bis.2). For each commit in the window, returns the attributed slice of the entropy delta observed between the bracketing snapshots, weighted by the commit\'s filesTouched. Use to find "which PR started the cohérence degradation" / "who introduced the modularity drop". Returns commits sorted most-recent-first; null `attributedDensityDelta` means the commit fell outside any snapshot pair (need to seed more snapshots via /snapshot/bulk). Window: pass `from` + `to` (each a SHA or ISO date), or `days=N` for "last N days". Default: 90 days.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        repo: { type: 'string' },
+        from: { type: 'string', description: 'Window start. SHA or ISO date. Optional.' },
+        to: { type: 'string', description: 'Window end. SHA or ISO date. Optional.' },
+        days: { type: 'number', minimum: 1, maximum: 3650, description: 'Window size in days from now. Used when from/to are not provided.' },
+      },
+      required: ['repo'],
+      additionalProperties: false,
+    },
+    handler: ({ repo, ...opts }) => callWeb('/entropy/commits', { repo, ...opts }),
+  },
+  {
+    name: 'gitnexus_watches',
+    description: 'List declared watches across indexed repos (Tier 2bis.3). Source = each repo\'s `.gitnexus.json > watches`. Returns the watch declaration + the last in-memory evaluation state (lastValue, lastEvaluatedAt, lastTriggeredAt, lastError). Cron interval, debounce, and supported metric list are returned alongside. Filter to a single repo with `repo`.',
+    inputSchema: {
+      type: 'object',
+      properties: { repo: { type: 'string', description: 'Optional — restrict to one repo.' } },
+      additionalProperties: false,
+    },
+    handler: ({ repo }) => callWeb('/watches', repo ? { repo } : {}),
+  },
+  {
     name: 'gitnexus_repo_by_id',
     description: 'Resolve a stable repoId (16 hex chars, sha256(firstCommitSha + normalizedRemote) — Tier 2bis.5) back to one or more registered `<base>` names. Useful when a repo was re-cloned with a different folder name and the cross-repo features lost the link. The repoId itself is surfaced by `gitnexus_similarity` under `response.repos[].repoId`.',
     inputSchema: {

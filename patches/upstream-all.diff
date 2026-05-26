@@ -1,5 +1,5 @@
 diff --git a/Dockerfile.web b/Dockerfile.web
-index b102a70..db09e40 100644
+index b102a70..b801b2b 100644
 --- a/Dockerfile.web
 +++ b/Dockerfile.web
 @@ -21,7 +21,10 @@ RUN npm run build --prefix gitnexus-shared
@@ -14,7 +14,7 @@ index b102a70..db09e40 100644
  
  COPY gitnexus-web ./gitnexus-web
  RUN npm run build --prefix gitnexus-web
-@@ -29,15 +32,45 @@ RUN npm run build --prefix gitnexus-web
+@@ -29,15 +32,47 @@ RUN npm run build --prefix gitnexus-web
  # node:22-bookworm-slim
  FROM node:22-bookworm-slim@sha256:9f6d5975c7dca860947d3915877f85607946403fc55349f39b4bc3688448bb6e AS runtime
  
@@ -57,6 +57,8 @@ index b102a70..db09e40 100644
 +COPY docker-server-similarity.mjs ./docker-server-similarity.mjs
 +COPY docker-server-config.mjs ./docker-server-config.mjs
 +COPY docker-server-repo-id.mjs ./docker-server-repo-id.mjs
++COPY docker-server-entropy-commits.mjs ./docker-server-entropy-commits.mjs
++COPY docker-server-watches.mjs ./docker-server-watches.mjs
 +COPY docker-server-csv.mjs ./docker-server-csv.mjs
  
  RUN chown -R node:node /app
@@ -1489,6 +1491,426 @@ index 0000000..405a8c3
 +export async function handleDissonanceRoute(req, url, res, opts) {
 +  if (url.pathname === '/dissonance' && req.method === 'GET') {
 +    await handleDissonance(url, res, opts);
++    return true;
++  }
++  return false;
++}
+diff --git a/docker-server-entropy-commits.mjs b/docker-server-entropy-commits.mjs
+new file mode 100644
+index 0000000..d2737f6
+--- /dev/null
++++ b/docker-server-entropy-commits.mjs
+@@ -0,0 +1,414 @@
++/**
++ * Commit-level entropy delta — ROADMAP Tier 2bis.2.
++ *
++ * Endpoint:
++ *   GET /entropy/commits?repo=<base>[&from=<sha|iso>][&to=<sha|iso>]
++ *                       [&days=<N>][&format=csv]
++ *
++ * For each commit in the window, attribute a fraction of the entropy
++ * delta observed between the bracketing snapshots, proportional to
++ * the number of files that commit touched. Surfaces the PRs / commits
++ * that started a degradation (or improvement).
++ *
++ * --- Why an attribution-based MVP instead of per-commit re-analysis ---
++ *
++ * The ROADMAP spec proposes "compute Leiden modularity delta on the
++ * touched files + their import-graph neighbors" per commit. That's a
++ * per-commit graph rebuild, which means N×gitnexus analyze runs per
++ * window — minutes of latency, brittle on dirty working trees.
++ *
++ * The MVP here is different and explicit about it: we read the
++ * existing snapshot timeline (which gitnexus already produces and our
++ * /entropy endpoint already serves), compute the entropy deltas
++ * between adjacent snapshots, and distribute each delta to the
++ * commits that landed in that window, weighted by `filesTouched`.
++ *
++ * Honest framing:
++ *   - When two commits land in the same snapshot window, we can't tell
++ *     which one caused the delta. We split it proportionally.
++ *   - When 30 days separate two snapshots and one commit touched 1 file
++ *     while another touched 200, the big one absorbs nearly all the
++ *     attributed delta.
++ *   - Density/modularity are GLOBAL metrics — moving a function from
++ *     A to B can swing them even when nothing was "added" or "deleted".
++ *
++ * This is "bon enough pour détecter les sauts" (per the ROADMAP). For
++ * true per-commit causal entropy, snapshot every commit (Tier 1.x
++ * already supports this via the bulk snapshot endpoint).
++ *
++ * --- Response shape ---
++ *
++ *   {
++ *     "repo": "hmm_studio",
++ *     "method": "interpolation-by-touched-files",
++ *     "windowsCount": 5,
++ *     "totalCommits": 42,
++ *     "snapshotsUsed": ["2026-01-15", "2026-02-15", ..., "live"],
++ *     "commits": [
++ *       {
++ *         "sha": "abc123",
++ *         "shortSha": "abc123d",
++ *         "author": "Marie",
++ *         "date": "2026-02-10T14:30:00Z",
++ *         "filesTouched": 12,
++ *         "snapshotWindow": ["2026-02-01T00:00:00Z", "2026-02-15T00:00:00Z"],
++ *         "windowDensityDelta": -0.012,
++ *         "windowModularityDelta": +0.003,
++ *         "attributedDensityDelta": -0.003,
++ *         "attributedModularityDelta": +0.0008
++ *       },
++ *       ...
++ *     ],
++ *     "windows": [
++ *       { "from": "2026-01-15...", "to": "2026-02-15...",
++ *         "densityDelta": -0.012, "modularityDelta": +0.003,
++ *         "commitsInWindow": 11, "filesTouchedInWindow": 47 }
++ *     ]
++ *   }
++ *
++ * `from` / `to` accept either commit SHAs (mapped to their dates via
++ * git) or ISO dates. `days=N` is shorthand for "last N days from now".
++ * Defaults to days=90 if no window provided.
++ */
++
++import { join } from 'node:path';
++import { readdir, readFile, stat } from 'node:fs/promises';
++import { spawn } from 'node:child_process';
++import {
++  findRepoByName,
++  SNAPSHOTS_ROOT,
++  safeSnapshotKey,
++} from './docker-server-snapshots.mjs';
++import { toCsv, writeCsv, safeFilename } from './docker-server-csv.mjs';
++
++const DEFAULT_DAYS = 90;
++
++function runCmd(cmd, args, opts = {}) {
++  return new Promise((resolve, reject) => {
++    const child = spawn(cmd, args, opts);
++    let stdout = '';
++    let stderr = '';
++    child.stdout?.on('data', (d) => (stdout += d.toString()));
++    child.stderr?.on('data', (d) => (stderr += d.toString()));
++    child.on('error', reject);
++    child.on('close', (code) => {
++      if (code === 0) resolve(stdout);
++      else reject(new Error(`${cmd} exited ${code}: ${stderr.trim()}`));
++    });
++  });
++}
++
++async function readMeta(storagePath) {
++  try {
++    return JSON.parse(await readFile(join(storagePath, 'meta.json'), 'utf8'));
++  } catch {
++    return null;
++  }
++}
++
++function computeEntropyFromStats(stats) {
++  const nodes = Number(stats?.nodes) || 0;
++  const edges = Number(stats?.edges) || 0;
++  const communities = Number(stats?.communities) || 0;
++  const denom = nodes * (nodes - 1);
++  const density = denom > 0 ? (2 * edges) / denom : 0;
++  const modularity = nodes > 0 ? communities / nodes : 0;
++  return { density, modularity };
++}
++
++async function loadSnapshotEntropyTimeline(repoName, liveEntry) {
++  const dir = join(SNAPSHOTS_ROOT, safeSnapshotKey(repoName));
++  let entries;
++  try {
++    entries = await readdir(dir, { withFileTypes: true });
++  } catch (err) {
++    if (err && err.code === 'ENOENT') entries = [];
++    else throw err;
++  }
++  const points = [];
++  for (const e of entries) {
++    if (!e.isDirectory()) continue;
++    let commit;
++    try {
++      commit = JSON.parse(await readFile(join(dir, e.name, 'commit.json'), 'utf8'));
++    } catch {
++      continue; // half-built snapshot, skip
++    }
++    const meta = await readMeta(join(dir, e.name, 'source', '.gitnexus'));
++    points.push({
++      name: `${repoName}@${e.name}`,
++      sha: e.name,
++      date: commit.date,
++      ...computeEntropyFromStats(meta?.stats || {}),
++    });
++  }
++  // Append the live point if we have stats.
++  const liveStats = liveEntry?.stats || {};
++  const liveMeta = await readMeta(
++    join('/data/projects', repoName, '.gitnexus'),
++  ).catch(() => null);
++  points.push({
++    name: repoName,
++    sha: 'HEAD',
++    date: liveEntry?.indexedAt || new Date().toISOString(),
++    isLive: true,
++    ...computeEntropyFromStats(liveMeta?.stats || liveStats),
++  });
++  // Sort chronologically. Some snapshot dirs can have weird dates if
++  // the commits were rebased; sort defends against that.
++  points.sort((a, b) => (a.date || '').localeCompare(b.date || ''));
++  return points;
++}
++
++// Parse `git log --pretty=format:%H%x09%aI%x09%an --name-only --no-merges`
++// → [{ sha, date (ISO), author, files: [path, ...] }]
++function parseGitLog(stdout) {
++  const commits = [];
++  let header = null;
++  let files = [];
++  for (const rawLine of stdout.split('\n')) {
++    const line = rawLine.trimEnd();
++    if (line === '') {
++      if (header) {
++        commits.push({ ...header, files });
++        header = null;
++        files = [];
++      }
++      continue;
++    }
++    if (header === null) {
++      const parts = line.split('\t');
++      if (parts.length < 3) continue;
++      header = { sha: parts[0], date: parts[1], author: parts[2] };
++      continue;
++    }
++    files.push(line);
++  }
++  if (header) commits.push({ ...header, files });
++  return commits;
++}
++
++// Resolve a window-end value: SHA → commit date, ISO → ISO, else null.
++async function resolveWindowEnd(repoPath, value) {
++  if (!value) return null;
++  // ISO-ish? Any string that Date.parse accepts AND contains a '-' or 'T'.
++  if (/^\d{4}-/.test(value)) {
++    const t = Date.parse(value);
++    if (Number.isFinite(t)) return new Date(t).toISOString();
++  }
++  // SHA → commit date.
++  try {
++    const out = await runCmd('git', [
++      '-C', repoPath, 'show', '-s', '--format=%aI', value,
++    ]);
++    const iso = out.trim();
++    if (iso && Number.isFinite(Date.parse(iso))) return iso;
++  } catch {
++    // Fall through.
++  }
++  throw new Error(`could not resolve ${value} as a SHA or ISO date`);
++}
++
++async function handleEntropyCommits(url, res, opts) {
++  const repoName = url.searchParams.get('repo');
++  if (!repoName) {
++    res.writeHead(400, { 'Content-Type': 'application/json' });
++    res.end(JSON.stringify({ error: 'missing repo' }));
++    return;
++  }
++  const baseRepo = repoName.split('@')[0];
++  const live = await findRepoByName(baseRepo, opts.api);
++  if (!live) {
++    res.writeHead(404, { 'Content-Type': 'application/json' });
++    res.end(JSON.stringify({ error: `repo not found: ${baseRepo}` }));
++    return;
++  }
++  const repoPath = live.repoPath || live.path;
++  const hasGit = await stat(join(repoPath, '.git')).catch(() => null);
++  if (!hasGit) {
++    res.writeHead(400, { 'Content-Type': 'application/json' });
++    res.end(JSON.stringify({ error: `${baseRepo} is not a git repo (commit-level entropy needs git history)` }));
++    return;
++  }
++
++  // Resolve window.
++  const days = Number(url.searchParams.get('days'));
++  let fromIso, toIso;
++  try {
++    fromIso = await resolveWindowEnd(repoPath, url.searchParams.get('from'));
++    toIso = await resolveWindowEnd(repoPath, url.searchParams.get('to'));
++  } catch (err) {
++    res.writeHead(400, { 'Content-Type': 'application/json' });
++    res.end(JSON.stringify({ error: err.message }));
++    return;
++  }
++  if (!fromIso || !toIso) {
++    const windowDays = Number.isFinite(days) && days > 0 ? Math.min(3650, days) : DEFAULT_DAYS;
++    const now = Date.now();
++    if (!toIso) toIso = new Date(now).toISOString();
++    if (!fromIso) fromIso = new Date(now - windowDays * 24 * 3600 * 1000).toISOString();
++  }
++
++  // Pull the git log in the window.
++  let logOut;
++  try {
++    logOut = await runCmd('git', [
++      '-C', repoPath, 'log',
++      `--since=${fromIso}`, `--until=${toIso}`,
++      '--pretty=format:%H%x09%aI%x09%an', '--name-only', '--no-merges',
++    ]);
++  } catch (err) {
++    res.writeHead(500, { 'Content-Type': 'application/json' });
++    res.end(JSON.stringify({ error: `git log failed: ${err.message}` }));
++    return;
++  }
++  const allCommits = parseGitLog(logOut);
++
++  // Build the snapshot entropy timeline.
++  const snapshotPoints = await loadSnapshotEntropyTimeline(baseRepo, live);
++
++  if (snapshotPoints.length < 2) {
++    // Need at least 2 snapshots to compute any delta.
++    res.writeHead(200, { 'Content-Type': 'application/json' });
++    res.end(JSON.stringify({
++      repo: baseRepo,
++      method: 'interpolation-by-touched-files',
++      windowsCount: 0,
++      totalCommits: allCommits.length,
++      snapshotsUsed: snapshotPoints.map((p) => p.date),
++      warning: 'Need at least 2 snapshots (or 1 snapshot + live) to compute entropy deltas. Run /snapshot/bulk to seed the timeline.',
++      commits: allCommits.map((c) => ({
++        sha: c.sha, shortSha: c.sha.slice(0, 7), author: c.author, date: c.date,
++        filesTouched: c.files.length,
++        snapshotWindow: null,
++        windowDensityDelta: null, windowModularityDelta: null,
++        attributedDensityDelta: null, attributedModularityDelta: null,
++      })),
++      windows: [],
++    }));
++    return;
++  }
++
++  // For each adjacent snapshot pair, compute the deltas + bucket the
++  // commits in [pair.from.date, pair.to.date).
++  const windows = [];
++  for (let i = 0; i < snapshotPoints.length - 1; i++) {
++    const a = snapshotPoints[i];
++    const b = snapshotPoints[i + 1];
++    windows.push({
++      from: a.date,
++      to: b.date,
++      densityDelta: (b.density - a.density) || 0,
++      modularityDelta: (b.modularity - a.modularity) || 0,
++      commits: [], // filled below
++    });
++  }
++
++  // Assign each commit to its window (the one whose [from, to)
++  // contains the commit date). Commits outside any window are simply
++  // attributed null (still returned for visibility).
++  const stragglers = [];
++  for (const c of allCommits) {
++    const t = Date.parse(c.date);
++    if (!Number.isFinite(t)) {
++      stragglers.push(c);
++      continue;
++    }
++    let assigned = false;
++    for (const w of windows) {
++      const ws = Date.parse(w.from);
++      const we = Date.parse(w.to);
++      if (Number.isFinite(ws) && Number.isFinite(we) && t >= ws && t < we) {
++        w.commits.push(c);
++        assigned = true;
++        break;
++      }
++    }
++    if (!assigned) stragglers.push(c);
++  }
++
++  // Per-window: sum filesTouched, then split deltas.
++  const windowSummaries = windows.map((w) => {
++    const filesTouched = w.commits.reduce((s, c) => s + c.files.length, 0);
++    return {
++      from: w.from,
++      to: w.to,
++      densityDelta: w.densityDelta,
++      modularityDelta: w.modularityDelta,
++      commitsInWindow: w.commits.length,
++      filesTouchedInWindow: filesTouched,
++    };
++  });
++
++  const commitsOut = [];
++  for (const w of windows) {
++    const total = w.commits.reduce((s, c) => s + c.files.length, 0);
++    for (const c of w.commits) {
++      const share = total > 0 ? c.files.length / total : 0;
++      commitsOut.push({
++        sha: c.sha,
++        shortSha: c.sha.slice(0, 7),
++        author: c.author,
++        date: c.date,
++        filesTouched: c.files.length,
++        snapshotWindow: [w.from, w.to],
++        windowDensityDelta: w.densityDelta,
++        windowModularityDelta: w.modularityDelta,
++        attributedDensityDelta: w.densityDelta * share,
++        attributedModularityDelta: w.modularityDelta * share,
++      });
++    }
++  }
++  for (const c of stragglers) {
++    commitsOut.push({
++      sha: c.sha, shortSha: c.sha.slice(0, 7),
++      author: c.author, date: c.date,
++      filesTouched: c.files.length,
++      snapshotWindow: null,
++      windowDensityDelta: null, windowModularityDelta: null,
++      attributedDensityDelta: null, attributedModularityDelta: null,
++    });
++  }
++  // Order: most-recent first (matches the user's mental model of
++  // walking back through history). Stragglers (no window) at the end.
++  commitsOut.sort((a, b) => {
++    const aw = a.snapshotWindow ? 0 : 1;
++    const bw = b.snapshotWindow ? 0 : 1;
++    if (aw !== bw) return aw - bw;
++    return (b.date || '').localeCompare(a.date || '');
++  });
++
++  if (url.searchParams.get('format') === 'csv') {
++    const csv = toCsv(commitsOut, [
++      { key: 'sha' }, { key: 'shortSha' }, { key: 'author' }, { key: 'date' },
++      { key: 'filesTouched' },
++      { key: 'attributedDensityDelta' }, { key: 'attributedModularityDelta' },
++      { key: 'windowDensityDelta' }, { key: 'windowModularityDelta' },
++    ]);
++    writeCsv(res, `${safeFilename(baseRepo)}-entropy-commits.csv`, csv);
++    return;
++  }
++
++  res.writeHead(200, { 'Content-Type': 'application/json' });
++  res.end(JSON.stringify({
++    repo: baseRepo,
++    method: 'interpolation-by-touched-files',
++    from: fromIso,
++    to: toIso,
++    windowsCount: windows.length,
++    totalCommits: allCommits.length,
++    commitsAttributed: commitsOut.length - stragglers.length,
++    commitsStraggler: stragglers.length,
++    snapshotsUsed: snapshotPoints.map((p) => p.date),
++    commits: commitsOut,
++    windows: windowSummaries,
++  }));
++}
++
++export async function handleEntropyCommitsRoute(req, url, res, opts) {
++  if (url.pathname === '/entropy/commits' && req.method === 'GET') {
++    await handleEntropyCommits(url, res, opts);
 +    return true;
 +  }
 +  return false;
@@ -4848,11 +5270,381 @@ index 0000000..f6f693f
 +  }
 +  return false;
 +}
+diff --git a/docker-server-watches.mjs b/docker-server-watches.mjs
+new file mode 100644
+index 0000000..c6a7798
+--- /dev/null
++++ b/docker-server-watches.mjs
+@@ -0,0 +1,364 @@
++/**
++ * Watches & webhook alerting — ROADMAP Tier 2bis.3 (MVP).
++ *
++ * Endpoint:
++ *   GET /watches[?repo=<base>]
++ *     → list every declared watch (per `.gitnexus.json > watches`)
++ *       with its last evaluation state.
++ *
++ * Source of truth: each repo's `.gitnexus.json > watches` array
++ * (already parsed by docker-server-config.mjs from Tier 2bis.4). No
++ * dynamic POST/DELETE in the MVP — the user edits the YAML/JSON to
++ * add or remove a watch. Documented in CLAUDE.md and ROADMAP. The
++ * dynamic surface (POST /watches, DELETE /watches/:id) can come in a
++ * 2bis.3b follow-up when there's a real need for ad-hoc watches.
++ *
++ * Internal cron:
++ *   - Wakes every `WATCH_INTERVAL_MS` (default 5 min).
++ *   - For each indexed repo with `watches` declared, evaluates each
++ *     watch by fetching the corresponding metric from our own HTTP
++ *     endpoints (cheap; the cron loop is once every 5 min, not a hot
++ *     path). Localhost fetches via the same WEB_BASE used by the MCP
++ *     sidecar.
++ *   - If the condition triggers AND we haven't fired the webhook for
++ *     this (repo, watch) in the past `DEBOUNCE_MS` (default 1h), POST
++ *     the webhook payload.
++ *
++ * Storage: state is in-memory (a Map keyed by `${repo}:${watchIdx}`).
++ * Survives only until the next process restart. Documented limitation
++ * — for durable state, the user would either accept duplicate
++ * notifications across restarts (the webhook receiver should
++ * deduplicate by id+date) or wait for a 2bis.3b that adds disk
++ * persistence.
++ *
++ * --- Webhook payload ---
++ *
++ *   POST <webhook URL>
++ *   Content-Type: application/json
++ *   {
++ *     "repoBase": "hmm_studio",
++ *     "metric": "entropy.density",
++ *     "threshold": 0.05,
++ *     "op": ">",
++ *     "currentValue": 0.0631,
++ *     "triggeredAt": "2026-05-26T10:30:00.000Z",
++ *     "source": "gitnexus-watches/2bis.3"
++ *   }
++ *
++ * Slack-compatible: the payload also includes a `text` field so a
++ * Slack incoming webhook URL produces a readable message without a
++ * custom handler.
++ *
++ * --- Supported metrics ---
++ *
++ *   entropy.density            from /entropy (last point in timeline)
++ *   entropy.modularity         from /entropy (last point)
++ *   ownership.busFactor        from /ownership repoBusFactor
++ *   ownership.topAuthorShare   from /ownership repoAuthors[0].share
++ *   dissonance.purity          from /dissonance (skips if no domains)
++ *
++ * Unknown metrics are skipped with a one-shot warning. To add a new
++ * metric, register an evaluator in METRIC_EVALUATORS below.
++ *
++ * --- Configuration (env vars) ---
++ *
++ *   WATCH_INTERVAL_MS    300000   ms between cron ticks (5 min)
++ *   WATCH_DEBOUNCE_MS    3600000  ms between webhook fires for the
++ *                                  same (repo, watch) condition (1h)
++ *   WATCH_TIMEOUT_MS     30000    HTTP timeout for evaluator + webhook
++ *   WATCHES_ENABLED      true     set to "false" to disable the cron
++ *                                  (endpoint still serves config view)
++ */
++
++import process from 'node:process';
++import { getConfig } from './docker-server-config.mjs';
++
++const WATCH_INTERVAL_MS = Number(process.env.WATCH_INTERVAL_MS) || 5 * 60 * 1000;
++const WATCH_DEBOUNCE_MS = Number(process.env.WATCH_DEBOUNCE_MS) || 60 * 60 * 1000;
++const WATCH_TIMEOUT_MS = Number(process.env.WATCH_TIMEOUT_MS) || 30 * 1000;
++const WATCHES_ENABLED = (process.env.WATCHES_ENABLED ?? 'true').toLowerCase() !== 'false';
++
++// In-memory eval state. Key = `${repo}:${watchKey}` where watchKey =
++// `${metric}|${op}|${threshold}|${webhook}` (stable across restarts as
++// long as the .gitnexus.json watch shape is unchanged).
++const _evalState = new Map();
++const _warnedMetrics = new Set();
++let _cronTimer = null;
++
++function metricKey(repo, watch) {
++  return `${repo}:${watch.metric}|${watch.op}|${watch.threshold}|${watch.webhook || ''}`;
++}
++
++// ── Evaluators per metric ────────────────────────────────────────────
++
++async function fetchJson(url) {
++  const controller = new AbortController();
++  const t = setTimeout(() => controller.abort(), WATCH_TIMEOUT_MS);
++  try {
++    const resp = await fetch(url, { signal: controller.signal, cache: 'no-store' });
++    if (!resp.ok) return { ok: false, error: `HTTP ${resp.status}` };
++    return { ok: true, body: await resp.json() };
++  } catch (err) {
++    return { ok: false, error: err.name === 'AbortError' ? 'timeout' : err.message };
++  } finally {
++    clearTimeout(t);
++  }
++}
++
++// All evaluators take (repo, webBase) and return
++// { ok: true, value: number } | { ok: false, error: string }.
++const METRIC_EVALUATORS = {
++  'entropy.density': async (repo, webBase) => {
++    const r = await fetchJson(`${webBase}/entropy?repo=${encodeURIComponent(repo)}`);
++    if (!r.ok) return r;
++    const last = (r.body?.timeline || []).slice(-1)[0];
++    if (!last || typeof last.density !== 'number') return { ok: false, error: 'no density in /entropy timeline' };
++    return { ok: true, value: last.density };
++  },
++  'entropy.modularity': async (repo, webBase) => {
++    const r = await fetchJson(`${webBase}/entropy?repo=${encodeURIComponent(repo)}`);
++    if (!r.ok) return r;
++    const last = (r.body?.timeline || []).slice(-1)[0];
++    if (!last || typeof last.modularity !== 'number') return { ok: false, error: 'no modularity in /entropy timeline' };
++    return { ok: true, value: last.modularity };
++  },
++  'ownership.busFactor': async (repo, webBase) => {
++    const r = await fetchJson(`${webBase}/ownership?repo=${encodeURIComponent(repo)}`);
++    if (!r.ok) return r;
++    if (typeof r.body?.repoBusFactor !== 'number') return { ok: false, error: 'no repoBusFactor' };
++    return { ok: true, value: r.body.repoBusFactor };
++  },
++  'ownership.topAuthorShare': async (repo, webBase) => {
++    const r = await fetchJson(`${webBase}/ownership?repo=${encodeURIComponent(repo)}`);
++    if (!r.ok) return r;
++    const top = r.body?.repoAuthors?.[0];
++    if (!top || typeof top.share !== 'number') return { ok: false, error: 'no top author share' };
++    return { ok: true, value: top.share };
++  },
++  'dissonance.purity': async (repo, webBase) => {
++    const r = await fetchJson(`${webBase}/dissonance?repo=${encodeURIComponent(repo)}`);
++    if (!r.ok) return r;
++    if (typeof r.body?.purity !== 'number') return { ok: false, error: 'no purity (no domains declared?)' };
++    return { ok: true, value: r.body.purity };
++  },
++};
++
++function evaluateOp(currentValue, op, threshold) {
++  switch (op) {
++    case '>':  return currentValue > threshold;
++    case '>=': return currentValue >= threshold;
++    case '<':  return currentValue < threshold;
++    case '<=': return currentValue <= threshold;
++    case '==':
++    case '=':  return currentValue === threshold;
++    case '!=': return currentValue !== threshold;
++    default:   return false;
++  }
++}
++
++// ── Webhook fire ─────────────────────────────────────────────────────
++
++async function fireWebhook(repoBase, watch, currentValue) {
++  if (!watch.webhook) return { ok: false, error: 'no webhook URL' };
++  const text = `🚨 GitNexus: \`${repoBase}\` ${watch.metric} = ${currentValue.toFixed(4)} ${watch.op} ${watch.threshold} (threshold)`;
++  const payload = {
++    repoBase,
++    metric: watch.metric,
++    threshold: watch.threshold,
++    op: watch.op,
++    currentValue,
++    triggeredAt: new Date().toISOString(),
++    source: 'gitnexus-watches/2bis.3',
++    text, // Slack-compatible field
++  };
++  const controller = new AbortController();
++  const t = setTimeout(() => controller.abort(), WATCH_TIMEOUT_MS);
++  try {
++    const resp = await fetch(watch.webhook, {
++      method: 'POST',
++      headers: { 'Content-Type': 'application/json' },
++      body: JSON.stringify(payload),
++      signal: controller.signal,
++    });
++    return { ok: resp.ok, status: resp.status, error: resp.ok ? null : `HTTP ${resp.status}` };
++  } catch (err) {
++    return { ok: false, error: err.name === 'AbortError' ? 'timeout' : err.message };
++  } finally {
++    clearTimeout(t);
++  }
++}
++
++// ── Per-repo watch evaluation ────────────────────────────────────────
++
++async function evaluateRepoWatches(repo, repoPath, webBase, now) {
++  let cfg;
++  try {
++    cfg = await getConfig(repoPath);
++  } catch {
++    return [];
++  }
++  const watches = Array.isArray(cfg.watches) ? cfg.watches : [];
++  if (watches.length === 0) return [];
++
++  const out = [];
++  for (const w of watches) {
++    const k = metricKey(repo, w);
++    const evaluator = METRIC_EVALUATORS[w.metric];
++    let evalResult;
++    if (!evaluator) {
++      if (!_warnedMetrics.has(w.metric)) {
++        _warnedMetrics.add(w.metric);
++        process.stderr.write(`[watches] unknown metric: ${w.metric} (add an evaluator in docker-server-watches.mjs)\n`);
++      }
++      evalResult = { ok: false, error: `unknown metric: ${w.metric}` };
++    } else {
++      evalResult = await evaluator(repo, webBase);
++    }
++
++    const prior = _evalState.get(k) || { lastTriggeredAt: 0, lastValue: null };
++    const state = {
++      ...prior,
++      lastEvaluatedAt: now,
++      lastValue: evalResult.ok ? evalResult.value : prior.lastValue,
++      lastError: evalResult.ok ? null : evalResult.error,
++    };
++
++    let webhookFired = false;
++    let webhookOutcome = null;
++    if (evalResult.ok && evaluateOp(evalResult.value, w.op, Number(w.threshold))) {
++      const elapsedSinceLastTrigger = now - (prior.lastTriggeredAt || 0);
++      if (elapsedSinceLastTrigger >= WATCH_DEBOUNCE_MS) {
++        webhookOutcome = await fireWebhook(repo, w, evalResult.value);
++        webhookFired = true;
++        state.lastTriggeredAt = now;
++      } else {
++        webhookOutcome = { ok: false, error: 'debounced', secondsUntilEligible: Math.ceil((WATCH_DEBOUNCE_MS - elapsedSinceLastTrigger) / 1000) };
++      }
++    }
++
++    _evalState.set(k, state);
++    out.push({
++      repo,
++      watch: w,
++      lastEvaluatedAt: new Date(state.lastEvaluatedAt).toISOString(),
++      lastValue: state.lastValue,
++      lastError: state.lastError,
++      lastTriggeredAt: state.lastTriggeredAt ? new Date(state.lastTriggeredAt).toISOString() : null,
++      webhookFiredThisTick: webhookFired,
++      webhookOutcome,
++    });
++  }
++  return out;
++}
++
++// ── Cron loop ────────────────────────────────────────────────────────
++
++const _webBase = () => `http://127.0.0.1:${process.env.PORT || '4173'}`;
++
++async function fetchAllRepos(apiBase) {
++  const r = await fetchJson(`${apiBase}/api/repos`);
++  if (!r.ok) return [];
++  const list = Array.isArray(r.body) ? r.body : r.body?.repos;
++  return Array.isArray(list) ? list : [];
++}
++
++async function cronTick(apiBase) {
++  const webBase = _webBase();
++  const repos = await fetchAllRepos(apiBase);
++  const now = Date.now();
++  // Sequential, polite — N repos × M watches, neither is high. Avoids
++  // hammering our own endpoints with parallel git invocations.
++  for (const repo of repos) {
++    if (!repo?.name || repo.name.includes('@')) continue; // skip snapshots
++    const repoPath = repo.repoPath || repo.path;
++    if (!repoPath) continue;
++    await evaluateRepoWatches(repo.name, repoPath, webBase, now).catch((err) => {
++      process.stderr.write(`[watches] eval failed for ${repo.name}: ${err.message}\n`);
++    });
++  }
++}
++
++export function startWatchesCron(apiBase) {
++  if (!WATCHES_ENABLED) {
++    process.stderr.write('[watches] cron disabled (WATCHES_ENABLED=false)\n');
++    return;
++  }
++  if (_cronTimer) return; // already running
++  // Stagger the first run by 10s so the stack has time to come up.
++  setTimeout(() => {
++    cronTick(apiBase).catch((err) =>
++      process.stderr.write(`[watches] initial cron tick failed: ${err.message}\n`),
++    );
++    _cronTimer = setInterval(() => {
++      cronTick(apiBase).catch((err) =>
++        process.stderr.write(`[watches] cron tick failed: ${err.message}\n`),
++      );
++    }, WATCH_INTERVAL_MS);
++    if (_cronTimer.unref) _cronTimer.unref();
++  }, 10_000);
++  process.stderr.write(
++    `[watches] cron enabled · interval=${WATCH_INTERVAL_MS}ms · debounce=${WATCH_DEBOUNCE_MS}ms · metrics=${Object.keys(METRIC_EVALUATORS).join(',')}\n`,
++  );
++}
++
++export function stopWatchesCron() {
++  if (_cronTimer) {
++    clearInterval(_cronTimer);
++    _cronTimer = null;
++  }
++}
++
++// ── HTTP handler ─────────────────────────────────────────────────────
++
++async function handleGetWatches(url, res, opts) {
++  const filterRepo = url.searchParams.get('repo');
++  const repos = await fetchAllRepos(opts.api);
++  const out = [];
++  for (const repo of repos) {
++    if (!repo?.name || repo.name.includes('@')) continue;
++    if (filterRepo && repo.name !== filterRepo) continue;
++    const repoPath = repo.repoPath || repo.path;
++    if (!repoPath) continue;
++    let cfg;
++    try {
++      cfg = await getConfig(repoPath);
++    } catch {
++      continue;
++    }
++    const watches = Array.isArray(cfg.watches) ? cfg.watches : [];
++    for (let i = 0; i < watches.length; i++) {
++      const w = watches[i];
++      const k = metricKey(repo.name, w);
++      const state = _evalState.get(k) || null;
++      out.push({
++        repo: repo.name,
++        index: i,
++        watch: w,
++        state: state ? {
++          lastEvaluatedAt: state.lastEvaluatedAt ? new Date(state.lastEvaluatedAt).toISOString() : null,
++          lastValue: state.lastValue,
++          lastError: state.lastError,
++          lastTriggeredAt: state.lastTriggeredAt ? new Date(state.lastTriggeredAt).toISOString() : null,
++        } : null,
++      });
++    }
++  }
++  res.writeHead(200, { 'Content-Type': 'application/json' });
++  res.end(JSON.stringify({
++    watchesCount: out.length,
++    reposScanned: filterRepo ? 1 : repos.length,
++    cronEnabled: WATCHES_ENABLED,
++    intervalMs: WATCH_INTERVAL_MS,
++    debounceMs: WATCH_DEBOUNCE_MS,
++    supportedMetrics: Object.keys(METRIC_EVALUATORS),
++    watches: out,
++  }));
++}
++
++export async function handleWatchesRoute(req, url, res, opts) {
++  if (url.pathname === '/watches' && req.method === 'GET') {
++    await handleGetWatches(url, res, opts);
++    return true;
++  }
++  return false;
++}
 diff --git a/docker-server.mjs b/docker-server.mjs
-index 8143eb4..86fa198 100644
+index 8143eb4..e5c3803 100644
 --- a/docker-server.mjs
 +++ b/docker-server.mjs
-@@ -1,12 +1,51 @@
+@@ -1,12 +1,53 @@
 -import { createReadStream } from 'node:fs';
 -import { stat } from 'node:fs/promises';
 +import { createReadStream, createWriteStream } from 'node:fs';
@@ -4876,6 +5668,8 @@ index 8143eb4..86fa198 100644
 +import { handleGrowthCrossRoute } from './docker-server-growth-cross.mjs';
 +import { handleSimilarityRoute } from './docker-server-similarity.mjs';
 +import { handleRepoByIdRoute } from './docker-server-repo-id.mjs';
++import { handleEntropyCommitsRoute } from './docker-server-entropy-commits.mjs';
++import { handleWatchesRoute, startWatchesCron } from './docker-server-watches.mjs';
  
  const host = '0.0.0.0';
  const port = Number(process.env.PORT || '4173');
@@ -4907,7 +5701,7 @@ index 8143eb4..86fa198 100644
  const contentTypes = {
    '.css': 'text/css; charset=utf-8',
    '.html': 'text/html; charset=utf-8',
-@@ -20,6 +59,416 @@ const contentTypes = {
+@@ -20,6 +61,416 @@ const contentTypes = {
    '.woff2': 'font/woff2',
  };
  
@@ -5324,7 +6118,7 @@ index 8143eb4..86fa198 100644
  // Static asset server for the gitnexus-web Docker image.
  //
  // Path-injection containment: the request handler is intentionally a single
-@@ -39,8 +488,55 @@ const contentTypes = {
+@@ -39,8 +490,59 @@ const contentTypes = {
  // the request handler's reassignment paths in vanilla JS. The inline-at-sink
  // shape below is the documented analyzer-friendly idiom.
  const server = createServer(async (req, res) => {
@@ -5376,11 +6170,23 @@ index 8143eb4..86fa198 100644
 +  if (await handleSimilarityRoute(req, reqUrl, res, { api: GITNEXUS_API })) return;
 +  // Stable repo ID resolver (ROADMAP Tier 2bis.5)
 +  if (await handleRepoByIdRoute(req, reqUrl, res, { api: GITNEXUS_API })) return;
++  // Commit-level entropy delta (ROADMAP Tier 2bis.2)
++  if (await handleEntropyCommitsRoute(req, reqUrl, res, { api: GITNEXUS_API })) return;
++  // Watches + webhook alerting (ROADMAP Tier 2bis.3)
++  if (await handleWatchesRoute(req, reqUrl, res, { api: GITNEXUS_API })) return;
  
 +  // ── Static asset serving (v1.6.5 CodeQL-compliant pipeline) ───────────
    let decoded;
    try {
      decoded = decodeURIComponent(urlPath);
+@@ -117,4 +619,7 @@ const server = createServer(async (req, res) => {
+ 
+ server.listen(port, host, () => {
+   console.log(`gitnexus-web listening on http://${host}:${port}`);
++  // Kick off the watches cron (ROADMAP Tier 2bis.3). Starts deferred
++  // by 10s so the stack settles first. Disable via WATCHES_ENABLED=false.
++  startWatchesCron(GITNEXUS_API);
+ });
 diff --git a/gitnexus-web/package-lock.json b/gitnexus-web/package-lock.json
 index cf69e10..8beb5aa 100644
 --- a/gitnexus-web/package-lock.json
