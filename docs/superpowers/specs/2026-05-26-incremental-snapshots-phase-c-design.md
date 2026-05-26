@@ -91,6 +91,42 @@ Le briefing dit "le pipeline parse 100% des fichiers même en incremental". Le g
 
 **Spike** : modifier `upstream/gitnexus/src/cli/analyze.ts` pour exposer `--incremental` (juste la CLI), mesurer le temps sur 3 commits différents de hmm_studio (1 commit qui touche 1 fichier, 1 qui touche 10, 1 qui touche 100). Si c'est 30s par commit, faisable. Si c'est 2min, on doit revoir.
 
+#### ✅ SPIKE EXÉCUTÉ 2026-05-26 — résultats
+
+**Setup** :
+- Worktree de hmm_studio à 7ba5260 (HEAD~1) créé via `git worktree add`
+- Container `gitnexus` voit la worktree via le bind mount /data/projects
+- Pas eu besoin de patcher la CLI : **l'incremental path s'active automatiquement** en re-runnant `gitnexus analyze` sur la même dir sans `--force`
+
+**Mesures** :
+
+| Scenario | Wall time | Files structurellement modifiés | Note |
+|---|---|---|---|
+| Full `--force` (baseline) | **43s** | 238 (tout le repo) | équivalent à notre snapshot actuel modulo le clone |
+| Incremental après `git checkout 703b927` (11 fichiers changés) | **27s** | 11 | output: `Incremental: +6 importer(s) added to writable set (BFS depth ≤ 4)` |
+| Incremental après `git checkout c2ac699` (4 fichiers changés) | **24s** | 4 | output: `Parse cache: pruned 1 stale chunk entries` |
+| No-op re-run (changed=2 internal noise) | **11s** | ~0 | output: `Incremental: changed=2, added=0, deleted=0 (skipping wipe + 238 unchanged file rows preserved)` |
+
+**Décomposition** :
+- **Fixed cost ≈ 11s** par run (Leiden + DB init + parse cache check)
+- **Variable cost ≈ 1-1.5s par fichier touché** (parse + write-back)
+
+**Comparaison vs notre snapshot actuel** :
+- Snapshot full (clone + analyze) : **~3-5 min par commit** dans notre infra
+- Incremental sur même dir : **~25s par commit**
+- **Speedup réel ≈ 10×** sur commits typiques (1-10 files)
+
+**Projections** :
+- Backfill 1000 commits typiques : ~6.7h (acceptable overnight)
+- On-demand commit récent : ~25s latency (UX acceptable)
+- Live tracking par push : ~25s latency
+
+**Implication pour le design** : la CLI flag `--incremental` n'est même PAS nécessaire — le mode s'active naturellement sur re-run dans la même working dir. Ça simplifie le patch upstream (peut-être même 0 LOC à patcher). En revanche, le `--skip-communities` flag reste utile pour gagner ~5-10s par commit (Leiden) — à valider au prochain spike.
+
+**Verdict** : ✅ **GO Phase C**. Le ratio 10× speedup vs snapshot complet justifie l'investissement. Pas de blocker technique.
+
+**Worktree spike laissé en place** à `C:/Users/rdenis/VScode/Tools/hmm_studio-spike-c1` (auto-mode a bloqué le rm -rf via container, propriétaire = container user). User peut nettoyer via `rm -rf` host-side + `git worktree prune` quand il veut. Entry `hmm-spike` est dans le gitnexus registry (pas de DELETE endpoint upstream, à virer via UI ou redémarrage stack).
+
 ### 3.2 Quelle taille font les diffs en pratique ?
 
 Théorique : 10 KB / commit. Réel : ?
