@@ -5231,10 +5231,10 @@ index cf69e10..8beb5aa 100644
        "version": "1.0.2",
        "resolved": "https://registry.npmjs.org/tinyexec/-/tinyexec-1.0.2.tgz",
 diff --git a/gitnexus-web/package.json b/gitnexus-web/package.json
-index 211bb65..1d4b971 100644
+index 211bb65..49a1c7a 100644
 --- a/gitnexus-web/package.json
 +++ b/gitnexus-web/package.json
-@@ -41,12 +41,18 @@
+@@ -41,14 +41,21 @@
      "lucide-react": "^1.14.0",
      "mermaid": "^11.15.0",
      "mnemonist": "^0.39.0",
@@ -5252,8 +5252,11 @@ index 211bb65..1d4b971 100644
 +    "three": "^0.169.0",
      "remark-gfm": "^4.0.1",
      "sigma": "^3.0.2",
++    "umap-js": "^1.4.0",
      "tailwindcss": "^4.2.4",
-@@ -64,6 +70,7 @@
+     "uuid": "^14.0.0",
+     "zod": "^3.25.76"
+@@ -64,6 +71,7 @@
      "@types/react": "^19.2.14",
      "@types/react-dom": "^19.2.3",
      "@types/react-syntax-highlighter": "^15.5.13",
@@ -9866,10 +9869,10 @@ index 5781d26..ad64bcf 100644
          <div className="flex items-center gap-3">
 diff --git a/gitnexus-web/src/components/SimilarityPanel.tsx b/gitnexus-web/src/components/SimilarityPanel.tsx
 new file mode 100644
-index 0000000..1f2c83b
+index 0000000..6b329d7
 --- /dev/null
 +++ b/gitnexus-web/src/components/SimilarityPanel.tsx
-@@ -0,0 +1,837 @@
+@@ -0,0 +1,957 @@
 +import { useEffect, useMemo, useState } from 'react';
 +import {
 +  X,
@@ -10015,14 +10018,95 @@ index 0000000..1f2c83b
 +}
 +
 +function GalaxyView({ repos, pairs, selectedPair, baseRepo, onSelectRepo }: GalaxyProps) {
-+  // Normalize PCA coordinates to viewport.
-+  const pts = repos.filter((r) => r.galaxyXY).map((r) => ({
-+    name: r.name,
-+    x: r.galaxyXY![0],
-+    y: r.galaxyXY![1],
-+    repo: r,
-+  }));
-+  if (pts.length === 0) return null;
++  // Projection method toggle (Tier 2.6 = PCA from backend, 2.6.bis =
++  // UMAP computed client-side via umap-js). UMAP gives better
++  // neighborhood preservation but degenerates < ~5 points; PCA is
++  // smoother for the small-N case (2-4 repos) but doesn't pick up
++  // nonlinear cluster shape. We default to PCA because it ships
++  // already-computed in the backend response (no extra import cost).
++  const [method, setMethod] = useState<'pca' | 'umap'>('pca');
++  const [umapCoords, setUmapCoords] = useState<Map<string, [number, number]> | null>(null);
++  const [umapError, setUmapError] = useState<string | null>(null);
++
++  // Compute UMAP lazily on first switch to 'umap' for the active repo
++  // set. Re-runs when repos change (new index, refetch). Dynamic
++  // import keeps umap-js out of the bundle for users who never open
++  // the galaxy.
++  const reposKey = repos.map((r) => r.name).join('|');
++  useEffect(() => {
++    if (method !== 'umap') return;
++    let cancelled = false;
++    void (async () => {
++      try {
++        // Build the raw identity matrix from each repo's identityVector
++        // — same dims the backend used for PCA, but we re-project from
++        // scratch via UMAP for fairness (UMAP needs the original space
++        // to find neighborhoods).
++        const labeled = repos.filter((r) => Object.keys(r.identityVector).length > 0);
++        if (labeled.length < 2) {
++          setUmapError('UMAP needs ≥2 repos.');
++          return;
++        }
++        const dims = Object.keys(labeled[0].identityVector);
++        const data = labeled.map((r) => dims.map((d) => r.identityVector[d] ?? 0));
++        // umap-js requires nNeighbors ≤ N-1. For tiny N the result is
++        // basically scaled PCA, but it doesn't error out.
++        const nNeighbors = Math.max(2, Math.min(15, labeled.length - 1));
++        const { UMAP } = await import('umap-js');
++        // Seeded RNG so the projection is stable across refetches —
++        // umap-js takes a `random` function returning [0, 1). A simple
++        // mulberry32 keyed on the repo-set hash gives deterministic
++        // output without rotating on every page reload.
++        let seed = 0;
++        for (let i = 0; i < reposKey.length; i++) seed = (seed * 31 + reposKey.charCodeAt(i)) >>> 0;
++        const rng = () => {
++          seed = (seed + 0x6d2b79f5) >>> 0;
++          let t = seed;
++          t = Math.imul(t ^ (t >>> 15), t | 1);
++          t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
++          return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
++        };
++        const umap = new UMAP({
++          nNeighbors,
++          minDist: 0.1,
++          nComponents: 2,
++          random: rng,
++        });
++        const embedding = umap.fit(data);
++        if (cancelled) return;
++        const coords = new Map<string, [number, number]>();
++        for (let i = 0; i < labeled.length; i++) {
++          coords.set(labeled[i].name, [embedding[i][0], embedding[i][1]]);
++        }
++        setUmapCoords(coords);
++        setUmapError(null);
++      } catch (err) {
++        if (!cancelled) setUmapError(err instanceof Error ? err.message : 'UMAP failed');
++      }
++    })();
++    return () => {
++      cancelled = true;
++    };
++  }, [method, reposKey, repos]);
++
++  // Source of truth for [x, y] depends on the active method.
++  const coordsFor = (r: SimilarityRepo): [number, number] | null => {
++    if (method === 'umap') {
++      return umapCoords?.get(r.name) ?? null;
++    }
++    return r.galaxyXY;
++  };
++
++  const pts = repos
++    .map((r) => {
++      const xy = coordsFor(r);
++      if (!xy) return null;
++      return { name: r.name, x: xy[0], y: xy[1], repo: r };
++    })
++    .filter(Boolean) as { name: string; x: number; y: number; repo: SimilarityRepo }[];
++  if (pts.length === 0 && method === 'umap' && !umapError) {
++    // UMAP still loading — show a placeholder. PCA path always has data.
++  }
 +  const xs = pts.map((p) => p.x);
 +  const ys = pts.map((p) => p.y);
 +  const xMin = Math.min(...xs);
@@ -10067,6 +10151,44 @@ index 0000000..1f2c83b
 +
 +  return (
 +    <div className="px-3 py-2">
++      {/* PCA / UMAP method toggle (Tier 2.6 + 2.6.bis). PCA is the
++          default because it ships pre-computed in the response; UMAP
++          is dynamic-imported on first switch. */}
++      <div className="mb-2 flex items-center gap-1.5">
++        <span className="text-[9px] text-text-muted">projection:</span>
++        <button
++          type="button"
++          onClick={() => setMethod('pca')}
++          className={`cursor-pointer rounded px-1.5 py-0 text-[9px] font-medium transition-all ${
++            method === 'pca'
++              ? 'bg-cyan-500/20 text-cyan-200'
++              : 'text-text-muted hover:text-text-primary'
++          }`}
++          title="Principal Component Analysis — linear projection, deterministic, smooth for small N"
++        >
++          PCA
++        </button>
++        <button
++          type="button"
++          onClick={() => setMethod('umap')}
++          className={`cursor-pointer rounded px-1.5 py-0 text-[9px] font-medium transition-all ${
++            method === 'umap'
++              ? 'bg-cyan-500/20 text-cyan-200'
++              : 'text-text-muted hover:text-text-primary'
++          }`}
++          title="Uniform Manifold Approximation — nonlinear, preserves local neighborhoods (best for 5+ repos)"
++        >
++          UMAP
++        </button>
++        {method === 'umap' && pts.length === 0 && !umapError && (
++          <span className="text-[9px] text-violet-300">computing…</span>
++        )}
++        {umapError && (
++          <span className="text-[9px] text-red-400" title={umapError}>
++            UMAP error (hover)
++          </span>
++        )}
++      </div>
 +      <svg
 +        width="100%"
 +        height={GALAXY_HEIGHT}
@@ -10139,10 +10261,11 @@ index 0000000..1f2c83b
 +        })}
 +      </svg>
 +      <div className="mt-2 text-[9px] text-text-muted">
-+        PCA 2D · distance ≈ structural similarity · edges shown when avg(struct, sem, temp) ≥{' '}
-+        {GALAXY_EDGE_THRESHOLD.toFixed(1)}
-+        {' · '}
-+        ★ = current repo · click a point to select its nearest pair.
++        {method === 'pca'
++          ? 'PCA 2D · linear projection · distance ≈ structural similarity'
++          : 'UMAP 2D · nonlinear · preserves local neighborhoods'}{' '}
++        · edges shown when avg(struct, sem, temp) ≥ {GALAXY_EDGE_THRESHOLD.toFixed(1)} · ★ = current
++        repo · click a point to select its nearest pair.
 +      </div>
 +    </div>
 +  );

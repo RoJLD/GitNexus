@@ -161,6 +161,7 @@ Fichiers à la racine du repo, qui rendent le setup reproductible sur poste Wind
 
 #### Dépendances ajoutées
 - `react-force-graph-3d`, `three` (pour le mode 3D) — déclarées dans `gitnexus-web/package.json`
+- `umap-js` (Tier 2.6.bis) — dynamic-importé par `SimilarityPanel/GalaxyView` quand le user clique sur "UMAP", reste out-of-bundle sinon
 
 ### B.3 Documentation interne
 | Fichier | Contenu |
@@ -199,7 +200,8 @@ Fichiers à la racine du repo, qui rendent le setup reproductible sur poste Wind
 - ✅ 2.5b Cross-repo similarity v1.b — axe sémantique lexical (cosine BoW sur labels LLM cachés), cube 2×2×2 complet, partial-coverage handling.
 - ✅ 2.5b.bis Cross-repo similarity v1.b.bis — vrais embeddings via `createEmbeddingsModel` (OpenAI/Azure/Gemini/Ollama), bouton ✨ Embed labels dans le panel, centroid cosine quand ≥80% des labels embeddés. Fallback gracieux : embeddings → lexical → null par paire.
 - ✅ 2.5c Cross-repo similarity v1.c — Identity Vector v2 (10 dims : v1 + growthRate, churnConcentration, fileSizePareto, languageDiversity, treeDepth), opt-out `?identityVersion=1` pour rétrocompat.
-- ✅ 2.6 Galaxy view — projection 2D PCA pure JS (power iteration + deflation, zéro dep) ajoutée à la réponse `/similarity` (`galaxyXY` par repo + `galaxyProjection`), `SimilarityPanel` toggle Matrix/Galaxy avec SVG scatter (edges proportionnels à la force, click-to-nearest-pair). UMAP reporté à 2.6.bis quand on aura un volume justifiant la dep `umap-js`.
+- ✅ 2.6 Galaxy view — projection 2D PCA pure JS (power iteration + deflation, zéro dep) ajoutée à la réponse `/similarity` (`galaxyXY` par repo + `galaxyProjection`), `SimilarityPanel` toggle Matrix/Galaxy avec SVG scatter (edges proportionnels à la force, click-to-nearest-pair).
+- ✅ 2.6.bis Galaxy UMAP — toggle PCA/UMAP dans le GalaxyView, calcul client-side (dynamic import `umap-js` → out-of-bundle pour les users qui n'ouvrent pas la galaxy), seed mulberry32 keyé sur le repo-set pour stabilité au refetch, nNeighbors adaptatif min(15, N-1). Tier 2 100% complet.
 
 **Pending — Tier 2bis (plate-forme, ~3 semaines cumulées, à livrer avant le reste)** :
 - ⏳ 2bis.1 MCP exposure des analytics time-travel (3-5j)
@@ -208,8 +210,7 @@ Fichiers à la racine du repo, qui rendent le setup reproductible sur poste Wind
 - ⏳ 2bis.4 Unified `.gitnexus.yaml` (2-3j)
 - ⏳ 2bis.5 Repo ID stable (3-5j)
 
-**Pending — Tier 2 résiduel** :
-- ⏳ 2.6.bis Galaxie vraie UMAP — drop-in upgrade de PCA→UMAP via `umap-js` (~50 KB bundle) quand on indexera assez de repos pour que le manifold learning paye (≥30 repos environ).
+**Tier 2 résiduel** : aucun. Tout livré.
 
 **Pending — Tier 3 étendu (R&D + stratégique)** :
 - ⏳ 3.1 à 3.5 : voir [ROADMAP.md](ROADMAP.md) (inchangé)

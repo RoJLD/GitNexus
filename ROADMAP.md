@@ -1,7 +1,7 @@
 # GitNexus — Roadmap
 
 État vivant des fonctionnalités déjà livrées et des prochaines pistes.
-Dernière mise à jour : 2026-05-26 (Tier 2.6 livré : Galaxy view PCA 2D dans SimilarityPanel — UMAP reporté à 2.6.bis).
+Dernière mise à jour : 2026-05-26 (Tier 2.6.bis livré : UMAP client-side via umap-js + toggle PCA/UMAP dans GalaxyView — Tier 2 100% complet).
 
 > 📋 **Voir aussi** [INVENTORY.md](INVENTORY.md) — état des lieux complet :
 > features upstream + nos ajouts + distance avec upstream. À utiliser
@@ -43,6 +43,7 @@ un nom marketing — et son premier pas concret.
 | 23 | **Cross-repo similarity v1.b.bis** : vrais embeddings (drop-in upgrade du lexical) — `createEmbeddingsModel` mirror `createChatModel`, button ✨ "Embed labels" dans SimilarityPanel, centroid cosine quand ≥80% des labels d'un repo sont embeddés | `core/llm/agent.ts` (`createEmbeddingsModel`), `services/semantic-labeler.ts` (`embedSemanticLabels`), `docker-server-semantic-labels.mjs` (schema embedding), `/similarity` (centroid priority) |
 | 24 | **Cross-repo similarity v1.c** : Identity Vector v2 (10 dims = v1 + `growthRate`, `churnConcentration`, `fileSizePareto`, `languageDiversity`, `treeDepth`), opt-out via `?identityVersion=1` | `/similarity?identityVersion=…`, badge "v2 · 10 dims" dans le panel |
 | 25 | **Galaxy view (Tier 2.6)** : projection 2D PCA des identity vectors (SVG scatter avec edges pour les paires fortes, click-to-select-nearest-pair). Power-iteration pure JS, zéro dep | `/similarity` (`galaxyXY[]`, `galaxyProjection`), `SimilarityPanel` `<GalaxyView>` + toggle Matrix/Galaxy |
+| 26 | **Galaxy UMAP (Tier 2.6.bis)** : toggle PCA/UMAP dans le panel, calcul client-side (dynamic import de `umap-js` → out-of-bundle pour les users qui n'ouvrent jamais la galaxy), seed mulberry32 keyé sur le repo-set pour stabilité, nNeighbors adaptatif | dep `umap-js@^1.4.0` ajoutée, GalaxyView `setMethod('pca' \| 'umap')` |
 
 Toutes les analytics ci-dessus marchent dans un seul repo. La granularité
 est le node gitnexus (File, Function, Class, Section, …).
