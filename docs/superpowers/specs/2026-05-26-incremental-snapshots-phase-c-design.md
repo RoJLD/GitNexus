@@ -198,6 +198,98 @@ Storage:
 
 **Verdict Spike v2** : ✅ **Implémentation Phase C confirmée viable**. Effort estimé maintenu à 12-17 jours.
 
+---
+
+## §3.bis — Filtres paramétrables par commit (extension 2026-05-26)
+
+**Rationale** : différents use cases ont des besoins de fidélité opposés :
+- **Forensic deep-dive** (UC1, bisect) → veut tout, quitte à payer le storage
+- **Quick overview** (UC2 démo, navigation) → 30 KB filtré suffit
+- **PR review** (UC3) → veut les CALLS edges mais pas les Section nodes (bruit)
+- **Bisect ML** (futur Tier 3.5) → veut juste les structural features, pas les noms
+
+Plutôt que d'imposer un filtre global, **chaque appel à `/snapshot/incremental` accepte une config filter explicite**, persistée à côté du diff pour qu'on sache toujours ce qui a été dropé.
+
+### Filtres exposés (initial set)
+
+| Filtre | Type | Default | Effet attendu | Sémantique |
+|---|---|---|---|---|
+| `dropGlobalNodes` | bool | `true` | -35% size | Drop Community + Process (globaux, réémis à chaque pass — inutiles dans un diff) — **safe** |
+| `dropEmptyFields` | bool | `true` | -15% size | Drop `confidence:1` et `reason:""` quand defaults — **safe** |
+| `filterRelationships` | enum | `"effectiveWriteSet"` | -30% size | `"effectiveWriteSet"` garde celles touchant un fichier du writeset BFS ; `"toWrite"` plus strict (seulement les fichiers réellement modifiés — perd la propagation importer) ; `"none"` garde tout |
+| `includeLabels` | string[] \| null | `null` | varies | Si non-null : whitelist des labels de nodes à garder (e.g. `["Function","Class","File"]`). Drop Variable/Const/Section sinon. **Lossy** — la reconstruction sait que ces labels manquent |
+| `includeRelationshipTypes` | string[] \| null | `null` | varies | Idem pour les types de relations (e.g. `["CALLS","IMPORTS","DEFINES"]` pour skipper CONTAINS) |
+| `maxNodes` | number \| null | `null` | hard cap | Si dépassé, retourne erreur OU tronque (selon `onMaxNodes`) |
+| `onMaxNodes` | enum | `"error"` | — | `"error"` 413 / `"truncate-tail"` / `"truncate-low-degree"` |
+| `compress` | enum | `"gzip"` | -80% size | `"none"` / `"gzip"` / `"brotli"` (brotli ~5% mieux que gzip mais plus lent à compress) |
+
+### Source de config
+
+Précédence (high → low) :
+1. **Body de la requête** : `{ "filters": {...} }` explicite
+2. **`.gitnexus.json > incremental.filters`** : default par-repo
+3. **Defaults globaux** ci-dessus
+
+### Persistance
+
+Le diff fichier (`.gitnexus/incremental/<sha>.json.gz`) inclut un header `_meta` qui rappelle exactement quels filtres ont été appliqués :
+
+```json
+{
+  "_meta": {
+    "ts": "2026-05-26T16:00:00Z",
+    "gitnexusVersion": "1.6.5",
+    "schemaVersion": 1,
+    "filters": {
+      "dropGlobalNodes": true,
+      "dropEmptyFields": true,
+      "filterRelationships": "effectiveWriteSet",
+      "includeLabels": null,
+      "includeRelationshipTypes": ["CALLS","IMPORTS","DEFINES","CONTAINS"],
+      "maxNodes": null,
+      "compress": "gzip"
+    },
+    "stats": {
+      "rawNodes": 717, "filteredNodes": 365,
+      "rawRelationships": 2806, "filteredRelationships": 1200,
+      "rawBytes": 1030168, "filteredBytes": 28350, "compressedBytes": 4500
+    }
+  },
+  "hashDiff": {...},
+  "subgraph": {
+    "nodes": [...],
+    "relationships": [...]
+  }
+}
+```
+
+Le `_meta.filters` est ce qui permet à la reconstruction de savoir "ce diff a perdu les Variables, donc le graph reconstruit n'aura pas de Variables pour cette tranche". Au lieu de mentir, on documente la lossy.
+
+### Implications pour la reconstruction
+
+Si on replay des diffs avec des filtres **hétérogènes** (commit A filtré à `["Function","Class"]`, commit B sans filtre), le graph reconstruit a des trous incohérents.
+
+**Règle** : la reconstruction `/api/graph?commit=<sha>` vérifie la cohérence des `_meta.filters` sur la chaîne baseline→target. Si incohérent :
+- Si on demande un commit avec un filtre **plus permissif** que les diffs intermédiaires : 422 avec message "diff intermediates dropped data this view needs"
+- Si on demande **plus restrictif** : OK, on filtre on-the-fly à la lecture
+
+Mitigation pratique : **un repo = un set de filtres**. Le user le décide au début (via `.gitnexus.json > incremental.filters`) et s'y tient. On peut autoriser overrides ponctuels pour des cas spéciaux (one-off forensic) mais c'est l'exception.
+
+### Pour le PoC
+
+Le PoC va mesurer **6 combos** sur 50 commits réels d'hmm_studio :
+
+| Combo | Filtres |
+|---|---|
+| **Raw** | tout désactivé (baseline) |
+| **Safe** | `dropGlobalNodes + dropEmptyFields + gzip` |
+| **Standard** (recommended default) | Safe + `filterRelationships: "effectiveWriteSet"` |
+| **Minimal** | Standard + `includeLabels: ["File","Function","Class","Method"]` |
+| **Lite** | Minimal + `includeRelationshipTypes: ["CALLS","IMPORTS","DEFINES"]` |
+| **Lossless-compressed** | `dropGlobalNodes` désactivé, juste compression — for "I want everything" users |
+
+Report : taille p50/p90/max, taux de compression, reconstruction fidelity (= je reconstruis le graph à HEAD via replay, je le compare au full snapshot HEAD, je compte les nodes/edges manquants par filtre).
+
 ### 3.3 Le drift accumulé sur N commits → quand re-baseline ?
 
 Le pipeline upstream reparse tout à chaque pass — donc en théorie pas de drift. Mais si on commence à persister des diffs et reconstruire from baseline, les imports résolus à C^ peuvent ne plus matcher ceux résolus à C (un import a été ajouté dans un fichier non-modifié par le commit qu'on regarde — edge case rare mais possible).
