@@ -1,0 +1,28 @@
+{
+  "name": "gitnexus-deployment-tests",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test:unit": "vitest run --config vitest.config.unit.mjs",
+    "test:integ": "vitest run --config vitest.config.integ.mjs",
+    "test:smoke": "vitest run --config vitest.config.integ.mjs --reporter=verbose integration/stack-health.test.mjs",
+    "test:e2e": "playwright test --config e2e/playwright.config.ts",
+    "test": "npm run test:unit && npm run test:integ",
+    "test:all": "npm run test && npm run test:e2e",
+    "fixture:rebuild": "node fixtures/make-fixture.mjs"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.49.0",
+    "@testing-library/jest-dom": "^6.6.0",
+    "@testing-library/react": "^16.1.0",
+    "@types/node": "^22.10.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@vitejs/plugin-react": "^4.3.0",
+    "jsdom": "^25.0.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "vitest": "^4.1.6"
+  }
+}
