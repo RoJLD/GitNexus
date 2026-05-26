@@ -143,9 +143,11 @@ Fichiers à la racine du repo, qui rendent le setup reproductible sur poste Wind
 - `CouplingPanel.tsx`, `GrowthChart.tsx` (SVG natif), `LifespanPanel.tsx`
 - `CouplingPanel` + `GrowthChart` ont un toggle interne **cross-repo** (Layers icon) → fetch `/coupling/cross` ou `/growth/cross`
 - `DissonancePanel.tsx` — purity score + misplaced files + bouton ✨ pour générer les labels LLM
+- `WhatIfPanel.tsx` — form rename/move/delete, file queue de mutations, preview qui réutilise le diff coloring
 - `SnapshotsPanel.tsx`, `BulkSnapshotModal.tsx`, `DiffBanner.tsx`
 - `Graph3DCanvas.tsx` (mode 3D via `react-force-graph-3d` + `three`)
 - `services/semantic-labeler.ts` — pipeline LLM (worker pool, abort-aware, MCP-via-frontend)
+- `services/mutation-engine.ts` — pure rename / move / delete sur un KnowledgeGraph (frontend-only, no backend round-trip)
 - `lib/graph-diff.ts` — utilities diff visuel
 - `lib/lucide-icons.tsx` — re-exports d'icônes ajoutées (Activity, Minus, TrendingDown, Users, Layers, Target, History, Sparkles, Pause)
 - Color reducers dans `useSigma.ts` (churnColor, couplingColor)
@@ -165,6 +167,7 @@ Fichiers à la racine du repo, qui rendent le setup reproductible sur poste Wind
 | [../CLAUDE.md](../CLAUDE.md) | Règle workspace : tests CI/CD si module en a déjà |
 | [patches/README.md](patches/README.md) | Comment ré-appliquer les patches sur un clone frais |
 | [patches/example-gitnexus-domains.json](patches/example-gitnexus-domains.json) | Template pour la feature Dissonance |
+| [vscode-extension/README.md](vscode-extension/README.md) | Setup + scope de l'extension VSCode (Tier 2.4) |
 | [INVENTORY.md](INVENTORY.md) | Ce document |
 
 ### B.4 Mapping ROADMAP ↔ État de livraison
@@ -182,13 +185,14 @@ Fichiers à la racine du repo, qui rendent le setup reproductible sur poste Wind
 - ✅ Timeline UI play/pause
 - ✅ Churn / Coupling / Growth / Lifespan
 
-**Livré (Tier 2 partiel)** :
+**Livré (Tier 2 complet, MVP)** :
 - ✅ 2.1 Annotation sémantique LLM (`/semantic-labels`, `services/semantic-labeler.ts`, intégré dans `DissonancePanel`)
 - ✅ 2.2 Dissonance score (`/dissonance`, `DissonancePanel.tsx`, exemple `patches/example-gitnexus-domains.json`)
+- ✅ 2.3 What-if simulator (`services/mutation-engine.ts`, `WhatIfPanel.tsx`, frontend-only)
+- ✅ 2.4 VSCode extension v0.1 ([vscode-extension/](vscode-extension/) — status bar + 2 commandes)
 
-**Pending (Tier 2 résiduel)** :
-- ⏳ 2.3 What-if simulator
-- ⏳ 2.4 VSCode extension
+**Pending** :
+- ⏳ 2.5 Cross-repo similarity (Score de Correspondance + Vecteur d'Identité) — ajouté au ROADMAP, pas démarré
 
 **Tier 3** : voir [ROADMAP.md](ROADMAP.md), à valider avant attaque.
 

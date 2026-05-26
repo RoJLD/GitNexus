@@ -1,7 +1,7 @@
 # GitNexus — Roadmap
 
 État vivant des fonctionnalités déjà livrées et des prochaines pistes.
-Dernière mise à jour : 2026-05-22 (Tier 1 livré).
+Dernière mise à jour : 2026-05-26 (Tier 2.5 — Cross-repo similarity ajouté).
 
 > 📋 **Voir aussi** [INVENTORY.md](INVENTORY.md) — état des lieux complet :
 > features upstream + nos ajouts + distance avec upstream. À utiliser
@@ -36,6 +36,8 @@ un nom marketing — et son premier pas concret.
 | 16 | **Semantic labels** (LLM-generated cluster names, cached on disk, integrated into Dissonance UI) | `/semantic-labels`, `semantic-labeler.ts` |
 | 17 | **Cross-repo coupling** (git-log bucketing, multi-repo Jaccard) + UI toggle | `/coupling/cross`, `CouplingPanel` Layers toggle |
 | 18 | **Cross-repo growth** (union timeline, per-repo step lines, label switcher) | `/growth/cross`, `GrowthChart` Layers toggle |
+| 19 | **What-if simulator** (rename / move / delete symbolic mutations, preview via diff coloring) | `services/mutation-engine.ts`, `WhatIfPanel.tsx` |
+| 20 | **VSCode extension v0.1** (status-bar bus factor for the active file) | `vscode-extension/` (separate package) |
 
 Toutes les analytics ci-dessus marchent dans un seul repo. La granularité
 est le node gitnexus (File, Function, Class, Section, …).
@@ -145,7 +147,7 @@ endpoint `GET /dissonance?repo=<base>` qui :
 - liste les fichiers "mal placés" (dans un cluster qui ne correspond
   pas à leur domaine déclaré)
 
-### 2.3 — What-if simulator (statique)
+### 2.3 — What-if simulator (statique) ✅
 **Promesse** : "Si je renomme `validateUser` en `verifyUser`, qu'est-ce
 qui change ?", "Si je split `src/big_module/` en `src/auth/` et
 `src/db/`, l'impact sur le graphe ?". Pas d'exécution réelle, juste une
@@ -159,7 +161,7 @@ panneau qui montre le diff prévisionnel via `graph-diff.ts`.
 (renames, moves). Pour des transformations sémantiques ("passer de SQL
 à GraphQL"), ce n'est pas faisable sans un modèle profond du code.
 
-### 2.4 — VSCode/Cursor extension
+### 2.4 — VSCode/Cursor extension ✅ (MVP v0.1)
 **Promesse** : tu ouvres un fichier dans ton IDE, tu vois directement
 les métriques GitNexus en overlay (churn, ownership, blast radius).
 L'intuition remplace la documentation.
@@ -172,6 +174,45 @@ fonctionnel à `localhost:4747/api/mcp`). Pour chaque symbole en focus :
 
 Effort : 1-2 semaines pour un MVP minimal, plus si on veut une vraie
 intégration polishée.
+
+### 2.5 — Cross-repo similarity (Score de Correspondance)
+**Promesse** : pour 2+ repos indexés, un score unique de ressemblance qui
+combine structure, comportement et sémantique. Diagnostique chaque paire
+dans une grille 2×2 (Jumeaux / Patterns partagés / Collision /
+Indépendants) avec une recommandation associée (extraire en lib /
+standardiser outillage / orchestrer via API).
+
+**Vecteur d'Identité** (par repo, features normalisées) :
+- `entropy` (via `/entropy`)
+- `growth_rate` (pente moyenne de `/growth`)
+- `churn_concentration` (Gini des churns, dérivé de `/churn`)
+- `bus_factor_distribution` (médiane + p10 de `/ownership`)
+- `community_count` + `modularity` (Leiden upstream)
+- `top_N_semantic_labels` embedded — moyenne des embeddings des labels
+  LLM des N plus gros clusters (via `/semantic-labels`)
+
+**Score** : cosine similarity sur le vecteur structurel (5 premières
+features) + score sémantique séparé sur les labels embedded. Position
+dans la grille 2×2 = combinaison des deux axes (seuils par défaut à
+0.7 / 0.7, ajustables par query param).
+
+**Premier pas** : `GET /similarity?repos=A,B[,C,...]` qui agrège les
+features depuis les endpoints existants (pas de re-calcul) et calcule la
+matrice N×N. Embedding via le même chemin LLM que `/semantic-labels`.
+Réponse : `{ pairs: [{ a, b, structuralScore, semanticScore, quadrant, dominantFeatures }] }`.
+
+**UI** : nouveau panneau `SimilarityPanel.tsx` — matrice N×N color-coded
+par quadrant, drill-down par paire sur les features dominantes,
+recommandation textuelle dérivée du quadrant.
+
+**Limitation honnête** : le vrai "Score de Collision" (modifient-ils la
+même donnée métier / schema DB partagé ?) reste hors scope. Le couplage
+temporel `/coupling/cross` est la meilleure approximation disponible.
+Détection AST-pattern (design patterns récurrents type DI, Factory) =
+Tier 3 ultérieur — nécessite un extracteur de patterns sur Tree-sitter.
+
+**Effort** : 1-2 semaines (endpoint + panneau) si les analytics existants
+suffisent. +2-3 semaines pour AST-fingerprint si on l'inclut au MVP.
 
 ---
 
@@ -253,8 +294,9 @@ Ordonné par **ratio impact / effort** sur ton use case réel
 5. **2.2 Dissonance score** — directement utile pour le "trouve les patterns qui marchent". ~1 semaine.
 6. **1.2 Cross-repo coupling + 1.3 Cross-repo growth** — quand tu auras 3+ repos indexés. ~1 semaine.
 7. **2.4 VSCode extension** — le multiplicateur de valeur quotidien. ~2 semaines pour MVP.
-8. **2.3 What-if simulator** — utile pour refactos importants. ~1-2 semaines.
-9. **3.x** — selon les besoins (instrumentation runtime, audit social, auto-PR).
+8. **2.5 Cross-repo similarity** — quand 3+ repos sont indexés, agrège les analytics existantes en un Score de Correspondance + grille 2×2 de recommandations. ~1-2 semaines.
+9. **2.3 What-if simulator** — utile pour refactos importants. ~1-2 semaines.
+10. **3.x** — selon les besoins (instrumentation runtime, audit social, auto-PR).
 
 ---
 

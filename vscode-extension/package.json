@@ -1,0 +1,49 @@
+{
+  "name": "gitnexus-vscode",
+  "displayName": "GitNexus (local)",
+  "description": "Inline GitNexus health metrics for the file you're editing. Talks to a local gitnexus deployment (http://localhost:4173 by default).",
+  "version": "0.1.0",
+  "private": true,
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": ["Other"],
+  "activationEvents": ["onStartupFinished"],
+  "main": "./out/extension.js",
+  "contributes": {
+    "configuration": {
+      "title": "GitNexus",
+      "properties": {
+        "gitnexus.serverUrl": {
+          "type": "string",
+          "default": "http://localhost:4173",
+          "description": "Base URL of the gitnexus-web deployment. Must expose /api/repos and /ownership."
+        },
+        "gitnexus.statusBarMetric": {
+          "type": "string",
+          "enum": ["busFactor", "totalCommits"],
+          "default": "busFactor",
+          "description": "Which per-file metric to surface in the status bar."
+        }
+      }
+    },
+    "commands": [
+      {
+        "command": "gitnexus.refresh",
+        "title": "GitNexus: Refresh metrics for active file"
+      },
+      {
+        "command": "gitnexus.openWebUI",
+        "title": "GitNexus: Open the web UI"
+      }
+    ]
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.85.0",
+    "typescript": "^5.4.0"
+  }
+}

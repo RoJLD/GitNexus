@@ -4274,10 +4274,10 @@ index 836bad7..4c2f756 100644
      "@vitejs/plugin-react": "^5.1.4",
      "@vitest/coverage-v8": "^4.1.5",
 diff --git a/gitnexus-web/src/App.tsx b/gitnexus-web/src/App.tsx
-index 2ee3569..478cf3a 100644
+index 2ee3569..aae2ff5 100644
 --- a/gitnexus-web/src/App.tsx
 +++ b/gitnexus-web/src/App.tsx
-@@ -1,9 +1,17 @@
+@@ -1,9 +1,18 @@
  import { useCallback, useEffect, useRef, useState } from 'react';
  import { AppStateProvider, useAppState } from './hooks/useAppState';
  import { DropZone } from './components/DropZone';
@@ -4287,6 +4287,7 @@ index 2ee3569..478cf3a 100644
 +import { LifespanPanel } from './components/LifespanPanel';
 +import { OwnershipPanel } from './components/OwnershipPanel';
 +import { DissonancePanel } from './components/DissonancePanel';
++import { WhatIfPanel } from './components/WhatIfPanel';
  import { LoadingOverlay } from './components/LoadingOverlay';
  import { Header } from './components/Header';
 +import { Timeline } from './components/Timeline';
@@ -4295,7 +4296,7 @@ index 2ee3569..478cf3a 100644
  import { RightPanel } from './components/RightPanel';
  import { SettingsPanel } from './components/SettingsPanel';
  import { StatusBar } from './components/StatusBar';
-@@ -45,6 +53,7 @@ const AppContent = () => {
+@@ -45,6 +54,7 @@ const AppContent = () => {
      setAvailableRepos,
      switchRepo,
      setCurrentRepo,
@@ -4303,7 +4304,7 @@ index 2ee3569..478cf3a 100644
    } = useAppState();
  
    const graphCanvasRef = useRef<GraphCanvasHandle>(null);
-@@ -194,6 +203,21 @@ const AppContent = () => {
+@@ -194,6 +204,21 @@ const AppContent = () => {
      initializeAgent();
    }, [refreshLLMSettings, initializeAgent]);
  
@@ -4325,7 +4326,7 @@ index 2ee3569..478cf3a 100644
    // ── Server heartbeat: detect when server goes down while exploring ────────
    // Uses SSE (EventSource) for instant detection — no polling delay.
    // On disconnect: show a reconnecting banner instead of resetting to onboarding.
-@@ -250,22 +274,84 @@ const AppContent = () => {
+@@ -250,22 +275,84 @@ const AppContent = () => {
            // Retry once after 1s if the repo isn't found yet (server may still
            // be reinitializing after the worker completed).
            const url = serverBaseUrl ?? 'http://localhost:4747';
@@ -4411,7 +4412,7 @@ index 2ee3569..478cf3a 100644
                fetchRepos()
                  .then((repos) => setAvailableRepos(repos))
                  .catch(() => {});
-@@ -281,7 +367,30 @@ const AppContent = () => {
+@@ -281,7 +368,35 @@ const AppContent = () => {
  
          {/* Graph area - takes remaining space */}
          <div className="relative min-w-0 flex-1">
@@ -4440,10 +4441,15 @@ index 2ee3569..478cf3a 100644
 +          {/* Dissonance panel — top-right, same slot as Coupling and
 +              Ownership. Mutex enforced by the Timeline toggle handlers. */}
 +          <DissonancePanel />
++
++          {/* What-if panel — top-right slot too. Same mutex rules. The
++              panel manages its own internal form state; the graph
++              coloring rides on the existing diffData mechanism. */}
++          <WhatIfPanel />
  
            {/* Code References Panel (overlay) - does NOT resize the graph, it overlaps on top */}
            {isCodePanelOpen && (codeReferences.length > 0 || !!selectedNode) && (
-@@ -295,6 +404,11 @@ const AppContent = () => {
+@@ -295,6 +410,11 @@ const AppContent = () => {
          {isRightPanelOpen && <RightPanel />}
        </main>
  
@@ -9086,10 +9092,10 @@ index 0000000..5c77c1a
 +}
 diff --git a/gitnexus-web/src/components/Timeline.tsx b/gitnexus-web/src/components/Timeline.tsx
 new file mode 100644
-index 0000000..5471c0c
+index 0000000..049e15a
 --- /dev/null
 +++ b/gitnexus-web/src/components/Timeline.tsx
-@@ -0,0 +1,540 @@
+@@ -0,0 +1,592 @@
 +import { useEffect, useMemo, useRef, useState } from 'react';
 +import {
 +  Play,
@@ -9103,6 +9109,7 @@ index 0000000..5471c0c
 +  History,
 +  Users,
 +  Target,
++  FlaskConical,
 +} from '@/lib/lucide-icons';
 +import { useAppState } from '../hooks/useAppState';
 +import { EntropyBadge } from './EntropyBadge';
@@ -9170,6 +9177,12 @@ index 0000000..5471c0c
 +    dissonanceError,
 +    enterDissonanceMode,
 +    exitDissonanceMode,
++    whatIfPanelOpen,
++    whatIfActive,
++    whatIfMutations,
++    exitWhatIfMode,
++    setWhatIfMutations,
++    setWhatIfPanelOpen,
 +  } = useAppState();
 +  const [snapshots, setSnapshots] = useState<
 +    Array<{
@@ -9380,6 +9393,7 @@ index 0000000..5471c0c
 +          if (churnActive) exitChurnMode();
 +          if (ownershipActive) exitOwnershipMode();
 +          if (dissonanceActive) exitDissonanceMode();
++          if (whatIfPanelOpen || whatIfActive) exitWhatIfMode();
 +          await enterCouplingMode();
 +        }}
 +        disabled={!!diffMode || couplingLoading}
@@ -9486,6 +9500,48 @@ index 0000000..5471c0c
 +        </div>
 +      )}
 +
++      {/* What-if simulator — top-right slot. Mutex with the other
++          panels in that slot. Clicking summons the panel; the panel
++          itself drives the mutation flow. */}
++      <button
++        type="button"
++        onClick={async () => {
++          if (whatIfPanelOpen || whatIfActive) {
++            exitWhatIfMode();
++            return;
++          }
++          if (couplingActive) exitCouplingMode();
++          if (ownershipActive) exitOwnershipMode();
++          if (dissonanceActive) exitDissonanceMode();
++          // Reset to a clean queue so re-opening starts blank.
++          setWhatIfMutations([]);
++          setWhatIfPanelOpen(true);
++        }}
++        disabled={!!diffMode}
++        className={`flex shrink-0 cursor-pointer items-center gap-1 rounded-md border px-1.5 py-0.5 text-[10px] font-medium transition-all disabled:cursor-not-allowed disabled:opacity-40 ${
++          whatIfActive || whatIfPanelOpen
++            ? 'border-amber-500/40 bg-amber-500/15 text-amber-300'
++            : 'border-border-subtle bg-elevated text-text-secondary hover:bg-hover hover:text-text-primary'
++        }`}
++        title={
++          diffMode
++            ? 'Exit diff mode first'
++            : whatIfActive
++              ? 'Exit what-if preview'
++              : whatIfPanelOpen
++                ? 'Close what-if panel'
++                : 'What-if: try rename / move / delete mutations without touching disk'
++        }
++      >
++        <FlaskConical className="h-2.5 w-2.5" />
++        What-if
++        {whatIfMutations.length > 0 && (
++          <span className="ml-0.5 rounded bg-amber-500/30 px-1 font-mono text-[9px]">
++            {whatIfMutations.length}
++          </span>
++        )}
++      </button>
++
 +      {/* Ownership / bus factor — same top-right slot as Coupling, so
 +          we close one when opening the other. The data isn't snapshot-
 +          based; it always reads live git history. Hidden in diff mode. */}
@@ -9498,6 +9554,7 @@ index 0000000..5471c0c
 +          }
 +          if (couplingActive) exitCouplingMode();
 +          if (dissonanceActive) exitDissonanceMode();
++          if (whatIfPanelOpen || whatIfActive) exitWhatIfMode();
 +          await enterOwnershipMode();
 +        }}
 +        disabled={!!diffMode || ownershipLoading}
@@ -9539,6 +9596,7 @@ index 0000000..5471c0c
 +          }
 +          if (couplingActive) exitCouplingMode();
 +          if (ownershipActive) exitOwnershipMode();
++          if (whatIfPanelOpen || whatIfActive) exitWhatIfMode();
 +          await enterDissonanceMode();
 +        }}
 +        disabled={!!diffMode || dissonanceLoading}
@@ -9630,8 +9688,362 @@ index 0000000..5471c0c
 +    </div>
 +  );
 +};
+diff --git a/gitnexus-web/src/components/WhatIfPanel.tsx b/gitnexus-web/src/components/WhatIfPanel.tsx
+new file mode 100644
+index 0000000..a370295
+--- /dev/null
++++ b/gitnexus-web/src/components/WhatIfPanel.tsx
+@@ -0,0 +1,348 @@
++import { useState } from 'react';
++import {
++  X,
++  FlaskConical,
++  Sparkles,
++  Trash2,
++  Play,
++  AlertCircle,
++  ChevronRight,
++} from '@/lib/lucide-icons';
++import { useAppState } from '../hooks/useAppState';
++import type { Mutation } from '../services/mutation-engine';
++
++/**
++ * What-if simulator panel — Tier 2.3.
++ *
++ * The user builds an ordered list of structural mutations (rename
++ * symbol, move file, delete file/node). Click "Preview" to project
++ * them onto the live graph — the canvas re-renders with the diff
++ * coloring (red = removed by mutation, green = added).
++ *
++ * No mutation is ever written to disk; everything happens in-memory
++ * on a clone of the loaded graph. "Exit" restores the original.
++ *
++ * Position: top-right, same slot as Coupling/Ownership/Dissonance,
++ * enforced via Timeline toggle. Different *concern* than the others
++ * (interactive form vs read-only metric) so we keep it self-contained
++ * in its own component rather than reusing CouplingPanel's chrome.
++ */
++
++const PANEL_WIDTH_PX = 400;
++
++type MutationKind = Mutation['kind'];
++
++const KIND_META: Record<MutationKind, { label: string; help: string }> = {
++  rename: {
++    label: 'Rename symbol',
++    help: 'Find every node named "oldName" and rewrite it to "newName". Edges follow.',
++  },
++  move: {
++    label: 'Move file/folder',
++    help: 'Substitute the leading path of every node attributed to oldPath.',
++  },
++  delete: {
++    label: 'Delete node or file',
++    help: 'Remove a node id, or cascade-remove every node attributed to a file path.',
++  },
++};
++
++export const WhatIfPanel = () => {
++  const {
++    whatIfPanelOpen,
++    whatIfActive,
++    whatIfMutations,
++    whatIfError,
++    setWhatIfMutations,
++    enterWhatIfMode,
++    exitWhatIfMode,
++    diffData,
++  } = useAppState();
++  // Draft state for the "add mutation" form. We accept everything as
++  // strings, validate at submit time, and reset after a successful add.
++  const [kind, setKind] = useState<MutationKind>('rename');
++  const [renameOld, setRenameOld] = useState('');
++  const [renameNew, setRenameNew] = useState('');
++  const [renameLabel, setRenameLabel] = useState<string>('');
++  const [moveOld, setMoveOld] = useState('');
++  const [moveNew, setMoveNew] = useState('');
++  const [deleteTarget, setDeleteTarget] = useState('');
++  const [deleteIsFile, setDeleteIsFile] = useState(true);
++
++  // Whether the form has enough content to be added. Tight per-kind
++  // validation so the user can't queue a no-op mutation.
++  const canAdd =
++    (kind === 'rename' && renameOld.trim() && renameNew.trim()) ||
++    (kind === 'move' && moveOld.trim() && moveNew.trim() && moveOld !== moveNew) ||
++    (kind === 'delete' && deleteTarget.trim());
++
++  const handleAdd = () => {
++    let m: Mutation | null = null;
++    if (kind === 'rename') {
++      m = {
++        kind: 'rename',
++        oldName: renameOld.trim(),
++        newName: renameNew.trim(),
++        ...(renameLabel ? { label: renameLabel } : {}),
++      };
++    } else if (kind === 'move') {
++      m = { kind: 'move', oldPath: moveOld.trim(), newPath: moveNew.trim() };
++    } else if (kind === 'delete') {
++      m = deleteIsFile
++        ? { kind: 'delete', filePath: deleteTarget.trim() }
++        : { kind: 'delete', nodeId: deleteTarget.trim() };
++    }
++    if (!m) return;
++    setWhatIfMutations([...whatIfMutations, m]);
++    // Reset only the inputs that match the kind we just added.
++    if (kind === 'rename') {
++      setRenameOld('');
++      setRenameNew('');
++      setRenameLabel('');
++    } else if (kind === 'move') {
++      setMoveOld('');
++      setMoveNew('');
++    } else {
++      setDeleteTarget('');
++    }
++  };
++
++  const handleRemove = (idx: number) => {
++    const next = whatIfMutations.slice();
++    next.splice(idx, 1);
++    setWhatIfMutations(next);
++  };
++
++  const renderMutationSummary = (m: Mutation) => {
++    if (m.kind === 'rename') {
++      return `rename ${m.label ? `[${m.label}] ` : ''}"${m.oldName}" → "${m.newName}"`;
++    }
++    if (m.kind === 'move') {
++      return `move "${m.oldPath}" → "${m.newPath}"`;
++    }
++    if (m.kind === 'delete') {
++      return m.filePath ? `delete file "${m.filePath}"` : `delete node "${m.nodeId}"`;
++    }
++    return '';
++  };
++
++  // The panel is visible whenever the user has summoned it via the
++  // Timeline toggle (whatIfPanelOpen) OR is mid-preview (whatIfActive).
++  // Mutation list and error state alone don't summon it — those only
++  // matter once the user has opened the panel.
++  if (!whatIfPanelOpen && !whatIfActive) return null;
++
++  return (
++    <div
++      className="pointer-events-auto absolute top-3 right-3 z-30 flex flex-col overflow-hidden rounded-xl border border-border-subtle bg-surface/95 shadow-xl backdrop-blur"
++      style={{ width: PANEL_WIDTH_PX, maxHeight: 'calc(100% - 1.5rem)' }}
++    >
++      <div className="flex shrink-0 items-center gap-2 border-b border-border-subtle px-3 py-2">
++        <FlaskConical className="h-3.5 w-3.5 text-amber-300" />
++        <span className="text-xs font-semibold text-text-primary">What-if simulator</span>
++        {whatIfActive && diffData && (
++          <span className="font-mono text-[10px] text-text-muted">
++            {diffData.counts.nodes.onlyInA} removed · {diffData.counts.nodes.onlyInB} added ·{' '}
++            {diffData.counts.nodes.inBoth} unchanged
++          </span>
++        )}
++        <button
++          type="button"
++          onClick={() => exitWhatIfMode()}
++          className="ml-auto shrink-0 cursor-pointer rounded p-1 text-text-muted transition-colors hover:bg-hover hover:text-text-primary"
++          title="Discard mutations and restore the original graph"
++        >
++          <X className="h-3.5 w-3.5" />
++        </button>
++      </div>
++
++      {whatIfError && (
++        <div className="flex items-start gap-2 border-b border-border-subtle bg-red-500/5 px-3 py-2 text-xs text-red-400">
++          <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
++          <span>{whatIfError}</span>
++        </div>
++      )}
++
++      {/* Add-mutation form (hidden while previewing — locked-in mutations
++          shouldn't change mid-preview). */}
++      {!whatIfActive && (
++        <div className="space-y-2 border-b border-border-subtle bg-elevated px-3 py-2">
++          <div className="flex gap-1 rounded-md bg-void p-0.5">
++            {(['rename', 'move', 'delete'] as MutationKind[]).map((k) => (
++              <button
++                key={k}
++                type="button"
++                onClick={() => setKind(k)}
++                className={`flex-1 cursor-pointer rounded px-2 py-1 text-[10px] font-medium transition-all ${
++                  kind === k
++                    ? 'bg-accent text-white'
++                    : 'text-text-muted hover:text-text-primary'
++                }`}
++              >
++                {KIND_META[k].label}
++              </button>
++            ))}
++          </div>
++          <p className="text-[10px] text-text-muted">{KIND_META[kind].help}</p>
++
++          {kind === 'rename' && (
++            <div className="space-y-1.5">
++              <input
++                type="text"
++                value={renameOld}
++                onChange={(e) => setRenameOld(e.target.value)}
++                placeholder="old symbol name (e.g. validateUser)"
++                className="w-full rounded-md border border-border-default bg-void px-2 py-1 font-mono text-[11px] text-text-primary outline-none placeholder:text-text-muted focus:border-accent/40"
++                spellCheck={false}
++              />
++              <input
++                type="text"
++                value={renameNew}
++                onChange={(e) => setRenameNew(e.target.value)}
++                placeholder="new symbol name (e.g. verifyUser)"
++                className="w-full rounded-md border border-border-default bg-void px-2 py-1 font-mono text-[11px] text-text-primary outline-none placeholder:text-text-muted focus:border-accent/40"
++                spellCheck={false}
++              />
++              <select
++                value={renameLabel}
++                onChange={(e) => setRenameLabel(e.target.value)}
++                className="w-full cursor-pointer rounded-md border border-border-default bg-void px-2 py-1 font-mono text-[10px] text-text-secondary outline-none focus:border-accent/40"
++              >
++                <option value="">any label</option>
++                <option value="Function">Function only</option>
++                <option value="Class">Class only</option>
++                <option value="Method">Method only</option>
++                <option value="Variable">Variable only</option>
++              </select>
++            </div>
++          )}
++
++          {kind === 'move' && (
++            <div className="space-y-1.5">
++              <input
++                type="text"
++                value={moveOld}
++                onChange={(e) => setMoveOld(e.target.value)}
++                placeholder="old path (e.g. src/old_module)"
++                className="w-full rounded-md border border-border-default bg-void px-2 py-1 font-mono text-[11px] text-text-primary outline-none placeholder:text-text-muted focus:border-accent/40"
++                spellCheck={false}
++              />
++              <input
++                type="text"
++                value={moveNew}
++                onChange={(e) => setMoveNew(e.target.value)}
++                placeholder="new path (e.g. src/new_module)"
++                className="w-full rounded-md border border-border-default bg-void px-2 py-1 font-mono text-[11px] text-text-primary outline-none placeholder:text-text-muted focus:border-accent/40"
++                spellCheck={false}
++              />
++            </div>
++          )}
++
++          {kind === 'delete' && (
++            <div className="space-y-1.5">
++              <div className="flex gap-1 rounded-md bg-void p-0.5 text-[10px]">
++                <button
++                  type="button"
++                  onClick={() => setDeleteIsFile(true)}
++                  className={`flex-1 cursor-pointer rounded px-2 py-1 ${
++                    deleteIsFile ? 'bg-accent text-white' : 'text-text-muted'
++                  }`}
++                >
++                  by file path
++                </button>
++                <button
++                  type="button"
++                  onClick={() => setDeleteIsFile(false)}
++                  className={`flex-1 cursor-pointer rounded px-2 py-1 ${
++                    !deleteIsFile ? 'bg-accent text-white' : 'text-text-muted'
++                  }`}
++                >
++                  by node id
++                </button>
++              </div>
++              <input
++                type="text"
++                value={deleteTarget}
++                onChange={(e) => setDeleteTarget(e.target.value)}
++                placeholder={
++                  deleteIsFile ? 'file path (cascades to symbols)' : 'exact node id'
++                }
++                className="w-full rounded-md border border-border-default bg-void px-2 py-1 font-mono text-[11px] text-text-primary outline-none placeholder:text-text-muted focus:border-accent/40"
++                spellCheck={false}
++              />
++            </div>
++          )}
++
++          <button
++            type="button"
++            onClick={handleAdd}
++            disabled={!canAdd}
++            className="flex w-full items-center justify-center gap-1.5 rounded-md bg-accent/15 px-2 py-1 text-[10px] font-medium text-accent transition-all hover:bg-accent/25 disabled:cursor-not-allowed disabled:opacity-40 cursor-pointer"
++          >
++            <Sparkles className="h-2.5 w-2.5" />
++            Queue mutation
++          </button>
++        </div>
++      )}
++
++      {/* Queued mutations list */}
++      <div className="flex-1 overflow-y-auto">
++        {whatIfMutations.length === 0 && (
++          <div className="px-3 py-3 text-[11px] italic text-text-muted">
++            No mutations queued yet. Pick a kind above and "Queue mutation".
++          </div>
++        )}
++        {whatIfMutations.map((m, idx) => (
++          <div
++            key={idx}
++            className="group flex items-start gap-2 border-b border-border-subtle px-3 py-1.5"
++          >
++            <span className="mt-0.5 shrink-0 rounded bg-elevated px-1 py-0 font-mono text-[9px] text-text-muted">
++              {idx + 1}
++            </span>
++            <ChevronRight className="mt-0.5 h-3 w-3 shrink-0 text-text-muted" />
++            <span className="min-w-0 flex-1 break-all font-mono text-[10px] text-text-secondary">
++              {renderMutationSummary(m)}
++            </span>
++            {!whatIfActive && (
++              <button
++                type="button"
++                onClick={() => handleRemove(idx)}
++                className="cursor-pointer rounded p-1 text-text-muted/40 transition-all group-hover:text-text-muted hover:!text-red-400"
++                title="Remove this mutation"
++              >
++                <Trash2 className="h-3 w-3" />
++              </button>
++            )}
++          </div>
++        ))}
++      </div>
++
++      {/* Preview action */}
++      {whatIfMutations.length > 0 && (
++        <div className="shrink-0 border-t border-border-subtle bg-elevated px-3 py-2">
++          {!whatIfActive ? (
++            <button
++              type="button"
++              onClick={() => enterWhatIfMode()}
++              className="flex w-full cursor-pointer items-center justify-center gap-2 rounded-md bg-accent px-3 py-1.5 text-[11px] font-medium text-white transition-all hover:bg-accent/90"
++            >
++              <Play className="h-3 w-3" />
++              Preview ({whatIfMutations.length} mutation
++              {whatIfMutations.length > 1 ? 's' : ''})
++            </button>
++          ) : (
++            <button
++              type="button"
++              onClick={() => exitWhatIfMode()}
++              className="flex w-full cursor-pointer items-center justify-center gap-2 rounded-md border border-border-subtle bg-surface px-3 py-1.5 text-[11px] font-medium text-text-secondary transition-all hover:bg-hover hover:text-text-primary"
++            >
++              <X className="h-3 w-3" />
++              Exit preview · restore original
++            </button>
++          )}
++        </div>
++      )}
++    </div>
++  );
++};
 diff --git a/gitnexus-web/src/hooks/useAppState.tsx b/gitnexus-web/src/hooks/useAppState.tsx
-index 25c5776..9adba3d 100644
+index 25c5776..b803870 100644
 --- a/gitnexus-web/src/hooks/useAppState.tsx
 +++ b/gitnexus-web/src/hooks/useAppState.tsx
 @@ -8,7 +8,12 @@ import {
@@ -9656,7 +10068,7 @@ index 25c5776..9adba3d 100644
    runQuery as backendRunQuery,
    search as backendSearch,
    grep as backendGrep,
-@@ -34,12 +40,19 @@ import {
+@@ -34,12 +40,20 @@ import {
    type ConnectResult,
    type JobProgress,
  } from '../services/backend-client';
@@ -9666,6 +10078,7 @@ index 25c5776..9adba3d 100644
 +  generateSemanticLabels,
 +  type SemanticLabel,
 +} from '../services/semantic-labeler';
++import { applyMutations, type Mutation } from '../services/mutation-engine';
  import { ERROR_RESET_DELAY_MS } from '../config/ui-constants';
  import { normalizePath } from '../lib/path-resolution';
  import { FILE_REF_REGEX, NODE_REF_REGEX } from '../lib/grounding-patterns';
@@ -9676,7 +10089,7 @@ index 25c5776..9adba3d 100644
  export type RightPanelTab = 'code' | 'chat';
  export type EmbeddingStatus = 'idle' | 'loading' | 'embedding' | 'indexing' | 'ready' | 'error';
  
-@@ -81,6 +94,9 @@ interface AppState {
+@@ -81,6 +95,9 @@ interface AppState {
    // View state
    viewMode: ViewMode;
    setViewMode: (mode: ViewMode) => void;
@@ -9686,7 +10099,7 @@ index 25c5776..9adba3d 100644
  
    // Graph data
    graph: KnowledgeGraph | null;
-@@ -192,6 +208,180 @@ interface AppState {
+@@ -192,6 +209,194 @@ interface AppState {
    clearAICodeReferences: () => void;
    clearCodeReferences: () => void;
    codeReferenceFocus: CodeReferenceFocus | null;
@@ -9770,6 +10183,20 @@ index 25c5776..9adba3d 100644
 +  refreshSemanticLabels: () => Promise<void>;
 +  generateSemanticLabelsAction: (overwrite?: boolean) => Promise<void>;
 +  cancelSemanticLabelGen: () => void;
++
++  // What-if simulator (ROADMAP Tier 2.3). Holds a user-built list of
++  // structural mutations and, on demand, computes the predicted graph
++  // by applying them to a clone of the live graph. The diff vs the
++  // original is piped through the same diffData mechanism so the
++  // existing red/green canvas coloring renders the preview for free.
++  whatIfPanelOpen: boolean;
++  whatIfActive: boolean;
++  whatIfMutations: Mutation[];
++  whatIfError: string | null;
++  setWhatIfPanelOpen: (open: boolean) => void;
++  setWhatIfMutations: (m: Mutation[]) => void;
++  enterWhatIfMode: () => Promise<void>;
++  exitWhatIfMode: () => void;
 +}
 +
 +export interface CouplingPair {
@@ -9867,7 +10294,7 @@ index 25c5776..9adba3d 100644
  }
  
  const AppStateContext = createContext<AppState | null>(null);
-@@ -205,6 +395,10 @@ export const AppStateProvider = ({ children }: { children: ReactNode }) => (
+@@ -205,6 +410,10 @@ export const AppStateProvider = ({ children }: { children: ReactNode }) => (
  const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
    // View state
    const [viewMode, setViewMode] = useState<ViewMode>('onboarding');
@@ -9878,7 +10305,7 @@ index 25c5776..9adba3d 100644
  
    const {
      graph,
-@@ -343,6 +537,61 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
+@@ -343,6 +552,74 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
    const [isCodePanelOpen, setCodePanelOpen] = useState(false);
    const [codeReferenceFocus, setCodeReferenceFocus] = useState<CodeReferenceFocus | null>(null);
  
@@ -9937,10 +10364,23 @@ index 25c5776..9adba3d 100644
 +  const [semanticLabelsError, setSemanticLabelsError] = useState<string | null>(null);
 +  const semanticLabelsAbortRef = useRef<AbortController | null>(null);
 +
++  // What-if simulator state.
++  const [whatIfPanelOpen, setWhatIfPanelOpen] = useState(false);
++  const [whatIfActive, setWhatIfActive] = useState(false);
++  const [whatIfMutations, setWhatIfMutationsState] = useState<Mutation[]>([]);
++  const [whatIfError, setWhatIfError] = useState<string | null>(null);
++  // Snapshot of the pre-what-if graph so exit can restore. Separate
++  // from preDiffGraphRef so diff and what-if don't trample each other.
++  const preWhatIfGraphRef = useRef<KnowledgeGraph | null>(null);
++
++  const setWhatIfMutations = useCallback((m: Mutation[]) => {
++    setWhatIfMutationsState(m);
++  }, []);
++
    // Map of normalized file path → node ID for graph-based lookups
    const fileNodeByPath = useMemo(() => {
      if (!graph) return new Map<string, string>();
-@@ -1207,9 +1456,374 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
+@@ -1207,9 +1484,434 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
      setCodeReferenceFocus(null);
    }, []);
  
@@ -10306,6 +10746,66 @@ index 25c5776..9adba3d 100644
 +    semanticLabelsAbortRef.current?.abort();
 +  }, []);
 +
++  // What-if: compute the mutated graph from the *current live* graph
++  // and the user's mutation list, then surface the diff via the same
++  // diffData mechanism the diff-mode feature already uses. We do NOT
++  // mutate `graph` directly with the mutated version because the
++  // canvas needs the union (original ∪ mutated) so we can color-code
++  // both sides of every change.
++  const enterWhatIfMode = useCallback(async () => {
++    if (!graph) {
++      setWhatIfError('No graph loaded — open a repo first.');
++      return;
++    }
++    if (whatIfMutations.length === 0) {
++      setWhatIfError('Add at least one mutation before previewing.');
++      return;
++    }
++    setWhatIfError(null);
++    try {
++      const mutated = applyMutations(graph, whatIfMutations);
++
++      // Snapshot the current graph for restore-on-exit. We also stash
++      // the projectName so a repo switch during what-if doesn't strand
++      // the restore.
++      preWhatIfGraphRef.current = graph;
++
++      const diff = computeGraphDiff(
++        { nodes: [...graph.nodes], relationships: [...graph.relationships] },
++        { nodes: [...mutated.nodes], relationships: [...mutated.relationships] },
++      );
++
++      // Render the union so both "removed by mutation" (only in A) and
++      // "added by mutation" (only in B) appear in the canvas.
++      const unionGraph = createKnowledgeGraph();
++      for (const n of diff.unionNodes) unionGraph.addNode(n);
++      for (const e of diff.unionEdges) unionGraph.addRelationship(e);
++      setGraph(unionGraph);
++      setDiffData(diff);
++      // Tag diffMode with a synthetic peer so the existing DiffBanner
++      // labels the preview clearly. The repoA/B are user-facing only.
++      setDiffMode({ repoA: projectName || 'current', repoB: 'what-if preview' });
++      setWhatIfActive(true);
++    } catch (err) {
++      setWhatIfError(err instanceof Error ? err.message : 'What-if computation failed');
++    }
++  }, [graph, whatIfMutations, projectName, setGraph]);
++
++  const exitWhatIfMode = useCallback(() => {
++    if (preWhatIfGraphRef.current) {
++      setGraph(preWhatIfGraphRef.current);
++    }
++    preWhatIfGraphRef.current = null;
++    setDiffData(null);
++    setDiffMode(null);
++    setWhatIfActive(false);
++    setWhatIfError(null);
++    // Also close the panel and clear the queue — exit means "I'm done
++    // with what-if for now". Re-opening starts fresh.
++    setWhatIfMutationsState([]);
++    setWhatIfPanelOpen(false);
++  }, [setGraph]);
++
    const value: AppState = {
      viewMode,
      setViewMode,
@@ -10315,7 +10815,7 @@ index 25c5776..9adba3d 100644
      graph,
      setGraph,
      selectedNode,
-@@ -1293,6 +1907,64 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
+@@ -1293,6 +1995,73 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
      clearAICodeReferences,
      clearCodeReferences,
      codeReferenceFocus,
@@ -10377,6 +10877,15 @@ index 25c5776..9adba3d 100644
 +    refreshSemanticLabels,
 +    generateSemanticLabelsAction,
 +    cancelSemanticLabelGen,
++    // What-if simulator
++    whatIfPanelOpen,
++    whatIfActive,
++    whatIfMutations,
++    whatIfError,
++    setWhatIfPanelOpen,
++    setWhatIfMutations,
++    enterWhatIfMode,
++    exitWhatIfMode,
    };
  
    return <AppStateContext.Provider value={value}>{children}</AppStateContext.Provider>;
@@ -10738,6 +11247,200 @@ index ebc18c1..630643f 100644
    await assertOk(response);
    return response.json() as Promise<BackendRepo[]>;
  };
+diff --git a/gitnexus-web/src/services/mutation-engine.ts b/gitnexus-web/src/services/mutation-engine.ts
+new file mode 100644
+index 0000000..02e6bf4
+--- /dev/null
++++ b/gitnexus-web/src/services/mutation-engine.ts
+@@ -0,0 +1,188 @@
++/**
++ * What-if mutation engine — ROADMAP Tier 2.3.
++ *
++ * Pure transformations on a loaded gitnexus graph snapshot. Given a
++ * KnowledgeGraph and an ordered list of structural mutations, returns
++ * a new KnowledgeGraph that reflects what the user *would* see after
++ * applying those changes — without touching disk, without re-running
++ * gitnexus analyze, without any backend round-trip.
++ *
++ * Three mutation kinds are supported in this MVP, ranked by signal:
++ *
++ *   - rename({ oldName, newName, label? })
++ *       Match every node whose `properties.name === oldName` (optionally
++ *       filtered by node label like Function/Class). Rename the node
++ *       and re-key its id by replacing the trailing :name segment.
++ *
++ *   - move({ oldPath, newPath })
++ *       Move a File and every symbol defined inside it. The new id is
++ *       computed by string-substituting the path prefix in the node id
++ *       (and in the `filePath` property where present).
++ *
++ *   - delete({ nodeId | filePath })
++ *       Remove the targeted node(s) and every relationship touching
++ *       them. If a `filePath` is given, every node attributed to that
++ *       file is dropped — same cascade as `move`.
++ *
++ * Out of scope intentionally: `split-folder` (needs a per-file mapping
++ * UI we'd rather design after we see what users do with the simple
++ * three), and any semantic transformation ("SQL → GraphQL"). The
++ * latter is impossible without a real code-rewriting model.
++ *
++ * Each call returns a *new* KnowledgeGraph. The caller can then diff
++ * it against the original via the existing `computeGraphDiff` utility
++ * — what-if reuses the diff coloring infrastructure entirely.
++ */
++
++import type { GraphNode, GraphRelationship } from 'gitnexus-shared';
++import { createKnowledgeGraph } from '../core/graph/graph';
++import type { KnowledgeGraph } from '../core/graph/types';
++
++export type Mutation =
++  | { kind: 'rename'; oldName: string; newName: string; label?: string }
++  | { kind: 'move'; oldPath: string; newPath: string }
++  | { kind: 'delete'; nodeId?: string; filePath?: string };
++
++/**
++ * Re-derive a node id when we rename. gitnexus ids follow `Label:rest`
++ * conventions with the name commonly at the tail. We do a structural
++ * rewrite rather than a blind string replace to avoid hitting the same
++ * name inside an unrelated file path or section title.
++ */
++function renamedId(id: string, oldName: string, newName: string): string {
++  const parts = id.split(':');
++  // Most ids end with the symbol name as the last segment; some include
++  // a trailing :<line> too — handle both.
++  for (let i = parts.length - 1; i >= 0; i--) {
++    if (parts[i] === oldName) {
++      parts[i] = newName;
++      return parts.join(':');
++    }
++  }
++  // Fall back to no-op when the name isn't an exact segment match —
++  // safer than corrupting unrelated ids.
++  return id;
++}
++
++/**
++ * Substitute a path prefix in any string. Used for both ids (which
++ * embed the file path) and the `filePath` property. The prefix must
++ * end on a segment boundary, so "src/foo" doesn't match "src/foobar".
++ */
++function substitutePath(s: string, oldPath: string, newPath: string): string {
++  if (s === oldPath) return newPath;
++  if (s.startsWith(oldPath + '/')) return newPath + s.slice(oldPath.length);
++  // Some ids embed the path with a trailing ":" — try that too.
++  if (s.startsWith(oldPath + ':')) return newPath + s.slice(oldPath.length);
++  return s;
++}
++
++/**
++ * True if a node belongs to the given file path (its primary
++ * attribution, not edge-incident). Used by the cascading delete /
++ * move operations.
++ */
++function nodeOwnedByFile(node: GraphNode, filePath: string): boolean {
++  if (node.label === 'File' && node.properties.filePath === filePath) return true;
++  if (node.properties.filePath === filePath) return true;
++  // Fallback: parse the id (some node ids embed the path even when the
++  // property is missing because of legacy indexes).
++  const parts = node.id.split(':');
++  return parts.length >= 2 && parts[1] === filePath;
++}
++
++/**
++ * Apply one mutation to a {nodes, rels} working pair. Mutates in place
++ * — the caller passes a defensive copy from `applyMutations` below.
++ */
++function applyOne(
++  nodes: GraphNode[],
++  rels: GraphRelationship[],
++  m: Mutation,
++): { nodes: GraphNode[]; rels: GraphRelationship[] } {
++  if (m.kind === 'rename') {
++    // We rebuild the id map first so edges can be rewritten in one pass.
++    const idMap = new Map<string, string>();
++    const nextNodes = nodes.map((n) => {
++      if (n.properties.name !== m.oldName) return n;
++      if (m.label && n.label !== m.label) return n;
++      const newId = renamedId(n.id, m.oldName, m.newName);
++      idMap.set(n.id, newId);
++      return {
++        ...n,
++        id: newId,
++        properties: { ...n.properties, name: m.newName },
++      };
++    });
++    const nextRels = rels.map((r) => {
++      const src = idMap.get(r.sourceId) ?? r.sourceId;
++      const tgt = idMap.get(r.targetId) ?? r.targetId;
++      if (src === r.sourceId && tgt === r.targetId) return r;
++      return { ...r, sourceId: src, targetId: tgt };
++    });
++    return { nodes: nextNodes, rels: nextRels };
++  }
++
++  if (m.kind === 'move') {
++    const idMap = new Map<string, string>();
++    const nextNodes = nodes.map((n) => {
++      const filePath = (n.properties as { filePath?: string }).filePath;
++      const idAffected =
++        substitutePath(n.id, m.oldPath, m.newPath) !== n.id;
++      const propAffected = filePath && substitutePath(filePath, m.oldPath, m.newPath) !== filePath;
++      if (!idAffected && !propAffected) return n;
++      const newId = substitutePath(n.id, m.oldPath, m.newPath);
++      if (newId !== n.id) idMap.set(n.id, newId);
++      const newProps = { ...n.properties };
++      if (filePath) {
++        newProps.filePath = substitutePath(filePath, m.oldPath, m.newPath);
++      }
++      return { ...n, id: newId, properties: newProps };
++    });
++    const nextRels = rels.map((r) => {
++      const src = idMap.get(r.sourceId) ?? r.sourceId;
++      const tgt = idMap.get(r.targetId) ?? r.targetId;
++      if (src === r.sourceId && tgt === r.targetId) return r;
++      return { ...r, sourceId: src, targetId: tgt };
++    });
++    return { nodes: nextNodes, rels: nextRels };
++  }
++
++  if (m.kind === 'delete') {
++    // Build the set of ids to remove. Either a single nodeId, or all
++    // nodes attributed to a given filePath (cascade).
++    const toRemove = new Set<string>();
++    if (m.nodeId) toRemove.add(m.nodeId);
++    if (m.filePath) {
++      for (const n of nodes) {
++        if (nodeOwnedByFile(n, m.filePath)) toRemove.add(n.id);
++      }
++    }
++    if (toRemove.size === 0) return { nodes, rels };
++    const nextNodes = nodes.filter((n) => !toRemove.has(n.id));
++    const nextRels = rels.filter((r) => !toRemove.has(r.sourceId) && !toRemove.has(r.targetId));
++    return { nodes: nextNodes, rels: nextRels };
++  }
++
++  return { nodes, rels };
++}
++
++/**
++ * Apply a sequence of mutations to a graph. The order matters — e.g.
++ * a `move` followed by a `delete` on the new path is meaningful;
++ * the reverse would no-op. Returns a brand-new KnowledgeGraph.
++ */
++export function applyMutations(graph: KnowledgeGraph, mutations: Mutation[]): KnowledgeGraph {
++  // Defensive copy so the caller's graph stays pristine.
++  let nodes: GraphNode[] = [...graph.nodes];
++  let rels: GraphRelationship[] = [...graph.relationships];
++  for (const m of mutations) {
++    const next = applyOne(nodes, rels, m);
++    nodes = next.nodes;
++    rels = next.rels;
++  }
++  const out = createKnowledgeGraph();
++  for (const n of nodes) out.addNode(n);
++  for (const r of rels) out.addRelationship(r);
++  return out;
++}
 diff --git a/gitnexus-web/src/services/semantic-labeler.ts b/gitnexus-web/src/services/semantic-labeler.ts
 new file mode 100644
 index 0000000..0990d85
