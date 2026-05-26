@@ -127,6 +127,43 @@ commit({
   },
 });
 
+// Commit 11 (alice, 2025-02-05) — adds a minimal ROADMAP.md for ghosts CORE tests
+commit({
+  author: ALICE,
+  date: '2025-02-05T10:00:00 +0100',
+  message: 'docs(roadmap): add minimal ROADMAP for ghost-predictive tests',
+  files: {
+    'ROADMAP.md': [
+      '# Sample Project — Roadmap',
+      '',
+      '## ✅ Déjà livré',
+      '',
+      '| # | Feature | Endpoint(s) / Composant(s) |',
+      '|---|---|---|',
+      '| 1 | **Login flow** | `src/auth/login.ts` |',
+      '| 2 | **DB schema** | `src/db/schema.ts` |',
+      '',
+      '## 🎯 Tier 1',
+      '',
+      '### 1.1 — Migration runner ✅',
+      '**Promesse** : runner pour appliquer les migrations.',
+      '',
+      '**Premier pas** : `src/db/orphan.py` placeholder.',
+      '',
+      '### 1.2 — Helpers utility',
+      '**Promesse** : fonctions partagées.',
+      '',
+      '**Premier pas** : `src/utils/helpers.ts` exports an `id` function.',
+      '',
+      '### 2.1 — Audit log 🗑️',
+      "**Promesse** : journal d'audit.",
+      '',
+      '**Premier pas** : cancelled, not implementing.',
+      '',
+    ].join('\n'),
+  },
+});
+
 // Normalise the git repo so tar output is byte-identical across regens.
 // 1. gc packs loose objects and removes non-deterministic loose-object files.
 // 2. read-tree HEAD rewrites .git/index clearing per-file stat cache
