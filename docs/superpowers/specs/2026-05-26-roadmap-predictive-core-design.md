@@ -200,3 +200,69 @@ Bulk snapshot d'un historique => chaque snapshot dir contient son `ghosts.json` 
 ## 7. Suite
 
 Une fois ce CORE livré et stable (idéalement après 1 cycle d'usage où on vérifie que le matching expectedLinks attrape bien les vrais commits), invoquer `superpowers:brainstorming` pour chacun des 4 sub-specs (Audit, Augmented, Gantt, Brainstorm-hook) — un par session — en suivant la convention `docs/superpowers/specs/YYYY-MM-DD-roadmap-predictive-<view>-design.md`.
+
+---
+
+## Update 2026-05-26 — Integration de la review externe Gemini
+
+Suite à la [review externe](2026-05-26-ghost-nodes-external-review.md), 4 ajustements au CORE design. Aucun ne casse l'architecture déjà choisie ; ce sont des durcissements de l'interface et un pré-câblage pour l'extension.
+
+### 4 deltas appliqués
+
+#### (a) `expectedBy` devient obligatoire dans roadmap.yml
+
+Le champ `plannedFor` (free-text optionnel) est renommé `expectedBy` (obligatoire) dans le schéma. Raisons :
+- Permet une notion d'expiration (ghost dépasse son expectedBy → status `expired`)
+- Force la discipline : un ghost sans deadline = un ghost qui devient archéologique
+- Compatible ISO date / `YYYY-QX` / `YYYY-MM` (parsing déjà spec'é dans Audit)
+
+Le parser émet un warning sur stderr (pas une erreur) pour les ghosts sans `expectedBy` parsé depuis ROADMAP.md, pour permettre une migration progressive du markdown existant.
+
+Nouveau status dérivé `expired` : `status === 'planned' && now > expectedBy + grace_period` (grace default = 30j, configurable dans `.gitnexus.yaml`).
+
+Le mécanisme cleanup à expiration est livré dans la sous-spec dédiée [`2026-05-26-roadmap-predictive-cleanup-and-connectors-design.md`](2026-05-26-roadmap-predictive-cleanup-and-connectors-design.md).
+
+#### (b) Plugin-aware registry (Option C de la review)
+
+Le CORE expose une fonction publique :
+```js
+export function registerGhostSource(source) {
+  // source = { name, fetchGhosts: async (repoPath) => GhostInput[] }
+}
+```
+
+Le ghostSource builtin (parser ROADMAP.md) est toujours présent et toujours `registered` au boot. Les futurs sub-specs (multi-tool connectors, plugins custom) peuvent enregistrer leurs propres sources.
+
+Lors d'un `syncGhostsForRepo`, le CORE itère sur toutes les sources enregistrées et merge leurs ghosts par id (la source builtin gagne en cas de conflit, les externes sont marquées `source: <name>` dans le runtime JSON).
+
+Ça pré-câble pour Tier 3.10 (plugin architecture) sans bloquer le CORE lean. Les sub-specs Audit / Augmented / Gantt restent monolithiques en v1 ; elles deviendront des plugins quand 3.10 sera livré.
+
+#### (c) Granularité node uniquement (clarification Q5)
+
+Un ghost = un item ROADMAP au niveau **node** (fichier / endpoint / composant). Le groupement passe par `dependsOn[]` (déjà dans le schéma) : un ghost peut déclarer qu'il dépend d'autres ghosts ; l'UI peut visualiser la chaîne, mais aucune notion de "Ghost Cluster" intermédiaire dans le CORE.
+
+Un "Ghost Cluster" (groupement explicite type "module Auth complet") serait une feature future séparée et n'impacte pas le CORE.
+
+#### (d) Manifest path : v0 = `roadmap.yml` distinct, v1 sera section dans `.gitnexus.yaml`
+
+Aujourd'hui (v0 du CORE) : `roadmap.yml` au niveau repo, versionné, distinct.
+
+Cible v1 (quand Tier 2bis.4 `.gitnexus.yaml` unifié sera stable) : section `roadmap:` à l'intérieur de `.gitnexus.yaml`. La migration sera mécanique (une commande `npm run gitnexus:migrate-config`).
+
+Pas de bloquant pour v0 — le user n'aura juste pas à éditer 2 fichiers de config plus tard.
+
+### Effort additionnel pour ces 4 deltas
+
+| Delta | Effort | Localisation |
+|---|---|---|
+| (a) expectedBy mandatory + warning + expired status dérivé | 0.5 j | CORE plan (Update ajoute 2 tâches) |
+| (b) Plugin registry registerGhostSource | 0.5 j | CORE plan (nouvelle tâche) |
+| (c) Granularité (juste clarification + tests dependsOn) | 0.1 j | CORE plan (note + 1 test) |
+| (d) Manifest path (note + futur migrator) | 0 j (note seulement) | CLI script v1 follow-up |
+| **Sous-total** | **~1.1 j** | |
+
+CORE total revised : **3.5 j** (vs 2-3 j initial).
+
+### Sous-spec ajoutée par cette Update
+
+[`2026-05-26-roadmap-predictive-cleanup-and-connectors-design.md`](2026-05-26-roadmap-predictive-cleanup-and-connectors-design.md) — cleanup à expiration + multi-tool connector (Plane primary). 6ème sub-spec de la série.

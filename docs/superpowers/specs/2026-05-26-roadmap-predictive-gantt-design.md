@@ -197,3 +197,32 @@ Bouton dans header du panel : génère un CSV avec colonnes `ghostId, title, tie
 ## 7. Suite
 
 Plan d'implémentation via `superpowers:writing-plans`. Dernier sub-spec de la série Roadmap Predictive.
+
+---
+
+## Update 2026-05-26 — Time-decaying bar color (review externe)
+
+Suite à la [review externe Gemini](2026-05-26-ghost-nodes-external-review.md) et à l'Update similaire sur [Augmented graph](2026-05-26-roadmap-predictive-augmented-graph-design.md), les bars dashed (ghosts `planned` avec `expectedBy` parseable) ne sont plus uniformément couleur-tier mais **changent de couleur selon le slippage temporel**.
+
+### Algorithme
+
+Réutilise `computeGhostVisualState(ghost, now)` de `lib/ghost-layout.ts` (cf Update Augmented graph). Le Gantt remplace l'attribut `color` de la bar dashed par la couleur appropriée :
+
+| Alert level (computed par computeGhostVisualState) | Couleur du dashed bar Gantt |
+|---|---|
+| `fresh` | color tier normale (bleu/ambre/violet) |
+| `mature` | color tier normale |
+| `late` | orange `#e67e22` |
+| `critical` | rouge `#c0392b` |
+
+### Effet visuel
+
+Sur le Gantt, un user voit immédiatement quels ghosts sont en retard : la bar dashed devient orange puis rouge à mesure que la deadline est dépassée. Ça crée la même pression visuelle que sur le graph Sigma, avec une vue calendaire.
+
+### Test additionnel
+
+`tests/unit/gantt-layout-decay.test.mjs` — vérifie que la couleur du bar dashed pour un ghost `late` est `#e67e22` et pour `critical` est `#c0392b`.
+
+### Effort additionnel
+
+**~0.2 jour** : impl + test. Le calcul `computeGhostVisualState` est déjà spec'é dans Augmented graph et réutilisable côté Gantt.

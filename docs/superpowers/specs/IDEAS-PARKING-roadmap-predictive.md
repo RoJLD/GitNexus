@@ -85,15 +85,31 @@ collecte les suggestions et propose au user.
 **À garder Tier 2 / extension du CORE** une fois les premières vues
 livrées et qu'on mesure la friction du marquage manuel.
 
+## Sub-spec 5.ter — Cleanup à expiration + multi-tool connectors (livré comme spec)
+
+**Status** : ✅ Spec rédigée — voir [`2026-05-26-roadmap-predictive-cleanup-and-connectors-design.md`](2026-05-26-roadmap-predictive-cleanup-and-connectors-design.md)
+
+Issue de la [review externe Gemini](2026-05-26-ghost-nodes-external-review.md). Couvre :
+- Détection automatique des ghosts `expired` (`now > expectedBy + grace_period`)
+- LLM cleanup prompt (reaffirm / cancel / ship-as-other) avec confirmation user
+- Connecteurs vers tools de ticketing : **Plane primary** (impl complète v1), Linear / GitHub Issues / Jira (framework + stubs)
+- Plugin-aware via `registerGhostSource()` du CORE (cf Update sur CORE spec)
+
+**Effort** : ~3.5 jours.
+
 ## Sub-spec 6 (bonus, non-discuté en brainstorm initial mais à considérer)
 
 **SysML / diagrammes systémiques** : export du graph augmenté en SysML (blocks pour nodes réels, requirements pour ghosts, satisfy edges pour matérialisation). Permet d'utiliser le graph dans des outils d'ingénierie système (Capella, Cameo, etc.). À évaluer après les 4 vues — c'est davantage un export qu'une vue interactive.
 
-## Ordre d'exécution suggéré
+## Ordre d'exécution suggéré (révisé après review externe)
 
-1. **CORE** (cette session)
-2. **Audit view** — le moins risqué, ROI immédiat sur l'auto-évaluation
-3. **Augmented graph** — naturellement intégré au graph existant
-4. **Brainstorm-hook** — automatise la maintenance des ghosts pour la suite
-5. **Gantt** — quand on a assez de ghosts pour qu'une vue calendaire ait du contenu
-6. **SysML** — si jamais le besoin se présente
+1. **CORE** (avec Update : `expectedBy` mandatory + plugin registry — ~3.5j)
+2. **Audit view** (avec Update : 6ème métrique `expired` — ~5.8j)
+3. **Augmented graph** (avec Update : time-decay opacity — ~3.3j)
+4. **Cleanup + multi-tool connectors** (cf Sub-spec 5.ter — ~3.5j)
+   - Pré-requis : CORE + Audit + Augmented graph livrés pour avoir les hooks UI
+5. **Brainstorm-hook** (~2.5j)
+6. **Gantt** (avec Update : time-decay bar color — ~3.2j)
+7. **SysML** (si demandé — bonus, à brainstormer)
+
+**Total cumulé** : ~21.8 jours (vs ~16-18j avant les Updates de la review externe).

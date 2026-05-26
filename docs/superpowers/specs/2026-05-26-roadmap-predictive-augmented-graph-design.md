@@ -182,3 +182,65 @@ Pas de test integration backend — aucun nouvel endpoint.
 Plan d'implémentation via `superpowers:writing-plans` une fois ce spec validé.
 
 Reste à brainstormer : **Brainstorm-hook**, **Gantt**.
+
+---
+
+## Update 2026-05-26 — Time-decaying opacity (review externe)
+
+Suite à la [review externe Gemini](2026-05-26-ghost-nodes-external-review.md), l'opacité des ghosts devient **fonction de la pression temporelle** plutôt que fixée à 0.4.
+
+### Motivation
+
+Une opacité fixe traite tous les ghosts pareils — Tier 3.10 planifié pour Q4 2027 et Tier 1.2 prévu pour la semaine dernière ont la même intensité visuelle. La review externe propose de **faire baisser l'opacité à mesure que `expectedBy` approche puis se dépasse**, créant une pression visuelle naturelle sans alerting actif.
+
+### Algorithme
+
+```ts
+// Dans lib/ghost-layout.ts, nouvelle pure fn :
+export function computeGhostVisualState(
+  ghost: GhostInput,
+  now: Date,
+): { opacity: number; outlineColor: string; alertLevel: 'fresh' | 'mature' | 'late' | 'critical' } {
+  if (ghost.status !== 'planned') {
+    // materialized → masqué (déjà dans encoding existant)
+    // cancelled → opacité 0.3 grise (inchangé)
+    return existingLogic;
+  }
+  const planned = new Date(ghost.plannedAt.date);
+  const expectedBy = parseTargetDate(ghost.declared.expectedBy);
+  if (!expectedBy) return { opacity: 0.4, outlineColor: tierColor(ghost.tier), alertLevel: 'fresh' };
+
+  const totalPlanned = expectedBy.getTime() - planned.getTime();
+  const elapsed = now.getTime() - planned.getTime();
+  const ratio = totalPlanned > 0 ? elapsed / totalPlanned : 1;
+
+  if (ratio < 0.5) return { opacity: 0.5, outlineColor: tierColor(ghost.tier), alertLevel: 'fresh' };
+  if (ratio < 1.0) return { opacity: 0.4, outlineColor: tierColor(ghost.tier), alertLevel: 'mature' };
+  // ratio > 1 : ghost a dépassé son expectedBy
+  if (ratio < 1.5) return { opacity: 0.3, outlineColor: '#e67e22', alertLevel: 'late' };
+  return { opacity: 0.2, outlineColor: '#c0392b', alertLevel: 'critical' };
+}
+```
+
+### Encoding visuel mis à jour
+
+| Alert level | Condition | Opacité | Outline | Comportement |
+|---|---|---|---|---|
+| `fresh` | `(now - planned) / (expectedBy - planned) < 0.5` | 0.5 | dashed, color tier | Affiché normalement |
+| `mature` | ratio entre 0.5 et 1.0 | 0.4 | dashed, color tier | Légèrement atténué |
+| `late` | ratio entre 1.0 et 1.5 (dépassé < 50%) | 0.3 | dashed orange `#e67e22` | Pression visuelle |
+| `critical` | ratio > 1.5 (dépassé > 50%) | 0.2 | dashed rouge `#c0392b` | Très atténué + outline rouge — appelle l'attention sur ghost potentiellement obsolète |
+
+Si `expectedBy` absent du ghost → fallback opacité 0.4 (comportement d'origine).
+
+### Intégration avec cleanup mechanism
+
+Les ghosts `critical` sont aussi ceux que le mécanisme cleanup (cf [sous-spec cleanup-and-connectors](2026-05-26-roadmap-predictive-cleanup-and-connectors-design.md)) va flagger comme `expired` et proposer pour LLM-assisted cleanup. La cohérence visuelle/cleanup renforce le signal.
+
+### Test additionnel
+
+`tests/unit/ghost-layout-decay.test.mjs` — vérifie les 4 alertLevels avec des dates calibrées.
+
+### Effort additionnel
+
+**~0.3 jour** : implémentation + test + intégration dans le reducer Sigma (passer `opacity` et `outlineColor` au programme custom).

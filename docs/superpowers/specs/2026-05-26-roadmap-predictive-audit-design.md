@@ -199,3 +199,41 @@ Fixture extension : ajouter un **12ème commit** à `make-fixture.mjs` qui marqu
 Le plan d'implémentation suit (via `superpowers:writing-plans`) une fois ce spec validé.
 
 Sous-specs encore à brainstormer dans cette session : **Augmented graph**, **Brainstorm-hook**, **Gantt opérationnel**.
+
+---
+
+## Update 2026-05-26 — 6ème métrique `expired` (review externe)
+
+Suite à la [review externe Gemini](2026-05-26-ghost-nodes-external-review.md) et à l'introduction d'`expectedBy` mandatory + status dérivé `expired` dans le CORE (Update sur le CORE spec), l'Audit view gagne une **6ème métrique**.
+
+### Métrique `expired`
+
+```json
+"expired": {
+  "total": 3,
+  "critical": 1,           // dépassé de > 50% (1.5× expectedBy)
+  "expiredButRecent": 2,   // dépassé mais < 50%
+  "list": [
+    { "id": "tier-3-2-mutation-tracking", "expectedBy": "2026-04-30", "daysPastExpiry": 26, "alertLevel": "critical" }
+  ]
+}
+```
+
+### Distinction late vs expired
+
+- **`slippage.late`** (déjà spec'é) = ghost matérialisé après son `expectedBy`. Audit historique.
+- **`expired`** (nouveau) = ghost `planned` qui a dépassé `expectedBy` sans être matérialisé. Action requise.
+
+Les deux sont complémentaires.
+
+### UI mise à jour
+
+Dans `AuditSummary` (5 cards initialement), ajout d'une **6ème card** "Expired" avec badge rouge si `total > 0` et compteur. Click sur la card ouvre `CleanupModal` (de la sous-spec [cleanup-and-connectors](2026-05-26-roadmap-predictive-cleanup-and-connectors-design.md)).
+
+### Test additionnel
+
+`tests/unit/ghost-audit-expired.test.mjs` — couvre le calcul `expired` selon `expectedBy + grace_period`, edge cases (pas d'`expectedBy`, ghost déjà materialized).
+
+### Effort additionnel
+
+**~0.3 jour** : pure fn `computeExpired` + endpoint enrichi + card UI + test.
