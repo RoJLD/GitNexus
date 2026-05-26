@@ -139,6 +139,9 @@ Fichiers à la racine du repo, qui rendent le setup reproductible sur poste Wind
 | `GET /commit/footprint` | Files touched par un commit (status A/M/D) via `git show --name-status`. Params: `?repo=&sha=`. Permet l'overlay commit sur le graph côté frontend (highlight des nodes par `filePath` match). Honest : c'est le footprint, pas le graph reconstruit au commit. Tier 2bis.2 follow-up. |
 | `POST /snapshot/auto` | Auto-snapshot des commits aux pics d'entropy (Phase A du chantier incremental-snapshots). Body : `{ topPercent, windowDays, debounceDays, minDelta, excludeMerges, metric, dryRun, maxToCreate }`. Toujours dryRun=true en premier (compute lourd). Cap hard `maxToCreate ≤ 5` (env `AUTO_SNAPSHOT_HARD_CAP`). Config par-repo via `.gitnexus.json > auto_snapshot`. |
 | `POST /snapshot/from-pr` | PR-mode snapshot on-demand (Phase B). Params: `?repo=&base=&head=`, body `{ dryRun }`. Résout les 2 refs (branches/tags/SHAs/HEAD~N) via `git rev-parse`, snapshotte les 2 si pas déjà, retourne `{ base, head, diffUrl }` où diffUrl pointe vers la diff-visual UI existante. Degenerate case base==head géré avec warning. Agnostique de la forge (pas d'auth GitHub). |
+| `POST /ghosts/sync` | Parse `<repo>/ROADMAP.md` via le builtin source + tous les ghost-sources enregistrés via `registerGhostSource()`, merge par id (builtin gagne), écrit `<repo>/roadmap.yml` (versionné) + `<repo>/.gitnexus/ghosts.json` (runtime latest). Réponse `{ synced: true, syncedAt, syncedCommit, ghosts: [...] }`. Idempotent — un second appel sans changement produit le même JSON. Tier 3.x foundation. |
+| `GET /ghosts` | Renvoie le `ghosts.json` latest (404 si jamais sync). Chaque ghost porte `{ id, declared, plannedAt, materializedAt, cancelledAt, links, source }`. |
+| `GET /ghosts/at` | Renvoie le `ghosts.json` historique d'un snapshot. Params: `?repo=&commit=<shortHash>` (key directory = `safeSnapshotKey(commit.shortHash)`). 404 si snapshot inconnu. Auto-écrit par chaque `createSnapshot` (4 entry points : `/snapshot`, `/snapshot/bulk`, `/snapshot/auto`, `/snapshot/from-pr`). |
 | `GET /listdir` | Folder browser server-side |
 | `GET /export` + `POST /import` | Bundle ou index-only, register-only mode |
 | `?format=csv` partout | Serializer partagé `docker-server-csv.mjs` |
@@ -165,6 +168,13 @@ Fichiers à la racine du repo, qui rendent le setup reproductible sur poste Wind
 - `DropZone.LoadingCard` + `RepoAnalyzer` (loading bars + path picker + folder browser)
 - Edits sur composants existants : `App.tsx`, `hooks/useAppState.tsx`, `Header.tsx`, `GraphCanvas.tsx`, `DropZone.tsx`
 - `services/backend-client.ts` — `cache: 'no-store'` sur `fetchRepos`
+
+#### Roadmap-predictive CORE (Tier 3.x foundation, 2026-05-26)
+- `upstream/docker-server-ghosts-core.mjs` — pure fns : `parseRoadmap` (tables + Tier sections + `warnMissingExpectedBy`), `renderRoadmapYml` (sérializer déterministe, expectedBy émis), `matchExpectedLinks` (suffix + glob), `computeStatus` (lifecycle : declared wins, auto-match upgrade, `expired` après `expectedBy + 30d`), `parseTargetDate` (ISO / `YYYY-MM` / `YYYY-QX`).
+- `upstream/docker-server-ghosts.mjs` — I/O wrapper + 3 route handlers + plugin registry. Exports `registerGhostSource({ name, fetchGhosts })`, `listGhostSources()`, `_resetGhostSourcesForTests()`, `syncGhostsForRepo`, `syncGhostsForSnapshot`, `readLatestGhosts`, `readSnapshotGhosts`, `handleGhostsRoute`. Builtin source `roadmap-md` toujours enregistré, ne peut être remplacé. Merge par id : builtin gagne, externes mergés en ordre d'insertion. Auto-sync wired dans `createSnapshot` (couvre `/snapshot`, `/snapshot/bulk`, `/snapshot/auto`, `/snapshot/from-pr`).
+- `scripts/sync-ghosts.mjs` — CLI wrapper qui POST `/ghosts/sync` avec un message utile (rappelle de committer `roadmap.yml`).
+- **Storage par repo** : `<repo>/roadmap.yml` (versionné), `<repo>/.gitnexus/ghosts.json` (runtime latest), `<snapshotDir>/ghosts.json` (state historique par snapshot, sealed au sha).
+- **Update 4 du spec (manifest path)** : v0 = `roadmap.yml` distinct ; v1 cible = section `roadmap:` dans `.gitnexus.json` quand Tier 2bis.4 sera stable. Migration future : `npm run gitnexus:migrate-config`.
 
 #### Dépendances ajoutées
 - `react-force-graph-3d`, `three` (pour le mode 3D) — déclarées dans `gitnexus-web/package.json`
