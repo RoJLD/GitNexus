@@ -1,8 +1,8 @@
 diff --git a/Dockerfile.web b/Dockerfile.web
-index 7d20e09..4eae7fd 100644
+index 7d20e09..a124ea9 100644
 --- a/Dockerfile.web
 +++ b/Dockerfile.web
-@@ -14,19 +14,46 @@ RUN npm run build --prefix gitnexus-shared
+@@ -14,19 +14,47 @@ RUN npm run build --prefix gitnexus-shared
  COPY gitnexus/package.json ./gitnexus/
  
  COPY gitnexus-web/package.json gitnexus-web/package-lock.json ./gitnexus-web/
@@ -47,6 +47,7 @@ index 7d20e09..4eae7fd 100644
 +COPY docker-server-entropy.mjs ./docker-server-entropy.mjs
 +COPY docker-server-ownership.mjs ./docker-server-ownership.mjs
 +COPY docker-server-dissonance.mjs ./docker-server-dissonance.mjs
++COPY docker-server-semantic-labels.mjs ./docker-server-semantic-labels.mjs
 +COPY docker-server-csv.mjs ./docker-server-csv.mjs
  
  RUN chown -R node:node /app
@@ -1797,6 +1798,183 @@ index 0000000..b9a666a
 +  }
 +  return false;
 +}
+diff --git a/docker-server-semantic-labels.mjs b/docker-server-semantic-labels.mjs
+new file mode 100644
+index 0000000..21909b2
+--- /dev/null
++++ b/docker-server-semantic-labels.mjs
+@@ -0,0 +1,171 @@
++/**
++ * Semantic-labels cache — ROADMAP Tier 2.1, server side.
++ *
++ * Endpoints:
++ *   GET  /semantic-labels?repo=<base>
++ *        Reads the on-disk cache and returns it, or an empty payload
++ *        if no labels have been generated yet. Cheap and idempotent.
++ *
++ *   POST /semantic-labels?repo=<base>   body: { labels: {…}, provider?, model? }
++ *        Merges the incoming labels into the cache, last-write-wins
++ *        per communityId. We persist a tiny audit trail (when, with
++ *        which provider/model) so a future "regenerate stale labels"
++ *        feature can decide what's old.
++ *
++ * The LLM call itself is done by the *frontend* (`semantic-labeler.ts`),
++ * because the user already has provider credentials configured for the
++ * chat panel — no point asking them to re-enter API keys server-side
++ * or wiring per-provider clients here. This module just owns the cache.
++ *
++ * Cache file: <repoPath>/.gitnexus/semantic-labels.json
++ *
++ *   {
++ *     "schemaVersion": 1,
++ *     "labels": {
++ *       "community-id-1": {
++ *         "label": "Authentication",
++ *         "confidence": 0.85,
++ *         "evidenceNodes": ["src/auth/login.py:login", ...],
++ *         "labeledAt": "2026-05-22T10:00:00.000Z",
++ *         "provider": "anthropic",
++ *         "model": "claude-sonnet-4-20250514"
++ *       },
++ *       ...
++ *     }
++ *   }
++ */
++
++import { readFile, writeFile, mkdir } from 'node:fs/promises';
++import { join, dirname } from 'node:path';
++import { findRepoByName } from './docker-server-snapshots.mjs';
++
++const CACHE_FILENAME = 'semantic-labels.json';
++const SCHEMA_VERSION = 1;
++
++async function loadCache(cachePath) {
++  try {
++    const raw = await readFile(cachePath, 'utf8');
++    const parsed = JSON.parse(raw);
++    if (parsed?.schemaVersion === SCHEMA_VERSION && parsed?.labels && typeof parsed.labels === 'object') {
++      return parsed;
++    }
++    // Future-proofing: if the schema bumps, we won't error — we'll just
++    // start fresh rather than serve incompatible data.
++    return { schemaVersion: SCHEMA_VERSION, labels: {} };
++  } catch (err) {
++    if (err && err.code === 'ENOENT') {
++      return { schemaVersion: SCHEMA_VERSION, labels: {} };
++    }
++    throw err;
++  }
++}
++
++async function saveCache(cachePath, cache) {
++  await mkdir(dirname(cachePath), { recursive: true });
++  await writeFile(cachePath, JSON.stringify(cache, null, 2), 'utf8');
++}
++
++async function handleGet(url, res, opts) {
++  const repoName = url.searchParams.get('repo');
++  if (!repoName) {
++    res.writeHead(400, { 'Content-Type': 'application/json' });
++    res.end(JSON.stringify({ error: 'missing repo' }));
++    return;
++  }
++  const baseRepo = repoName.split('@')[0];
++  const repo = await findRepoByName(baseRepo, opts.api);
++  if (!repo) {
++    res.writeHead(404, { 'Content-Type': 'application/json' });
++    res.end(JSON.stringify({ error: `repo not found: ${baseRepo}` }));
++    return;
++  }
++  const repoPath = repo.repoPath || repo.path;
++  const cachePath = join(repoPath, '.gitnexus', CACHE_FILENAME);
++  const cache = await loadCache(cachePath);
++  res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
++  res.end(JSON.stringify({ repo: baseRepo, ...cache }));
++}
++
++async function handlePost(url, req, res, opts) {
++  const repoName = url.searchParams.get('repo');
++  if (!repoName) {
++    res.writeHead(400, { 'Content-Type': 'application/json' });
++    res.end(JSON.stringify({ error: 'missing repo' }));
++    return;
++  }
++  const baseRepo = repoName.split('@')[0];
++  const repo = await findRepoByName(baseRepo, opts.api);
++  if (!repo) {
++    res.writeHead(404, { 'Content-Type': 'application/json' });
++    res.end(JSON.stringify({ error: `repo not found: ${baseRepo}` }));
++    return;
++  }
++
++  // Read JSON body (small — at most a few KB per repo's worth of labels).
++  let body = '';
++  for await (const chunk of req) body += chunk;
++  let payload;
++  try {
++    payload = body ? JSON.parse(body) : {};
++  } catch (err) {
++    res.writeHead(400, { 'Content-Type': 'application/json' });
++    res.end(JSON.stringify({ error: `invalid JSON: ${err.message}` }));
++    return;
++  }
++  const incoming = payload?.labels;
++  if (!incoming || typeof incoming !== 'object' || Array.isArray(incoming)) {
++    res.writeHead(400, { 'Content-Type': 'application/json' });
++    res.end(JSON.stringify({ error: 'body.labels must be an object {communityId: {...}}' }));
++    return;
++  }
++  const provider = typeof payload.provider === 'string' ? payload.provider : 'unknown';
++  const model = typeof payload.model === 'string' ? payload.model : 'unknown';
++  const now = new Date().toISOString();
++
++  const repoPath = repo.repoPath || repo.path;
++  const cachePath = join(repoPath, '.gitnexus', CACHE_FILENAME);
++  const cache = await loadCache(cachePath);
++
++  // Validate each entry, drop garbage rather than corrupting the cache.
++  let merged = 0;
++  for (const [communityId, entry] of Object.entries(incoming)) {
++    if (typeof communityId !== 'string' || communityId.length > 200) continue;
++    if (!entry || typeof entry !== 'object') continue;
++    const label = typeof entry.label === 'string' && entry.label.trim().length > 0
++      ? entry.label.trim().slice(0, 80)
++      : null;
++    if (!label) continue;
++    const confidence = typeof entry.confidence === 'number' && entry.confidence >= 0 && entry.confidence <= 1
++      ? entry.confidence
++      : 0.5;
++    const evidenceNodes = Array.isArray(entry.evidenceNodes)
++      ? entry.evidenceNodes.filter((s) => typeof s === 'string').slice(0, 20)
++      : [];
++    cache.labels[communityId] = {
++      label,
++      confidence,
++      evidenceNodes,
++      labeledAt: now,
++      provider,
++      model,
++    };
++    merged++;
++  }
++
++  await saveCache(cachePath, cache);
++  res.writeHead(200, { 'Content-Type': 'application/json' });
++  res.end(JSON.stringify({ ok: true, merged, total: Object.keys(cache.labels).length }));
++}
++
++export async function handleSemanticLabelsRoute(req, url, res, opts) {
++  if (url.pathname !== '/semantic-labels') return false;
++  if (req.method === 'GET') {
++    await handleGet(url, res, opts);
++    return true;
++  }
++  if (req.method === 'POST') {
++    await handlePost(url, req, res, opts);
++    return true;
++  }
++  return false;
++}
 diff --git a/docker-server-snapshots-bulk.mjs b/docker-server-snapshots-bulk.mjs
 new file mode 100644
 index 0000000..086ce14
@@ -2460,10 +2638,10 @@ index 0000000..f6f693f
 +  return false;
 +}
 diff --git a/docker-server.mjs b/docker-server.mjs
-index adf84a0..a8ba3cb 100644
+index adf84a0..f3cf118 100644
 --- a/docker-server.mjs
 +++ b/docker-server.mjs
-@@ -1,12 +1,46 @@
+@@ -1,12 +1,47 @@
 -import { createReadStream } from 'node:fs';
 -import { stat } from 'node:fs/promises';
 +import { createReadStream, createWriteStream } from 'node:fs';
@@ -2482,6 +2660,7 @@ index adf84a0..a8ba3cb 100644
 +import { handleEntropyRoute } from './docker-server-entropy.mjs';
 +import { handleOwnershipRoute } from './docker-server-ownership.mjs';
 +import { handleDissonanceRoute } from './docker-server-dissonance.mjs';
++import { handleSemanticLabelsRoute } from './docker-server-semantic-labels.mjs';
  
  const host = '0.0.0.0';
  const port = Number(process.env.PORT || '4173');
@@ -2513,7 +2692,7 @@ index adf84a0..a8ba3cb 100644
  const contentTypes = {
    '.css': 'text/css; charset=utf-8',
    '.html': 'text/html; charset=utf-8',
-@@ -34,8 +68,472 @@ function resolvePath(urlPath) {
+@@ -34,8 +69,476 @@ function resolvePath(urlPath) {
    return candidate;
  }
  
@@ -2981,6 +3160,10 @@ index adf84a0..a8ba3cb 100644
 +  }
 +  // Dissonance / code-vs-domain alignment (ROADMAP Tier 2.2)
 +  if (await handleDissonanceRoute(req, url, res, { api: GITNEXUS_API })) {
++    return;
++  }
++  // Semantic labels cache (ROADMAP Tier 2.1) — LLM call is frontend-side
++  if (await handleSemanticLabelsRoute(req, url, res, { api: GITNEXUS_API })) {
 +    return;
 +  }
 +
@@ -4463,10 +4646,10 @@ index 0000000..f315205
 +);
 diff --git a/gitnexus-web/src/components/DissonancePanel.tsx b/gitnexus-web/src/components/DissonancePanel.tsx
 new file mode 100644
-index 0000000..475306a
+index 0000000..d33840e
 --- /dev/null
 +++ b/gitnexus-web/src/components/DissonancePanel.tsx
-@@ -0,0 +1,330 @@
+@@ -0,0 +1,427 @@
 +import { useMemo, useState } from 'react';
 +import {
 +  X,
@@ -4476,6 +4659,8 @@ index 0000000..475306a
 +  Target,
 +  ChevronRight,
 +  ChevronDown,
++  Sparkles,
++  Pause,
 +} from '@/lib/lucide-icons';
 +import { useAppState } from '../hooks/useAppState';
 +
@@ -4519,7 +4704,22 @@ index 0000000..475306a
 +    graph,
 +    setHighlightedNodeIds,
 +    exitDissonanceMode,
++    semanticLabels,
++    semanticLabelsLoading,
++    semanticLabelsProgress,
++    semanticLabelsError,
++    generateSemanticLabelsAction,
++    cancelSemanticLabelGen,
 +  } = useAppState();
++  // Helper: turn a raw communityId into the LLM-generated label when we
++  // have one, falling back to the gitnexus heuristic label, then the
++  // raw id. This is the user-facing "what is this cluster?" string.
++  const renderCommunity = (communityId: string, fallbackLabel?: string | null) => {
++    const lbl = semanticLabels.get(communityId);
++    if (lbl) return lbl.label;
++    if (fallbackLabel && fallbackLabel.trim().length > 0) return fallbackLabel;
++    return communityId;
++  };
 +  const baseRepo = (projectName || '').split('@')[0];
 +  const [search, setSearch] = useState('');
 +  const [openDomains, setOpenDomains] = useState<Set<string>>(new Set());
@@ -4559,11 +4759,41 @@ index 0000000..475306a
 +      <div className="flex shrink-0 items-center gap-2 border-b border-border-subtle px-3 py-2">
 +        <Target className="h-3.5 w-3.5 text-violet-300" />
 +        <span className="text-xs font-semibold text-text-primary">Dissonance</span>
++        {/* Generate / regenerate semantic labels via the user's
++            configured LLM. Disabled while a run is in flight (the
++            button itself becomes a cancel-control when active). */}
++        {dissonanceData && (
++          <button
++            type="button"
++            onClick={() => {
++              if (semanticLabelsLoading) cancelSemanticLabelGen();
++              else generateSemanticLabelsAction(semanticLabels.size > 0);
++            }}
++            className={`ml-auto shrink-0 cursor-pointer rounded p-1 transition-colors ${
++              semanticLabelsLoading
++                ? 'text-amber-300 hover:bg-hover'
++                : 'text-violet-300 hover:bg-hover hover:text-violet-200'
++            }`}
++            title={
++              semanticLabelsLoading
++                ? 'Cancel label generation'
++                : semanticLabels.size > 0
++                  ? 'Regenerate semantic labels with LLM (overwrites existing)'
++                  : 'Generate semantic labels for clusters via LLM'
++            }
++          >
++            {semanticLabelsLoading ? (
++              <Pause className="h-3.5 w-3.5" />
++            ) : (
++              <Sparkles className="h-3.5 w-3.5" />
++            )}
++          </button>
++        )}
 +        {dissonanceData && (
 +          <a
 +            href={`/dissonance?repo=${encodeURIComponent(baseRepo)}&format=csv`}
 +            download
-+            className="ml-auto shrink-0 cursor-pointer rounded p-1 text-text-muted transition-colors hover:bg-hover hover:text-text-primary"
++            className="shrink-0 cursor-pointer rounded p-1 text-text-muted transition-colors hover:bg-hover hover:text-text-primary"
 +            title="Download per-file dissonance as CSV"
 +          >
 +            <Download className="h-3.5 w-3.5" />
@@ -4578,6 +4808,45 @@ index 0000000..475306a
 +          <X className="h-3.5 w-3.5" />
 +        </button>
 +      </div>
++
++      {/* Label-generation progress strip. Stays mounted briefly after
++          completion so the user sees the final tally. */}
++      {(semanticLabelsLoading || semanticLabelsProgress || semanticLabelsError) && (
++        <div className="shrink-0 border-b border-border-subtle bg-violet-500/5 px-3 py-1.5">
++          {semanticLabelsError ? (
++            <div className="flex items-start gap-1.5 text-[10px] text-red-400">
++              <AlertCircle className="mt-0.5 h-3 w-3 shrink-0" />
++              <span className="break-all whitespace-pre-wrap font-mono">
++                {semanticLabelsError}
++              </span>
++            </div>
++          ) : (
++            <div className="flex items-center gap-2 text-[10px] text-violet-200">
++              <Sparkles className="h-3 w-3" />
++              <span>
++                Labeling clusters: {semanticLabelsProgress?.done ?? 0}
++                {semanticLabelsProgress?.total
++                  ? ` / ${semanticLabelsProgress.total}`
++                  : ''}
++              </span>
++              {semanticLabelsProgress?.total ? (
++                <div className="h-1 flex-1 overflow-hidden rounded-full bg-elevated">
++                  <div
++                    className="h-full bg-violet-400 transition-all"
++                    style={{
++                      width: `${
++                        semanticLabelsProgress.total > 0
++                          ? (semanticLabelsProgress.done / semanticLabelsProgress.total) * 100
++                          : 0
++                      }%`,
++                    }}
++                  />
++                </div>
++              ) : null}
++            </div>
++          )}
++        </div>
++      )}
 +
 +      {dissonanceLoading && (
 +        <div className="flex items-center justify-center gap-2 py-6 text-xs text-text-muted">
@@ -4612,6 +4881,11 @@ index 0000000..475306a
 +              {dissonanceData.totals.domainsDeclared} domains ·{' '}
 +              {dissonanceData.totals.filesAttributed}/{dissonanceData.totals.filesKnown} files
 +              attributed · {dissonanceData.totals.communitiesSeen} communities
++              {semanticLabels.size > 0 && (
++                <span className="ml-1 text-violet-300">
++                  · {semanticLabels.size} LLM-labeled
++                </span>
++              )}
 +            </div>
 +          </div>
 +
@@ -4666,9 +4940,15 @@ index 0000000..475306a
 +                          <div
 +                            key={b.communityId}
 +                            className="flex items-center gap-2 font-mono text-[10px] text-text-secondary"
-+                            title={`Community ${b.communityId}`}
++                            title={`Community ${b.communityId}${
++                              semanticLabels.get(b.communityId)
++                                ? `\nLLM label: ${semanticLabels.get(b.communityId)!.label} (conf ${Math.round(semanticLabels.get(b.communityId)!.confidence * 100)}%)`
++                                : ''
++                            }`}
 +                          >
-+                            <span className="w-32 truncate">{b.communityId}</span>
++                            <span className="w-32 truncate">
++                              {renderCommunity(b.communityId)}
++                            </span>
 +                            <div className="h-1 flex-1 overflow-hidden rounded bg-elevated">
 +                              <div
 +                                className="h-full bg-accent"
@@ -4743,8 +5023,8 @@ index 0000000..475306a
 +                          <span className="truncate text-text-primary">{m.file}</span>
 +                        </div>
 +                        <div className="truncate font-mono text-[10px] text-text-muted">
-+                          actual: {m.actualCommunityLabel || m.actualCommunity} · expected:{' '}
-+                          {m.expectedCommunity}
++                          actual: {renderCommunity(m.actualCommunity, m.actualCommunityLabel)} ·
++                          expected: {renderCommunity(m.expectedCommunity)}
 +                          {m.confidence != null && ` · conf ${Math.round(m.confidence * 100)}%`}
 +                        </div>
 +                      </button>
@@ -8410,7 +8690,7 @@ index 0000000..5471c0c
 +  );
 +};
 diff --git a/gitnexus-web/src/hooks/useAppState.tsx b/gitnexus-web/src/hooks/useAppState.tsx
-index 25c5776..10ffc83 100644
+index 25c5776..9adba3d 100644
 --- a/gitnexus-web/src/hooks/useAppState.tsx
 +++ b/gitnexus-web/src/hooks/useAppState.tsx
 @@ -8,7 +8,12 @@ import {
@@ -8435,11 +8715,16 @@ index 25c5776..10ffc83 100644
    runQuery as backendRunQuery,
    search as backendSearch,
    grep as backendGrep,
-@@ -34,12 +40,14 @@ import {
+@@ -34,12 +40,19 @@ import {
    type ConnectResult,
    type JobProgress,
  } from '../services/backend-client';
 +import { computeGraphDiff, type GraphDiff } from '../lib/graph-diff';
++import {
++  fetchSemanticLabels,
++  generateSemanticLabels,
++  type SemanticLabel,
++} from '../services/semantic-labeler';
  import { ERROR_RESET_DELAY_MS } from '../config/ui-constants';
  import { normalizePath } from '../lib/path-resolution';
  import { FILE_REF_REGEX, NODE_REF_REGEX } from '../lib/grounding-patterns';
@@ -8450,7 +8735,7 @@ index 25c5776..10ffc83 100644
  export type RightPanelTab = 'code' | 'chat';
  export type EmbeddingStatus = 'idle' | 'loading' | 'embedding' | 'indexing' | 'ready' | 'error';
  
-@@ -81,6 +89,9 @@ interface AppState {
+@@ -81,6 +94,9 @@ interface AppState {
    // View state
    viewMode: ViewMode;
    setViewMode: (mode: ViewMode) => void;
@@ -8460,7 +8745,7 @@ index 25c5776..10ffc83 100644
  
    // Graph data
    graph: KnowledgeGraph | null;
-@@ -192,6 +203,169 @@ interface AppState {
+@@ -192,6 +208,180 @@ interface AppState {
    clearAICodeReferences: () => void;
    clearCodeReferences: () => void;
    codeReferenceFocus: CodeReferenceFocus | null;
@@ -8533,6 +8818,17 @@ index 25c5776..10ffc83 100644
 +  dissonanceData: DissonanceData | null;
 +  enterDissonanceMode: () => Promise<void>;
 +  exitDissonanceMode: () => void;
++
++  // Semantic labels (ROADMAP Tier 2.1). LLM-generated human-readable
++  // labels for each detected Community. Auto-loaded from server cache
++  // on repo switch; the user can trigger generation explicitly.
++  semanticLabels: Map<string, SemanticLabel>;
++  semanticLabelsLoading: boolean;
++  semanticLabelsProgress: { done: number; total: number; current?: string } | null;
++  semanticLabelsError: string | null;
++  refreshSemanticLabels: () => Promise<void>;
++  generateSemanticLabelsAction: (overwrite?: boolean) => Promise<void>;
++  cancelSemanticLabelGen: () => void;
 +}
 +
 +export interface CouplingPair {
@@ -8630,7 +8926,7 @@ index 25c5776..10ffc83 100644
  }
  
  const AppStateContext = createContext<AppState | null>(null);
-@@ -205,6 +379,10 @@ export const AppStateProvider = ({ children }: { children: ReactNode }) => (
+@@ -205,6 +395,10 @@ export const AppStateProvider = ({ children }: { children: ReactNode }) => (
  const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
    // View state
    const [viewMode, setViewMode] = useState<ViewMode>('onboarding');
@@ -8641,7 +8937,7 @@ index 25c5776..10ffc83 100644
  
    const {
      graph,
-@@ -343,6 +521,52 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
+@@ -343,6 +537,61 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
    const [isCodePanelOpen, setCodePanelOpen] = useState(false);
    const [codeReferenceFocus, setCodeReferenceFocus] = useState<CodeReferenceFocus | null>(null);
  
@@ -8691,10 +8987,19 @@ index 25c5776..10ffc83 100644
 +  const [dissonanceError, setDissonanceError] = useState<string | null>(null);
 +  const [dissonanceData, setDissonanceData] = useState<DissonanceData | null>(null);
 +
++  // Semantic labels state.
++  const [semanticLabels, setSemanticLabels] = useState<Map<string, SemanticLabel>>(new Map());
++  const [semanticLabelsLoading, setSemanticLabelsLoading] = useState(false);
++  const [semanticLabelsProgress, setSemanticLabelsProgress] = useState<
++    { done: number; total: number; current?: string } | null
++  >(null);
++  const [semanticLabelsError, setSemanticLabelsError] = useState<string | null>(null);
++  const semanticLabelsAbortRef = useRef<AbortController | null>(null);
++
    // Map of normalized file path → node ID for graph-based lookups
    const fileNodeByPath = useMemo(() => {
      if (!graph) return new Map<string, string>();
-@@ -1207,9 +1431,308 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
+@@ -1207,9 +1456,374 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
      setCodeReferenceFocus(null);
    }, []);
  
@@ -8994,6 +9299,72 @@ index 25c5776..10ffc83 100644
 +    setDissonanceActive(false);
 +  }, []);
 +
++  // Semantic labels: read-only fetch (cheap, idempotent). Called
++  // automatically when the active repo changes, and manually after a
++  // generation pass completes.
++  const refreshSemanticLabels = useCallback(async () => {
++    if (!projectName) return;
++    const baseRepo = projectName.split('@')[0];
++    try {
++      const cache = await fetchSemanticLabels(baseRepo);
++      const m = new Map<string, SemanticLabel>();
++      for (const [id, entry] of Object.entries(cache.labels)) m.set(id, entry);
++      setSemanticLabels(m);
++    } catch {
++      // Silent — labels are an enhancement, not a requirement.
++    }
++  }, [projectName]);
++
++  // Auto-pull labels when the active repo changes. Idempotent and fast
++  // (a single GET that returns {} when no labels exist yet).
++  useEffect(() => {
++    if (!projectName) {
++      setSemanticLabels(new Map());
++      return;
++    }
++    refreshSemanticLabels();
++  }, [projectName, refreshSemanticLabels]);
++
++  const generateSemanticLabelsAction = useCallback(
++    async (overwrite = false) => {
++      if (!projectName) return;
++      const baseRepo = projectName.split('@')[0];
++      setSemanticLabelsLoading(true);
++      setSemanticLabelsError(null);
++      setSemanticLabelsProgress({ done: 0, total: 0 });
++      const ctrl = new AbortController();
++      semanticLabelsAbortRef.current = ctrl;
++      try {
++        await generateSemanticLabels({
++          repo: baseRepo,
++          overwrite,
++          signal: ctrl.signal,
++          onProgress: (p) => {
++            setSemanticLabelsProgress({
++              done: p.done,
++              total: p.total,
++              current: p.current?.communityId,
++            });
++          },
++        });
++        // Re-pull authoritative cache.
++        await refreshSemanticLabels();
++      } catch (err) {
++        setSemanticLabelsError(err instanceof Error ? err.message : 'Label generation failed');
++      } finally {
++        semanticLabelsAbortRef.current = null;
++        setSemanticLabelsLoading(false);
++        // Keep progress for a beat so the UI can show the final count.
++        setTimeout(() => setSemanticLabelsProgress(null), 1500);
++      }
++    },
++    [projectName, refreshSemanticLabels],
++  );
++
++  const cancelSemanticLabelGen = useCallback(() => {
++    semanticLabelsAbortRef.current?.abort();
++  }, []);
++
    const value: AppState = {
      viewMode,
      setViewMode,
@@ -9003,7 +9374,7 @@ index 25c5776..10ffc83 100644
      graph,
      setGraph,
      selectedNode,
-@@ -1293,6 +1816,56 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
+@@ -1293,6 +1907,64 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
      clearAICodeReferences,
      clearCodeReferences,
      codeReferenceFocus,
@@ -9057,6 +9428,14 @@ index 25c5776..10ffc83 100644
 +    dissonanceData,
 +    enterDissonanceMode,
 +    exitDissonanceMode,
++    // Semantic labels
++    semanticLabels,
++    semanticLabelsLoading,
++    semanticLabelsProgress,
++    semanticLabelsError,
++    refreshSemanticLabels,
++    generateSemanticLabelsAction,
++    cancelSemanticLabelGen,
    };
  
    return <AppStateContext.Provider value={value}>{children}</AppStateContext.Provider>;
@@ -9418,3 +9797,325 @@ index ebc18c1..630643f 100644
    await assertOk(response);
    return response.json() as Promise<BackendRepo[]>;
  };
+diff --git a/gitnexus-web/src/services/semantic-labeler.ts b/gitnexus-web/src/services/semantic-labeler.ts
+new file mode 100644
+index 0000000..0990d85
+--- /dev/null
++++ b/gitnexus-web/src/services/semantic-labeler.ts
+@@ -0,0 +1,316 @@
++/**
++ * Semantic labeler — ROADMAP Tier 2.1, frontend orchestration.
++ *
++ * Walks every Community in the active repo, asks the user's configured
++ * LLM provider to invent a domain label from the community's member
++ * names, and POSTs the result to `/semantic-labels?repo=…` for
++ * persistence. The server-side cache is the source of truth — this
++ * service is just the "fill the cache" pipeline.
++ *
++ * Reusing the existing `createChatModel(config)` from the chat agent
++ * means we automatically support every provider the user has wired up
++ * (OpenAI, Azure, Gemini, Anthropic, Ollama, OpenRouter, MiniMax, GLM)
++ * without per-provider plumbing. Same API key, same provider quota,
++ * one configuration to manage.
++ *
++ * The pipeline is small but the design choices matter:
++ *
++ *   - Concurrency = 3 by default. One per provider call is "polite"
++ *     enough that consumer rate limits don't fire; higher saves time
++ *     on big repos with 50+ communities.
++ *   - Per-community fan-in: top 30 member names by symbol kind
++ *     (Functions/Classes first, then Methods, finally Files). Past
++ *     30 names, the signal saturates and we just spend tokens.
++ *   - Strict-JSON prompt + JSON.parse. If the model wraps the JSON in
++ *     prose, we strip the fence; if it still won't parse, we drop the
++ *     entry rather than poisoning the cache with a half-label.
++ *   - Best-effort: a single community failing doesn't abort the run.
++ *     The progress callback emits the failure so the UI can surface it.
++ */
++
++import { runQuery, getBackendUrl } from './backend-client';
++import { createChatModel } from '../core/llm/agent';
++import { getActiveProviderConfig } from '../core/llm/settings-service';
++import { HumanMessage } from '@langchain/core/messages';
++
++export interface SemanticLabel {
++  label: string;
++  confidence: number;
++  evidenceNodes: string[];
++  labeledAt?: string;
++  provider?: string;
++  model?: string;
++}
++
++export interface SemanticLabelsCache {
++  schemaVersion: number;
++  labels: Record<string, SemanticLabel>;
++}
++
++export interface CommunitySeed {
++  communityId: string;
++  heuristicLabel: string | null;
++  /** Member identifiers chosen for the LLM prompt (best-effort top N). */
++  memberNames: string[];
++  /** Total members for context (we cap memberNames). */
++  totalMembers: number;
++}
++
++const TOP_MEMBERS_PER_COMMUNITY = 30;
++const DEFAULT_CONCURRENCY = 3;
++
++/**
++ * Fetch the cache snapshot from the backend. Returns an empty cache
++ * (with current schemaVersion) if the file doesn't exist yet.
++ */
++export async function fetchSemanticLabels(repo: string): Promise<SemanticLabelsCache> {
++  const url = `${webRoot()}/semantic-labels?repo=${encodeURIComponent(repo)}`;
++  const resp = await fetch(url, { cache: 'no-store' });
++  if (!resp.ok) throw new Error(`fetch semantic-labels: HTTP ${resp.status}`);
++  const body = await resp.json();
++  return { schemaVersion: body.schemaVersion ?? 1, labels: body.labels ?? {} };
++}
++
++/**
++ * Persist a batch of newly-generated labels. Merge semantics are
++ * last-write-wins per communityId, handled server-side.
++ */
++export async function postSemanticLabels(
++  repo: string,
++  labels: Record<string, SemanticLabel>,
++  provider: string,
++  model: string,
++): Promise<void> {
++  const url = `${webRoot()}/semantic-labels?repo=${encodeURIComponent(repo)}`;
++  const resp = await fetch(url, {
++    method: 'POST',
++    headers: { 'Content-Type': 'application/json' },
++    body: JSON.stringify({ labels, provider, model }),
++  });
++  if (!resp.ok) {
++    const text = await resp.text().catch(() => '');
++    throw new Error(`post semantic-labels: HTTP ${resp.status} ${text}`);
++  }
++}
++
++/**
++ * Enumerate all communities and a sample of their member symbols. We
++ * grab Function/Class/Method names first (highest signal for naming),
++ * fall back to Files when a community has no symbols (rare).
++ */
++export async function enumerateCommunities(repo: string): Promise<CommunitySeed[]> {
++  const rows = await runQuery(
++    `
++    MATCH (s)-[:CodeRelation {type: 'MEMBER_OF'}]->(c:Community)
++    WHERE s.label IN ['Function', 'Class', 'Method']
++    RETURN c.id AS communityId,
++           c.heuristicLabel AS heuristicLabel,
++           collect(s.name)[..${TOP_MEMBERS_PER_COMMUNITY}] AS names,
++           count(s) AS total
++    `,
++    repo,
++  ).catch(() => [] as any[]);
++
++  // If the symbols query came back empty, fall back to file names. This
++  // can happen on docs-only repos.
++  let rawRows = rows;
++  if (!rows.length) {
++    rawRows = await runQuery(
++      `
++      MATCH (f:File)-[:CodeRelation {type: 'MEMBER_OF'}]->(c:Community)
++      RETURN c.id AS communityId,
++             c.heuristicLabel AS heuristicLabel,
++             collect(f.filePath)[..${TOP_MEMBERS_PER_COMMUNITY}] AS names,
++             count(f) AS total
++      `,
++      repo,
++    ).catch(() => [] as any[]);
++  }
++
++  return rawRows
++    .map((row: any) => ({
++      communityId: row.communityId ?? row['c.id'],
++      heuristicLabel: row.heuristicLabel ?? row['c.heuristicLabel'] ?? null,
++      memberNames: Array.isArray(row.names) ? row.names.filter((n: unknown) => typeof n === 'string') : [],
++      totalMembers: Number(row.total ?? row['count(s)'] ?? row['count(f)'] ?? 0),
++    }))
++    .filter((s) => typeof s.communityId === 'string' && s.communityId.length > 0);
++}
++
++const SYSTEM_PROMPT = `You name software domains.
++Given the top-30 symbol names from one community of a codebase, propose
++a SHORT domain label (1-3 words, Title Case).
++
++Respond ONLY with strict JSON, no prose around it:
++{
++  "label": "Title Case Label",
++  "confidence": 0.0 to 1.0,
++  "reasoning": "one-sentence why"
++}
++
++Pick a label that someone seeing this repo for the first time would
++recognize. Examples of good labels: "Authentication", "Order Pricing",
++"Image Upload", "HTTP Routing", "Time Series Analysis".
++Avoid generic words alone: "Utils", "Helpers", "Module" are bad unless
++the symbols truly all look like utilities.`;
++
++function buildUserPrompt(seed: CommunitySeed): string {
++  const heuristic = seed.heuristicLabel ? `\nUpstream heuristic guess: "${seed.heuristicLabel}"` : '';
++  const truncatedNote =
++    seed.totalMembers > seed.memberNames.length
++      ? `\n(showing ${seed.memberNames.length} of ${seed.totalMembers} members)`
++      : '';
++  return `Symbol names in this community:${truncatedNote}
++${seed.memberNames.map((n) => `- ${n}`).join('\n')}${heuristic}`;
++}
++
++/**
++ * Extract a JSON object from a possibly-fenced or prose-wrapped reply.
++ * Returns null if nothing parses, so the caller can drop the entry.
++ */
++function tryParseLabel(text: string): { label: string; confidence: number } | null {
++  // Strip ```json fences if present.
++  let s = text.trim();
++  const fence = s.match(/```(?:json)?\s*([\s\S]*?)```/);
++  if (fence) s = fence[1].trim();
++  // Last-resort: extract the first {...} block.
++  if (!s.startsWith('{')) {
++    const m = s.match(/\{[\s\S]*\}/);
++    if (m) s = m[0];
++  }
++  try {
++    const parsed = JSON.parse(s);
++    if (typeof parsed?.label !== 'string' || parsed.label.trim().length === 0) return null;
++    const label = parsed.label.trim().slice(0, 80);
++    const confidence =
++      typeof parsed.confidence === 'number' && parsed.confidence >= 0 && parsed.confidence <= 1
++        ? parsed.confidence
++        : 0.6;
++    return { label, confidence };
++  } catch {
++    return null;
++  }
++}
++
++export interface LabelProgress {
++  done: number;
++  total: number;
++  current?: CommunitySeed;
++  newLabel?: SemanticLabel;
++  error?: string;
++}
++
++/**
++ * Drive the full labelling pipeline. Caller decides when to start
++ * (e.g. a button click). The promise resolves with the final cache
++ * snapshot. Onprogress fires after every community.
++ *
++ * Cancellation: pass an AbortSignal — we check it between communities
++ * and skip the remaining ones. In-flight LLM calls keep their token
++ * cost but don't pollute the cache because we POST in a single batch
++ * at the end.
++ */
++export async function generateSemanticLabels(opts: {
++  repo: string;
++  onProgress?: (p: LabelProgress) => void;
++  concurrency?: number;
++  signal?: AbortSignal;
++  /** When true, regenerate even communities that already have a label. */
++  overwrite?: boolean;
++}): Promise<{ labels: Record<string, SemanticLabel>; provider: string; model: string }> {
++  const config = getActiveProviderConfig();
++  if (!config) {
++    throw new Error(
++      'No LLM provider configured. Open Settings (gear icon, top-right) and pick a provider + API key.',
++    );
++  }
++  const model = createChatModel(config);
++  const providerName = config.provider;
++  const modelName = (config as { model?: string }).model || 'unknown';
++
++  const seeds = await enumerateCommunities(opts.repo);
++  if (seeds.length === 0) {
++    return { labels: {}, provider: providerName, model: modelName };
++  }
++
++  // Drop communities we already have unless overwrite is set. The cache
++  // is durable, so re-running this is cheap when most labels exist.
++  let toLabel = seeds;
++  if (!opts.overwrite) {
++    const existing = await fetchSemanticLabels(opts.repo);
++    const have = new Set(Object.keys(existing.labels));
++    toLabel = seeds.filter((s) => !have.has(s.communityId));
++  }
++
++  const total = toLabel.length;
++  let done = 0;
++  const newLabels: Record<string, SemanticLabel> = {};
++  const concurrency = Math.max(1, opts.concurrency ?? DEFAULT_CONCURRENCY);
++
++  // Worker pool: each worker pulls the next seed off the shared array.
++  const queue = [...toLabel];
++  await Promise.all(
++    Array.from({ length: Math.min(concurrency, queue.length) }, async () => {
++      while (queue.length > 0) {
++        if (opts.signal?.aborted) return;
++        const seed = queue.shift();
++        if (!seed) return;
++        try {
++          const response = await model.invoke([
++            new HumanMessage({ content: `${SYSTEM_PROMPT}\n\n${buildUserPrompt(seed)}` }),
++          ]);
++          const text = typeof response.content === 'string'
++            ? response.content
++            : Array.isArray(response.content)
++              ? response.content.map((c: any) => (typeof c === 'string' ? c : c?.text ?? '')).join('')
++              : String(response.content);
++          const parsed = tryParseLabel(text);
++          if (parsed) {
++            const entry: SemanticLabel = {
++              label: parsed.label,
++              confidence: parsed.confidence,
++              evidenceNodes: seed.memberNames.slice(0, 5),
++            };
++            newLabels[seed.communityId] = entry;
++            done++;
++            opts.onProgress?.({ done, total, current: seed, newLabel: entry });
++          } else {
++            done++;
++            opts.onProgress?.({ done, total, current: seed, error: 'unparseable LLM reply' });
++          }
++        } catch (err) {
++          done++;
++          opts.onProgress?.({
++            done,
++            total,
++            current: seed,
++            error: err instanceof Error ? err.message : 'LLM call failed',
++          });
++        }
++      }
++    }),
++  );
++
++  // Single POST at the end so partial runs don't leave the cache in an
++  // odd state on cancellation.
++  if (Object.keys(newLabels).length > 0) {
++    await postSemanticLabels(opts.repo, newLabels, providerName, modelName);
++  }
++
++  return { labels: newLabels, provider: providerName, model: modelName };
++}
++
++// ── small helpers ────────────────────────────────────────────────────
++
++/**
++ * Same-origin path: docker-server-snapshots etc. live on :4173 and the
++ * frontend talks to them via relative URLs. We deliberately don't reuse
++ * getBackendUrl() because that points at the gitnexus *API* on :4747.
++ */
++function webRoot(): string {
++  // window.origin works in the browser; defensive '' for tests / SSR.
++  if (typeof window !== 'undefined' && window.location) return window.location.origin;
++  // getBackendUrl is imported only to keep tree-shaking honest — not used.
++  void getBackendUrl;
++  return '';
++}

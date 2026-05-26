@@ -33,6 +33,7 @@ un nom marketing — et son premier pas concret.
 | 13 | **CSV export** sur churn/coupling/growth/lifespan/entropy/ownership | `?format=csv` partout, `docker-server-csv.mjs` |
 | 14 | **Ownership / bus factor** (per-file commit-share + repo-level summary) | `/ownership`, `OwnershipPanel.tsx` |
 | 15 | **Dissonance** (declared domains vs detected communities, purity score, misplaced files) | `/dissonance`, `DissonancePanel.tsx`, `patches/example-gitnexus-domains.json` |
+| 16 | **Semantic labels** (LLM-generated cluster names, cached on disk, integrated into Dissonance UI) | `/semantic-labels`, `semantic-labeler.ts` |
 
 Toutes les analytics ci-dessus marchent dans un seul repo. La granularité
 est le node gitnexus (File, Function, Class, Section, …).
@@ -112,7 +113,7 @@ adaptés (`Content-Type: text/csv`, `Content-Disposition: attachment`).
 
 ## 🚧 Tier 2 — Plus ambitieux, 1-2 mois
 
-### 2.1 — Annotation sémantique des clusters
+### 2.1 — Annotation sémantique des clusters ✅
 **Promesse** : pour chaque communauté gitnexus, un label métier
 ("auth", "billing", "data ingestion") généré par LLM à partir des noms
 des nodes.
