@@ -2524,17 +2524,17 @@ index 0000000..21909b2
 +}
 diff --git a/docker-server-similarity.mjs b/docker-server-similarity.mjs
 new file mode 100644
-index 0000000..bb616fe
+index 0000000..569a9ba
 --- /dev/null
 +++ b/docker-server-similarity.mjs
-@@ -0,0 +1,562 @@
+@@ -0,0 +1,675 @@
 +/**
-+ * Cross-repo similarity — ROADMAP Tier 2.5.
++ * Cross-repo similarity — ROADMAP Tier 2.5 (a + b).
 + *
 + * Endpoint:
 + *   GET /similarity?repos=A,B[,C,...][&windowDays=90]
 + *                  [&structuralThreshold=0.7][&semanticThreshold=0.7]
-+ *                  [&temporalThreshold=0.5]
++ *                  [&temporalThreshold=0.5][&lexicalSemantic=true]
 + *
 + * Aggregates the per-repo analytics we already serve elsewhere (entropy,
 + * ownership, lifespan) into a single 5-dim "identity vector" per repo,
@@ -2543,17 +2543,29 @@ index 0000000..bb616fe
 + *   - structuralScore   cosine similarity on the identity vector
 + *   - temporalCoupling  Jaccard of windowed co-activity from git logs
 + *                       over the last `windowDays` days
-+ *   - semanticScore     INTENTIONALLY left null in v1. The semantic axis
-+ *                       needs label embeddings, which the frontend has
-+ *                       to compute (LLM credentials live there, same
-+ *                       reason /semantic-labels keeps the LLM call
-+ *                       client-side). A future v1.1 will let the
-+ *                       frontend POST embeddings and we'll merge them.
++ *   - semanticScore     (Tier 2.5b) lexical similarity on the cached
++ *                       LLM labels from /semantic-labels — cosine on
++ *                       token-frequency vectors after lowercase +
++ *                       stopword filter. Returns null when neither repo
++ *                       has cached labels yet (run "Generate semantic
++ *                       labels" in DissonancePanel first).
++ *
++ *                       Why lexical and not true embeddings: half the
++ *                       chat providers (Anthropic, OpenRouter, MiniMax,
++ *                       GLM, …) don't expose embeddings APIs, and
++ *                       adding a separate "embeddings provider" config
++ *                       slot to support them all is its own 1-week
++ *                       design exercise. Lexical similarity ships
++ *                       today, works for 100% of provider setups, and
++ *                       gives a real signal (two repos with labels
++ *                       like {auth, login, password} vs {auth, sessions,
++ *                       jwt} will score high). True embeddings remain a
++ *                       documented upgrade path (2.5b.bis) — the
++ *                       endpoint shape stays the same when we swap.
 + *
 + * The position of each pair in the 2×2×2 cube is determined by the
-+ * three thresholds. When semanticScore is null we collapse the cube to
-+ * the 4 cells of the structural × temporal plane and tag the quadrant
-+ * with `(semantic axis pending)`.
++ * three thresholds. When semanticScore is null for a pair we collapse
++ * to the 4 cells of the structural × temporal plane for that pair only.
 + *
 + * --- Policy escape hatch ---
 + *
@@ -2599,8 +2611,25 @@ index 0000000..bb616fe
 +const STALE_REPO_DAYS = 180;
 +const LICENSE_FILENAMES = ['LICENSE', 'LICENSE.md', 'LICENSE.txt', 'LICENCE', 'COPYING'];
 +const POLICY_FILENAME = '.gitnexus-policy.json';
++const SEMANTIC_LABELS_PATH = ['.gitnexus', 'semantic-labels.json'];
 +
 +const IDENTITY_DIMS = ['density', 'modularity', 'busFactorNorm', 'topAuthorShare', 'foundationalRatio'];
++
++// Minimal bilingual stopword list — English + French, the two languages
++// labels actually appear in. Kept short on purpose: we want to filter
++// the obvious noise ("the", "of", "et", "la") without accidentally
++// dropping content words. Token frequency does most of the work; the
++// stopword list is just a polish step.
++const STOPWORDS = new Set([
++  // English
++  'the', 'and', 'or', 'a', 'an', 'of', 'to', 'in', 'on', 'for', 'with',
++  'by', 'from', 'at', 'as', 'is', 'are', 'be', 'was', 'were', 'this',
++  'that', 'these', 'those', 'it', 'its', 'into', 'over', 'between',
++  // French
++  'le', 'la', 'les', 'un', 'une', 'des', 'de', 'du', 'et', 'ou', 'à',
++  'au', 'aux', 'dans', 'pour', 'avec', 'par', 'sur', 'sous', 'sans',
++  'son', 'sa', 'ses', 'ce', 'cette', 'ces', 'qui', 'que', 'quoi', 'dont',
++]);
 +
 +function runCmd(cmd, args, opts = {}) {
 +  return new Promise((resolve, reject) => {
@@ -2638,6 +2667,67 @@ index 0000000..bb616fe
 +    if (err && err.code === 'ENOENT') return null;
 +    return { _error: err.message };
 +  }
++}
++
++async function readSemanticLabels(repoPath) {
++  try {
++    const raw = await readFile(join(repoPath, ...SEMANTIC_LABELS_PATH), 'utf8');
++    const parsed = JSON.parse(raw);
++    // Cache shape: { schemaVersion: 1, labels: { commId: { label, ... } } }
++    if (!parsed || typeof parsed.labels !== 'object') return [];
++    return Object.values(parsed.labels)
++      .map((entry) => (entry && typeof entry.label === 'string' ? entry.label : null))
++      .filter((s) => s && s.length > 0);
++  } catch (err) {
++    if (err && err.code === 'ENOENT') return [];
++    return [];
++  }
++}
++
++function tokenizeLabel(text) {
++  // Lower + split on anything that isn't a letter/digit (keeps unicode
++  // letters thanks to \p{L}/\p{N}). Drop short tokens and stopwords.
++  return text
++    .toLowerCase()
++    .split(/[^\p{L}\p{N}]+/u)
++    .filter((tok) => tok.length >= 3 && !STOPWORDS.has(tok));
++}
++
++function bowVectorFromLabels(labels) {
++  // Unit weight per label — labeled communities are roughly comparable
++  // in scope (community detection produces communities of broadly
++  // similar size). Weighting by community member count would skew
++  // toward huge communities and overpower the long tail. Keep it flat.
++  const v = new Map();
++  for (const label of labels) {
++    const tokens = tokenizeLabel(label);
++    const seen = new Set();
++    for (const t of tokens) {
++      // Count each token once per label (not once per occurrence inside
++      // a single label) — "API API gateway" shouldn't double-count.
++      if (seen.has(t)) continue;
++      seen.add(t);
++      v.set(t, (v.get(t) || 0) + 1);
++    }
++  }
++  return v;
++}
++
++function cosineBow(va, vb) {
++  if (va.size === 0 || vb.size === 0) return 0;
++  let dot = 0;
++  let na = 0;
++  let nb = 0;
++  for (const [, x] of va) na += x * x;
++  for (const [, y] of vb) nb += y * y;
++  // Iterate the smaller map for dot product.
++  const [small, large] = va.size <= vb.size ? [va, vb] : [vb, va];
++  for (const [t, x] of small) {
++    const y = large.get(t);
++    if (y !== undefined) dot += x * y;
++  }
++  if (na === 0 || nb === 0) return 0;
++  return dot / (Math.sqrt(na) * Math.sqrt(nb));
 +}
 +
 +async function readLicense(repoPath) {
@@ -2818,6 +2908,8 @@ index 0000000..bb616fe
 +
 +  const policy = await readPolicy(repoPath);
 +  const license = await readLicense(repoPath);
++  const semanticLabels = await readSemanticLabels(repoPath);
++  const labelBow = bowVectorFromLabels(semanticLabels);
 +
 +  return {
 +    name: repoName,
@@ -2837,6 +2929,8 @@ index 0000000..bb616fe
 +    lastCommitMs,
 +    license,
 +    policy,
++    semanticLabelsCount: semanticLabels.length,
++    labelBow,
 +  };
 +}
 +
@@ -2983,6 +3077,7 @@ index 0000000..bb616fe
 +  const structuralThreshold = clampUnit(Number(url.searchParams.get('structuralThreshold')) || DEFAULT_STRUCTURAL);
 +  const semanticThreshold = clampUnit(Number(url.searchParams.get('semanticThreshold')) || DEFAULT_SEMANTIC);
 +  const temporalThreshold = clampUnit(Number(url.searchParams.get('temporalThreshold')) || DEFAULT_TEMPORAL);
++  const lexicalSemantic = (url.searchParams.get('lexicalSemantic') ?? 'true').toLowerCase() !== 'false';
 +
 +  // Build per-repo snapshots in parallel — git log is the slowest step
 +  // and they're independent.
@@ -3005,7 +3100,13 @@ index 0000000..bb616fe
 +      const b = snapshots[j];
 +      const structural = cosineSimilarity(a.identityVector, b.identityVector);
 +      const temporal = temporalJaccard(a.perBucketActivity, b.perBucketActivity, windowMs, sinceMs);
-+      const semantic = null; // v1: semantic axis pending (frontend embeddings)
++      // Semantic = lexical cosine on cached label BoWs when both repos
++      // have labels. null otherwise — falls back to 4-quadrant collapse
++      // for that pair only (cube is still 8 cells for pairs that do
++      // have labels). The lexicalSemantic flag lets callers force the
++      // legacy null behavior for A/B comparisons.
++      const bothHaveLabels = lexicalSemantic && a.labelBow.size > 0 && b.labelBow.size > 0;
++      const semantic = bothHaveLabels ? cosineBow(a.labelBow, b.labelBow) : null;
 +      const semanticAxisPresent = semantic !== null;
 +
 +      const highS = structural >= structuralThreshold;
@@ -3024,7 +3125,7 @@ index 0000000..bb616fe
 +        a: a.name,
 +        b: b.name,
 +        structuralScore: roundN(structural, 4),
-+        semanticScore: semantic,
++        semanticScore: semantic === null ? null : roundN(semantic, 4),
 +        temporalCoupling: roundN(temporal, 4),
 +        quadrant,
 +        recommendation,
@@ -3044,7 +3145,15 @@ index 0000000..bb616fe
 +    licensePresent: !!s.license,
 +    policy: s.policy,
 +    lastCommitDate: s.lastCommitMs ? new Date(s.lastCommitMs).toISOString() : null,
++    semanticLabelsCount: s.semanticLabelsCount,
 +  }));
++
++  // Semantic axis is "available" if at least one pair could use it.
++  // The frontend uses this to decide whether to render the pending
++  // banner (no labels anywhere) vs the partial-coverage hint (some
++  // pairs have it, others don't).
++  const reposWithLabels = repos.filter((r) => r.semanticLabelsCount > 0).length;
++  const semanticAxisAvailable = lexicalSemantic && reposWithLabels >= 2;
 +
 +  res.writeHead(200, { 'Content-Type': 'application/json' });
 +  res.end(
@@ -3058,8 +3167,12 @@ index 0000000..bb616fe
 +      },
 +      windowDays,
 +      identityDims: IDENTITY_DIMS,
-+      semanticAxisAvailable: false,
-+      semanticAxisNote: 'Semantic axis is computed client-side from embeddings of /semantic-labels. v1 returns the 4-quadrant structural × temporal plane.',
++      semanticAxisAvailable,
++      semanticAxisMode: lexicalSemantic ? 'lexical' : 'disabled',
++      reposWithLabels,
++      semanticAxisNote: lexicalSemantic
++        ? `Semantic axis: lexical cosine on cached LLM labels from /semantic-labels (Tier 2.5b). ${reposWithLabels}/${repos.length} repos have labels — generate via DissonancePanel ✨ to extend coverage. True embeddings (2.5b.bis) remain a future upgrade.`
++        : 'Semantic axis disabled via ?lexicalSemantic=false.',
 +    }),
 +  );
 +}
@@ -9452,10 +9565,10 @@ index 5781d26..ad64bcf 100644
          <div className="flex items-center gap-3">
 diff --git a/gitnexus-web/src/components/SimilarityPanel.tsx b/gitnexus-web/src/components/SimilarityPanel.tsx
 new file mode 100644
-index 0000000..3cad6f4
+index 0000000..5fc916f
 --- /dev/null
 +++ b/gitnexus-web/src/components/SimilarityPanel.tsx
-@@ -0,0 +1,443 @@
+@@ -0,0 +1,467 @@
 +import { useEffect, useMemo, useState } from 'react';
 +import {
 +  X,
@@ -9502,6 +9615,7 @@ index 0000000..3cad6f4
 +  licensePresent: boolean;
 +  policy: { isolation_required: boolean; reason: string | null; allow_merge_with: string[] } | null;
 +  lastCommitDate: string | null;
++  semanticLabelsCount: number;
 +};
 +
 +type SimilarityPair = {
@@ -9524,6 +9638,8 @@ index 0000000..3cad6f4
 +  windowDays: number;
 +  identityDims: string[];
 +  semanticAxisAvailable: boolean;
++  semanticAxisMode: 'lexical' | 'disabled';
++  reposWithLabels: number;
 +  semanticAxisNote: string;
 +};
 +
@@ -9663,14 +9779,27 @@ index 0000000..3cad6f4
 +
 +      {similarityData && !similarityLoading && (
 +        <>
-+          {/* Semantic-axis pending banner */}
++          {/* Semantic-axis status banner — three states:
++              - available (all repos labeled): info, mention lexical mode
++              - partial coverage: warn that some pairs collapse to 4 cells
++              - no labels anywhere: prompt the user to run the LLM labeler */}
 +          {!similarityData.semanticAxisAvailable && (
 +            <div className="shrink-0 border-b border-border-subtle bg-violet-500/5 px-3 py-1.5 text-[10px] text-violet-200">
-+              <span className="font-semibold">Semantic axis pending.</span>{' '}
-+              v1 ships the structural × temporal plane (4 quadrants). The semantic dimension needs
-+              client-side label embeddings (deferred to v1.1).
++              <span className="font-semibold">Semantic axis disabled.</span>{' '}
++              {similarityData.reposWithLabels === 0
++                ? 'No repo has cached LLM labels yet — run "Generate semantic labels" from DissonancePanel ✨ on each repo to enable the axis.'
++                : `Only ${similarityData.reposWithLabels}/${similarityData.repos.length} repos have labels — need ≥2.`}
 +            </div>
 +          )}
++          {similarityData.semanticAxisAvailable &&
++            similarityData.reposWithLabels < similarityData.repos.length && (
++              <div className="shrink-0 border-b border-border-subtle bg-violet-500/5 px-3 py-1.5 text-[10px] text-violet-200">
++                <span className="font-semibold">Partial semantic coverage.</span>{' '}
++                {similarityData.reposWithLabels}/{similarityData.repos.length} repos have labels —
++                pairs without labels collapse to the 4-quadrant plane. Mode: lexical cosine on
++                cached labels (2.5b).
++              </div>
++            )}
 +
 +          {/* Window-days control + thresholds */}
 +          <div className="flex shrink-0 items-center gap-2 border-b border-border-subtle bg-elevated px-3 py-2 text-[10px] text-text-muted">
@@ -9879,6 +10008,14 @@ index 0000000..3cad6f4
 +                          {r.policy?.isolation_required && (
 +                            <span title="isolation_required">
 +                              <ShieldAlert className="ml-1 inline h-2.5 w-2.5 text-slate-300" />
++                            </span>
++                          )}
++                          {r.semanticLabelsCount > 0 && (
++                            <span
++                              className="ml-1 inline rounded bg-violet-500/15 px-1 text-[9px] text-violet-300"
++                              title={`${r.semanticLabelsCount} LLM labels cached`}
++                            >
++                              {r.semanticLabelsCount}L
 +                            </span>
 +                          )}
 +                        </td>
@@ -11128,7 +11265,7 @@ index 0000000..a370295
 +  );
 +};
 diff --git a/gitnexus-web/src/hooks/useAppState.tsx b/gitnexus-web/src/hooks/useAppState.tsx
-index 25c5776..1a2bddc 100644
+index 25c5776..bbe9185 100644
 --- a/gitnexus-web/src/hooks/useAppState.tsx
 +++ b/gitnexus-web/src/hooks/useAppState.tsx
 @@ -8,7 +8,12 @@ import {
@@ -11184,7 +11321,7 @@ index 25c5776..1a2bddc 100644
  
    // Graph data
    graph: KnowledgeGraph | null;
-@@ -192,6 +209,250 @@ interface AppState {
+@@ -192,6 +209,253 @@ interface AppState {
    clearAICodeReferences: () => void;
    clearCodeReferences: () => void;
    codeReferenceFocus: CodeReferenceFocus | null;
@@ -11409,6 +11546,7 @@ index 25c5776..1a2bddc 100644
 +  licensePresent: boolean;
 +  policy: { isolation_required: boolean; reason: string | null; allow_merge_with: string[] } | null;
 +  lastCommitDate: string | null;
++  semanticLabelsCount: number;
 +}
 +
 +export interface SimilarityPair {
@@ -11431,11 +11569,13 @@ index 25c5776..1a2bddc 100644
 +  windowDays: number;
 +  identityDims: string[];
 +  semanticAxisAvailable: boolean;
++  semanticAxisMode: 'lexical' | 'disabled';
++  reposWithLabels: number;
 +  semanticAxisNote: string;
  }
  
  const AppStateContext = createContext<AppState | null>(null);
-@@ -205,6 +466,10 @@ export const AppStateProvider = ({ children }: { children: ReactNode }) => (
+@@ -205,6 +469,10 @@ export const AppStateProvider = ({ children }: { children: ReactNode }) => (
  const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
    // View state
    const [viewMode, setViewMode] = useState<ViewMode>('onboarding');
@@ -11446,7 +11586,7 @@ index 25c5776..1a2bddc 100644
  
    const {
      graph,
-@@ -343,6 +608,81 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
+@@ -343,6 +611,81 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
    const [isCodePanelOpen, setCodePanelOpen] = useState(false);
    const [codeReferenceFocus, setCodeReferenceFocus] = useState<CodeReferenceFocus | null>(null);
  
@@ -11528,7 +11668,7 @@ index 25c5776..1a2bddc 100644
    // Map of normalized file path → node ID for graph-based lookups
    const fileNodeByPath = useMemo(() => {
      if (!graph) return new Map<string, string>();
-@@ -1207,9 +1547,474 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
+@@ -1207,9 +1550,474 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
      setCodeReferenceFocus(null);
    }, []);
  
@@ -12003,7 +12143,7 @@ index 25c5776..1a2bddc 100644
      graph,
      setGraph,
      selectedNode,
-@@ -1293,6 +2098,83 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
+@@ -1293,6 +2101,83 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
      clearAICodeReferences,
      clearCodeReferences,
      codeReferenceFocus,

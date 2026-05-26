@@ -132,7 +132,7 @@ Fichiers à la racine du repo, qui rendent le setup reproductible sur poste Wind
 | `GET /semantic-labels` + `POST` | Cache des labels LLM par community (LLM appelé côté frontend) |
 | `GET /coupling/cross` | Couplage cross-repo via bucketing temporel sur `git log` multi-repo |
 | `GET /growth/cross` | Timeline union des snapshots avec counts par-repo (migration des centres de gravité) |
-| `GET /similarity` | Vecteur d'Identité 5-dim par repo + score structural × temporal par paire, lit `.gitnexus-policy.json` + auto warnings (LICENSE / age / auteurs) |
+| `GET /similarity` | Vecteur d'Identité 5-dim par repo + cube 2×2×2 (structural × semantic lexical × temporal) par paire, lit `.gitnexus-policy.json` + auto warnings (LICENSE / age / auteurs). Axe sémantique = cosine BoW sur labels LLM cachés (param `?lexicalSemantic=false` pour désactiver). |
 | `GET /listdir` | Folder browser server-side |
 | `GET /export` + `POST /import` | Bundle ou index-only, register-only mode |
 | `?format=csv` partout | Serializer partagé `docker-server-csv.mjs` |
@@ -193,7 +193,8 @@ Fichiers à la racine du repo, qui rendent le setup reproductible sur poste Wind
 - ✅ 2.2 Dissonance score (`/dissonance`, `DissonancePanel.tsx`, exemple `patches/example-gitnexus-domains.json`)
 - ✅ 2.3 What-if simulator (`services/mutation-engine.ts`, `WhatIfPanel.tsx`, frontend-only)
 - ✅ 2.4 VSCode extension v0.1 ([vscode-extension/](vscode-extension/) — status bar + 2 commandes)
-- ✅ 2.5a Cross-repo similarity v1 — plan structural × temporal (4 quadrants sur 8), identity vector 5-dim, policy JSON, warnings auto. v1.1 (axe sémantique LLM) + v1.2 (Galaxie UMAP) restent à faire.
+- ✅ 2.5a Cross-repo similarity v1 — plan structural × temporal (4 quadrants sur 8), identity vector 5-dim, policy JSON, warnings auto.
+- ✅ 2.5b Cross-repo similarity v1.b — axe sémantique lexical (cosine BoW sur labels LLM cachés), cube 2×2×2 complet, partial-coverage handling. Vrais embeddings restent un upgrade path (2.5b.bis).
 
 **Pending — Tier 2bis (plate-forme, ~3 semaines cumulées, à livrer avant le reste)** :
 - ⏳ 2bis.1 MCP exposure des analytics time-travel (3-5j)
@@ -203,7 +204,7 @@ Fichiers à la racine du repo, qui rendent le setup reproductible sur poste Wind
 - ⏳ 2bis.5 Repo ID stable (3-5j)
 
 **Pending — Tier 2 résiduel** :
-- ⏳ 2.5b Cross-repo similarity — axe sémantique (cube 2×2×2 complet via embeddings client-side des labels LLM) — requiert un client embeddings dans `semantic-labeler.ts`
+- ⏳ 2.5b.bis Cross-repo similarity — vrais embeddings (drop-in replacement de la similarité lexicale) si les providers configurés le permettent (OpenAI / Gemini / Ollama)
 - ⏳ 2.5c Cross-repo similarity — Vecteur d'Identité v2 (entropie + growth_rate + churn_concentration + file_size_pareto + language_diversity + tree_depth)
 - ⏳ 2.6 Galaxie UMAP / Carte de l'écosystème — séparée de 2.5, requiert 2.5c
 

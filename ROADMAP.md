@@ -1,7 +1,7 @@
 # GitNexus — Roadmap
 
 État vivant des fonctionnalités déjà livrées et des prochaines pistes.
-Dernière mise à jour : 2026-05-26 (Tier 2.5a livré : structural × temporal cube + policy JSON + warnings auto).
+Dernière mise à jour : 2026-05-26 (Tier 2.5b livré : axe sémantique lexical sur labels LLM cachés — cube 2×2×2 complet).
 
 > 📋 **Voir aussi** [INVENTORY.md](INVENTORY.md) — état des lieux complet :
 > features upstream + nos ajouts + distance avec upstream. À utiliser
@@ -39,6 +39,7 @@ un nom marketing — et son premier pas concret.
 | 19 | **What-if simulator** (rename / move / delete symbolic mutations, preview via diff coloring) | `services/mutation-engine.ts`, `WhatIfPanel.tsx` |
 | 20 | **VSCode extension v0.1** (status-bar bus factor for the active file) | `vscode-extension/` (separate package) |
 | 21 | **Cross-repo similarity v1** (structural × temporal cube, 5-dim identity vector, `.gitnexus-policy.json`, auto warnings) — semantic axis pending v1.1 | `/similarity`, `SimilarityPanel.tsx`, `patches/example-gitnexus-policy.json` |
+| 22 | **Cross-repo similarity v1.b** : axe sémantique lexical (cosine BoW sur labels LLM cachés) → cube 2×2×2 complet, partial-coverage handling | `/similarity?lexicalSemantic=…`, `SimilarityPanel` partial-coverage banner |
 
 Toutes les analytics ci-dessus marchent dans un seul repo. La granularité
 est le node gitnexus (File, Function, Class, Section, …).
@@ -198,6 +199,23 @@ avec `.gitnexus-domains.json` (Node n'a pas de YAML stdlib). Endpoint :
 `GET /similarity?repos=A,B[,...][&windowDays=][&{structural,semantic,temporal}Threshold=]`.
 Panel : `SimilarityPanel.tsx` — matrice N×N color-coded par quadrant,
 drill-down par paire, table des identity vectors.
+
+**v1.b (lexical semantic) — livré** : axe sémantique calculé comme
+similarité cosinus sur des vecteurs token-frequency des labels LLM
+cachés (`/semantic-labels`). Tokenisation = lowercase, split sur
+non-alpha, filtre stopwords bilingues EN+FR, drop tokens ≤2 chars.
+Pondération unitaire par label (les communities ont des tailles
+comparables, pas la peine d'introduire IDF pour 2 repos). Trois états :
+(1) **disponible** = ≥2 repos ont des labels → cube 2×2×2 complet ;
+(2) **partial** = certaines paires l'ont, d'autres collapse vers la
+grille 4-cells ; (3) **off** = aucun repo n'a de labels → bandeau
+"générez d'abord via DissonancePanel ✨". Choix lexical et non
+embeddings : la moitié des providers chat (Anthropic, OpenRouter, …)
+n'ont pas d'API embeddings, et ajouter un slot "embeddings provider"
+distinct est son propre chantier d'une semaine. Vrais embeddings restent
+un upgrade-path documenté (2.5b.bis) — le contrat de l'endpoint est
+inchangé quand on swappera. Toggle : `?lexicalSemantic=false` pour
+forcer l'ancien comportement.
 
 **Pré-requis** : Repo ID stable (cf 2bis.5) pour que la similarité porte
 à travers les re-clones et identifie les paires legacy/rewrite (FN-2).
