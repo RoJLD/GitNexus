@@ -2347,10 +2347,10 @@ index 0000000..b9a666a
 +}
 diff --git a/docker-server-semantic-labels.mjs b/docker-server-semantic-labels.mjs
 new file mode 100644
-index 0000000..21909b2
+index 0000000..254682a
 --- /dev/null
 +++ b/docker-server-semantic-labels.mjs
-@@ -0,0 +1,171 @@
+@@ -0,0 +1,191 @@
 +/**
 + * Semantic-labels cache — ROADMAP Tier 2.1, server side.
 + *
@@ -2494,6 +2494,25 @@ index 0000000..21909b2
 +    const evidenceNodes = Array.isArray(entry.evidenceNodes)
 +      ? entry.evidenceNodes.filter((s) => typeof s === 'string').slice(0, 20)
 +      : [];
++    // Tier 2.5b.bis: accept optional embedding vector + provenance.
++    // We tolerate the absence of these (cache entries without embeddings
++    // are still valid — they just won't contribute to centroid cosine
++    // in /similarity). When present we sanity-check it's a numeric array
++    // of reasonable length (truncate at 4096 dims — current largest
++    // commodity model is 3072).
++    let embedding;
++    let embeddingProvider;
++    let embeddingModel;
++    if (Array.isArray(entry.embedding)) {
++      const cleaned = entry.embedding
++        .filter((n) => typeof n === 'number' && Number.isFinite(n))
++        .slice(0, 4096);
++      if (cleaned.length > 0) {
++        embedding = cleaned;
++        embeddingProvider = typeof entry.embeddingProvider === 'string' ? entry.embeddingProvider : provider;
++        embeddingModel = typeof entry.embeddingModel === 'string' ? entry.embeddingModel : model;
++      }
++    }
 +    cache.labels[communityId] = {
 +      label,
 +      confidence,
@@ -2501,6 +2520,7 @@ index 0000000..21909b2
 +      labeledAt: now,
 +      provider,
 +      model,
++      ...(embedding ? { embedding, embeddingProvider, embeddingModel } : {}),
 +    };
 +    merged++;
 +  }
@@ -2524,10 +2544,10 @@ index 0000000..21909b2
 +}
 diff --git a/docker-server-similarity.mjs b/docker-server-similarity.mjs
 new file mode 100644
-index 0000000..569a9ba
+index 0000000..3dc5174
 --- /dev/null
 +++ b/docker-server-similarity.mjs
-@@ -0,0 +1,675 @@
+@@ -0,0 +1,946 @@
 +/**
 + * Cross-repo similarity — ROADMAP Tier 2.5 (a + b).
 + *
@@ -2613,7 +2633,31 @@ index 0000000..569a9ba
 +const POLICY_FILENAME = '.gitnexus-policy.json';
 +const SEMANTIC_LABELS_PATH = ['.gitnexus', 'semantic-labels.json'];
 +
-+const IDENTITY_DIMS = ['density', 'modularity', 'busFactorNorm', 'topAuthorShare', 'foundationalRatio'];
++// Identity Vector versions:
++//   v1 = 5 dims, ship-1 (Tier 2.5a). Frozen for backward compat.
++//   v2 = 10 dims (Tier 2.5c). Adds growthRate, churnConcentration,
++//        fileSizePareto, languageDiversity, treeDepth.
++const IDENTITY_DIMS_V1 = ['density', 'modularity', 'busFactorNorm', 'topAuthorShare', 'foundationalRatio'];
++const IDENTITY_DIMS_V2 = [
++  ...IDENTITY_DIMS_V1,
++  'growthRate',
++  'churnConcentration',
++  'fileSizePareto',
++  'languageDiversity',
++  'treeDepth',
++];
++const DEFAULT_IDENTITY_VERSION = 2;
++
++// File walk cap — we want stable signal, not exhaustive scan. Most
++// signals saturate well before 5000 files; bigger repos are usually
++// monorepos where the long tail is generated/vendored code that
++// pollutes more than it helps.
++const MAX_FILES_WALK = 5000;
++const IGNORED_DIRS = new Set([
++  'node_modules', '.git', '.venv', 'venv', '__pycache__', 'dist',
++  'build', 'target', '.next', '.nuxt', '.cache', '.gitnexus',
++  'coverage', '.pytest_cache', '.mypy_cache', '.tox',
++]);
 +
 +// Minimal bilingual stopword list — English + French, the two languages
 +// labels actually appear in. Kept short on purpose: we want to filter
@@ -2674,14 +2718,57 @@ index 0000000..569a9ba
 +    const raw = await readFile(join(repoPath, ...SEMANTIC_LABELS_PATH), 'utf8');
 +    const parsed = JSON.parse(raw);
 +    // Cache shape: { schemaVersion: 1, labels: { commId: { label, ... } } }
-+    if (!parsed || typeof parsed.labels !== 'object') return [];
-+    return Object.values(parsed.labels)
-+      .map((entry) => (entry && typeof entry.label === 'string' ? entry.label : null))
-+      .filter((s) => s && s.length > 0);
++    if (!parsed || typeof parsed.labels !== 'object') {
++      return { labels: [], embeddings: [], embeddingDim: 0 };
++    }
++    const labels = [];
++    const embeddings = [];
++    let embeddingDim = 0;
++    for (const entry of Object.values(parsed.labels)) {
++      if (!entry || typeof entry.label !== 'string' || entry.label.length === 0) continue;
++      labels.push(entry.label);
++      if (Array.isArray(entry.embedding) && entry.embedding.length > 0) {
++        if (embeddingDim === 0) embeddingDim = entry.embedding.length;
++        // Skip dimensionality mismatches — usually means the user
++        // switched embedding models. centroid cosine is meaningless
++        // across different vector spaces.
++        if (entry.embedding.length === embeddingDim) {
++          embeddings.push(entry.embedding);
++        }
++      }
++    }
++    return { labels, embeddings, embeddingDim };
 +  } catch (err) {
-+    if (err && err.code === 'ENOENT') return [];
-+    return [];
++    if (err && err.code === 'ENOENT') return { labels: [], embeddings: [], embeddingDim: 0 };
++    return { labels: [], embeddings: [], embeddingDim: 0 };
 +  }
++}
++
++// Centroid of a list of vectors. Returns null if empty.
++function centroid(vectors) {
++  if (!vectors || vectors.length === 0) return null;
++  const dim = vectors[0].length;
++  const c = new Array(dim).fill(0);
++  for (const v of vectors) {
++    if (v.length !== dim) return null;
++    for (let i = 0; i < dim; i++) c[i] += v[i];
++  }
++  for (let i = 0; i < dim; i++) c[i] /= vectors.length;
++  return c;
++}
++
++function cosineDense(a, b) {
++  if (!a || !b || a.length !== b.length) return 0;
++  let dot = 0;
++  let na = 0;
++  let nb = 0;
++  for (let i = 0; i < a.length; i++) {
++    dot += a[i] * b[i];
++    na += a[i] * a[i];
++    nb += b[i] * b[i];
++  }
++  if (na === 0 || nb === 0) return 0;
++  return dot / (Math.sqrt(na) * Math.sqrt(nb));
 +}
 +
 +function tokenizeLabel(text) {
@@ -2756,10 +2843,11 @@ index 0000000..569a9ba
 +
 +// Parse `git log --pretty=format:%an%x09%aI --name-only --no-merges`
 +// into { authors: Map<name,commits>, perBucketActivity: Set<bucketId>,
-+// lastCommitDate, filesTouched }.
++// lastCommitDate, filesTouched, perFileTouches: Map<path, count> }.
 +function parseLogForRepo(stdout, windowMs) {
 +  const authors = new Map();
 +  const perBucketActivity = new Set();
++  const perFileTouches = new Map();
 +  let lastCommitDate = null;
 +  let currentAuthor = null;
 +  let currentDateMs = null;
@@ -2792,12 +2880,137 @@ index 0000000..569a9ba
 +    }
 +    filesInThisCommit++;
 +    filesTouched++;
++    perFileTouches.set(line, (perFileTouches.get(line) || 0) + 1);
 +  }
 +  // Trailing commit (no blank line at EOF).
 +  if (currentAuthor !== null && filesInThisCommit > 0) {
 +    authors.set(currentAuthor, (authors.get(currentAuthor) || 0) + 1);
 +  }
-+  return { authors, perBucketActivity, lastCommitDate, filesTouched };
++  return { authors, perBucketActivity, lastCommitDate, filesTouched, perFileTouches };
++}
++
++// Gini coefficient on a numeric distribution. Returns 0 for perfect
++// equality (all values equal), 1 for perfect inequality (all weight on
++// one item). Standard definition; we sort + use the cumulative-share
++// formula which is O(n log n) but doesn't matter here.
++function gini(values) {
++  if (!Array.isArray(values) || values.length === 0) return 0;
++  const sorted = values.slice().sort((a, b) => a - b);
++  const n = sorted.length;
++  let sum = 0;
++  let weightedSum = 0;
++  for (let i = 0; i < n; i++) {
++    sum += sorted[i];
++    weightedSum += (i + 1) * sorted[i];
++  }
++  if (sum === 0) return 0;
++  return (2 * weightedSum) / (n * sum) - (n + 1) / n;
++}
++
++// Shannon entropy normalized to [0, 1] by dividing by log2(N) where N
++// is the number of distinct buckets. A repo with all files in one
++// extension scores 0; a repo with even distribution across many
++// extensions scores close to 1.
++function normalizedShannon(counts) {
++  const values = counts.filter((c) => c > 0);
++  if (values.length <= 1) return 0;
++  const total = values.reduce((s, c) => s + c, 0);
++  if (total === 0) return 0;
++  let h = 0;
++  for (const c of values) {
++    const p = c / total;
++    h -= p * Math.log2(p);
++  }
++  const hMax = Math.log2(values.length);
++  return hMax > 0 ? h / hMax : 0;
++}
++
++// Median of a numeric array. Returns 0 for empty input.
++function median(values) {
++  if (!values || values.length === 0) return 0;
++  const sorted = values.slice().sort((a, b) => a - b);
++  const mid = Math.floor(sorted.length / 2);
++  return sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid];
++}
++
++// Single-pass walk of the repo's working tree. Returns up to
++// MAX_FILES_WALK file entries with size + depth + extension. Skips
++// dot-dirs and the IGNORED_DIRS set so we don't measure node_modules.
++// depth = 0 for files at the repo root.
++async function walkRepoFiles(repoPath) {
++  const out = [];
++  async function recurse(dir, depth) {
++    if (out.length >= MAX_FILES_WALK) return;
++    let entries;
++    try {
++      entries = await readdir(dir, { withFileTypes: true });
++    } catch {
++      return;
++    }
++    for (const e of entries) {
++      if (out.length >= MAX_FILES_WALK) return;
++      if (e.name.startsWith('.') && e.name !== '.gitnexus') continue; // skip hidden, EXCEPT keep .gitnexus filtered explicitly below
++      if (IGNORED_DIRS.has(e.name)) continue;
++      const full = join(dir, e.name);
++      if (e.isDirectory()) {
++        await recurse(full, depth + 1);
++      } else if (e.isFile()) {
++        let size = 0;
++        try {
++          const st = await stat(full);
++          size = st.size;
++        } catch {
++          continue;
++        }
++        const dot = e.name.lastIndexOf('.');
++        const ext = dot > 0 ? e.name.slice(dot + 1).toLowerCase() : '';
++        out.push({ size, depth, ext });
++      }
++    }
++  }
++  await recurse(repoPath, 0);
++  return out;
++}
++
++// Growth rate: normalized slope of node-count over snapshot timeline.
++// Returns ratio (final - initial) / initial, clamped to [-1, 1] then
++// mapped to [0, 1] via (x + 1) / 2 so the dim sits in the same range
++// as the others.
++async function growthRateFromSnapshots(repoName) {
++  const dir = join(SNAPSHOTS_ROOT, safeSnapshotKey(repoName));
++  let entries;
++  try {
++    entries = await readdir(dir, { withFileTypes: true });
++  } catch (err) {
++    if (err && err.code === 'ENOENT') return 0.5; // neutral when no snapshots
++    return 0.5;
++  }
++  const points = [];
++  for (const e of entries) {
++    if (!e.isDirectory()) continue;
++    try {
++      const commit = JSON.parse(await readFile(join(dir, e.name, 'commit.json'), 'utf8'));
++      const meta = JSON.parse(
++        await readFile(join(dir, e.name, 'source', '.gitnexus', 'meta.json'), 'utf8'),
++      );
++      const nodes = Number(meta?.stats?.nodes);
++      const date = Date.parse(commit?.date);
++      if (Number.isFinite(nodes) && Number.isFinite(date)) {
++        points.push({ date, nodes });
++      }
++    } catch {
++      // skip half-built snapshot
++    }
++  }
++  if (points.length < 2) return 0.5;
++  points.sort((a, b) => a.date - b.date);
++  const first = points[0];
++  const last = points[points.length - 1];
++  if (first.nodes <= 0) return 0.5;
++  const ratio = (last.nodes - first.nodes) / first.nodes;
++  // Clamp to [-1, 1] then shift to [0, 1].
++  const clamped = Math.max(-1, Math.min(1, ratio));
++  return (clamped + 1) / 2;
 +}
 +
 +function busFactor(authorMap, pct = 0.8) {
@@ -2868,6 +3081,7 @@ index 0000000..569a9ba
 +  let lastCommitMs = null;
 +  let perBucketActivity = new Set();
 +  let filesTouched = 0;
++  let perFileTouches = new Map();
 +  let gitError = null;
 +
 +  if (hasGit) {
@@ -2885,6 +3099,7 @@ index 0000000..569a9ba
 +      perBucketActivity = parsed.perBucketActivity;
 +      lastCommitMs = parsed.lastCommitDate;
 +      filesTouched = parsed.filesTouched;
++      perFileTouches = parsed.perFileTouches;
 +      const bf = busFactor(authorsRepo);
 +      busFactorRepo = bf.bf;
 +      topAuthorShare = bf.topShare;
@@ -2898,18 +3113,52 @@ index 0000000..569a9ba
 +
 +  const foundationalRatio = (await foundationalRatioCheap(repoName)) ?? 0;
 +
++  // v2 dims (Tier 2.5c) — computed in parallel where independent.
++  const [growthRate, fileWalk] = await Promise.all([
++    growthRateFromSnapshots(repoName),
++    walkRepoFiles(repoPath),
++  ]);
++  const churnConcentration = perFileTouches.size > 0 ? gini([...perFileTouches.values()]) : 0;
++  const fileSizePareto = fileWalk.length > 0 ? gini(fileWalk.map((f) => f.size)) : 0;
++  // languageDiversity: Shannon entropy over file extensions (only files
++  // that have an extension — extensionless ones like Makefile / LICENSE
++  // are noise here).
++  const extCounts = new Map();
++  for (const f of fileWalk) {
++    if (!f.ext) continue;
++    extCounts.set(f.ext, (extCounts.get(f.ext) || 0) + 1);
++  }
++  const languageDiversity = normalizedShannon([...extCounts.values()]);
++  // treeDepth: normalized median depth. We squash median into [0, 1]
++  // via 1 - exp(-d/4) so depth 0 = 0, depth 4 ≈ 0.63, depth 10 ≈ 0.92.
++  // Captures "deep nested" vs "flat" without exploding the dim.
++  const medDepth = median(fileWalk.map((f) => f.depth));
++  const treeDepth = 1 - Math.exp(-medDepth / 4);
++
 +  const identityVector = {
 +    density,
 +    modularity,
 +    busFactorNorm,
 +    topAuthorShare,
 +    foundationalRatio,
++    growthRate,
++    churnConcentration,
++    fileSizePareto,
++    languageDiversity,
++    treeDepth,
 +  };
 +
 +  const policy = await readPolicy(repoPath);
 +  const license = await readLicense(repoPath);
-+  const semanticLabels = await readSemanticLabels(repoPath);
-+  const labelBow = bowVectorFromLabels(semanticLabels);
++  const semanticData = await readSemanticLabels(repoPath);
++  const labelBow = bowVectorFromLabels(semanticData.labels);
++  // Per-repo: do we trust embeddings? Yes if ≥80% of labels are
++  // embedded. Below that, we'd be averaging a non-representative
++  // sample; lexical BoW is the safer choice for that pair.
++  const embeddingCoverage = semanticData.labels.length > 0
++    ? semanticData.embeddings.length / semanticData.labels.length
++    : 0;
++  const labelCentroid = embeddingCoverage >= 0.8 ? centroid(semanticData.embeddings) : null;
 +
 +  return {
 +    name: repoName,
@@ -2929,16 +3178,18 @@ index 0000000..569a9ba
 +    lastCommitMs,
 +    license,
 +    policy,
-+    semanticLabelsCount: semanticLabels.length,
++    semanticLabelsCount: semanticData.labels.length,
++    semanticEmbeddingsCount: semanticData.embeddings.length,
 +    labelBow,
++    labelCentroid,
 +  };
 +}
 +
-+function cosineSimilarity(va, vb) {
++function cosineSimilarity(va, vb, dims) {
 +  let dot = 0;
 +  let na = 0;
 +  let nb = 0;
-+  for (const k of IDENTITY_DIMS) {
++  for (const k of dims) {
 +    const x = Number(va[k]) || 0;
 +    const y = Number(vb[k]) || 0;
 +    dot += x * y;
@@ -2949,8 +3200,8 @@ index 0000000..569a9ba
 +  return dot / (Math.sqrt(na) * Math.sqrt(nb));
 +}
 +
-+function dominantFeatures(va, vb) {
-+  const diffs = IDENTITY_DIMS.map((k) => ({
++function dominantFeatures(va, vb, dims) {
++  const diffs = dims.map((k) => ({
 +    dim: k,
 +    delta: Math.abs((Number(va[k]) || 0) - (Number(vb[k]) || 0)),
 +  }));
@@ -3078,6 +3329,11 @@ index 0000000..569a9ba
 +  const semanticThreshold = clampUnit(Number(url.searchParams.get('semanticThreshold')) || DEFAULT_SEMANTIC);
 +  const temporalThreshold = clampUnit(Number(url.searchParams.get('temporalThreshold')) || DEFAULT_TEMPORAL);
 +  const lexicalSemantic = (url.searchParams.get('lexicalSemantic') ?? 'true').toLowerCase() !== 'false';
++  const identityVersion = (() => {
++    const v = Number(url.searchParams.get('identityVersion'));
++    return v === 1 || v === 2 ? v : DEFAULT_IDENTITY_VERSION;
++  })();
++  const dims = identityVersion === 2 ? IDENTITY_DIMS_V2 : IDENTITY_DIMS_V1;
 +
 +  // Build per-repo snapshots in parallel — git log is the slowest step
 +  // and they're independent.
@@ -3098,15 +3354,28 @@ index 0000000..569a9ba
 +    for (let j = i + 1; j < snapshots.length; j++) {
 +      const a = snapshots[i];
 +      const b = snapshots[j];
-+      const structural = cosineSimilarity(a.identityVector, b.identityVector);
++      const structural = cosineSimilarity(a.identityVector, b.identityVector, dims);
 +      const temporal = temporalJaccard(a.perBucketActivity, b.perBucketActivity, windowMs, sinceMs);
-+      // Semantic = lexical cosine on cached label BoWs when both repos
-+      // have labels. null otherwise — falls back to 4-quadrant collapse
-+      // for that pair only (cube is still 8 cells for pairs that do
-+      // have labels). The lexicalSemantic flag lets callers force the
-+      // legacy null behavior for A/B comparisons.
-+      const bothHaveLabels = lexicalSemantic && a.labelBow.size > 0 && b.labelBow.size > 0;
-+      const semantic = bothHaveLabels ? cosineBow(a.labelBow, b.labelBow) : null;
++      // Semantic axis priority (Tier 2.5b.bis):
++      //   1. If both repos have a label centroid (≥80% of labels
++      //      embedded) → dense cosine on the centroids = true
++      //      embedding-based semantic similarity.
++      //   2. Else if both have BoW labels → lexical cosine fallback
++      //      (Tier 2.5b).
++      //   3. Else null (4-quadrant collapse for this pair).
++      // The ?lexicalSemantic=false flag disables both options.
++      let semantic = null;
++      let pairSemanticMode = 'none';
++      if (lexicalSemantic) {
++        if (a.labelCentroid && b.labelCentroid &&
++            a.labelCentroid.length === b.labelCentroid.length) {
++          semantic = cosineDense(a.labelCentroid, b.labelCentroid);
++          pairSemanticMode = 'embeddings';
++        } else if (a.labelBow.size > 0 && b.labelBow.size > 0) {
++          semantic = cosineBow(a.labelBow, b.labelBow);
++          pairSemanticMode = 'lexical';
++        }
++      }
 +      const semanticAxisPresent = semantic !== null;
 +
 +      const highS = structural >= structuralThreshold;
@@ -3119,13 +3388,14 @@ index 0000000..569a9ba
 +
 +      const recommendation = recommendationFor(quadrant);
 +      const warnings = pairWarnings(a, b);
-+      const dominant = dominantFeatures(a.identityVector, b.identityVector);
++      const dominant = dominantFeatures(a.identityVector, b.identityVector, dims);
 +
 +      pairs.push({
 +        a: a.name,
 +        b: b.name,
 +        structuralScore: roundN(structural, 4),
 +        semanticScore: semantic === null ? null : roundN(semantic, 4),
++        semanticMode: pairSemanticMode,
 +        temporalCoupling: roundN(temporal, 4),
 +        quadrant,
 +        recommendation,
@@ -3136,9 +3406,12 @@ index 0000000..569a9ba
 +    }
 +  }
 +
++  // Slice the identity vector to the selected version's dims. v1
++  // callers should not see the v2 dims even if they're computed.
++  const sliceVec = (v) => Object.fromEntries(dims.map((k) => [k, Number(v[k]) || 0]));
 +  const repos = snapshots.map((s) => ({
 +    name: s.name,
-+    identityVector: roundVector(s.identityVector, 4),
++    identityVector: roundVector(sliceVec(s.identityVector), 4),
 +    stats: s.rawStats,
 +    hasGit: s.hasGit,
 +    gitError: s.gitError,
@@ -3146,6 +3419,8 @@ index 0000000..569a9ba
 +    policy: s.policy,
 +    lastCommitDate: s.lastCommitMs ? new Date(s.lastCommitMs).toISOString() : null,
 +    semanticLabelsCount: s.semanticLabelsCount,
++    semanticEmbeddingsCount: s.semanticEmbeddingsCount,
++    hasLabelCentroid: !!s.labelCentroid,
 +  }));
 +
 +  // Semantic axis is "available" if at least one pair could use it.
@@ -3153,7 +3428,19 @@ index 0000000..569a9ba
 +  // banner (no labels anywhere) vs the partial-coverage hint (some
 +  // pairs have it, others don't).
 +  const reposWithLabels = repos.filter((r) => r.semanticLabelsCount > 0).length;
++  const reposWithCentroid = repos.filter((r) => r.hasLabelCentroid).length;
 +  const semanticAxisAvailable = lexicalSemantic && reposWithLabels >= 2;
++  // Overall mode: 'embeddings' if every pair uses embeddings, 'lexical'
++  // if at least one pair uses BoW, 'disabled' otherwise. The per-pair
++  // mode (pair.semanticMode) is the source of truth for mixed cases.
++  const pairModes = new Set(pairs.map((p) => p.semanticMode));
++  const semanticAxisMode = !lexicalSemantic
++    ? 'disabled'
++    : pairModes.has('embeddings') && !pairModes.has('lexical')
++      ? 'embeddings'
++      : pairModes.has('lexical') || pairModes.has('embeddings')
++        ? 'lexical' // mixed counts as lexical for the headline label
++        : 'disabled';
 +
 +  res.writeHead(200, { 'Content-Type': 'application/json' });
 +  res.end(
@@ -3166,13 +3453,17 @@ index 0000000..569a9ba
 +        temporal: temporalThreshold,
 +      },
 +      windowDays,
-+      identityDims: IDENTITY_DIMS,
++      identityVersion,
++      identityDims: dims,
 +      semanticAxisAvailable,
-+      semanticAxisMode: lexicalSemantic ? 'lexical' : 'disabled',
++      semanticAxisMode,
 +      reposWithLabels,
-+      semanticAxisNote: lexicalSemantic
-+        ? `Semantic axis: lexical cosine on cached LLM labels from /semantic-labels (Tier 2.5b). ${reposWithLabels}/${repos.length} repos have labels — generate via DissonancePanel ✨ to extend coverage. True embeddings (2.5b.bis) remain a future upgrade.`
-+        : 'Semantic axis disabled via ?lexicalSemantic=false.',
++      reposWithCentroid,
++      semanticAxisNote: !lexicalSemantic
++        ? 'Semantic axis disabled via ?lexicalSemantic=false.'
++        : semanticAxisMode === 'embeddings'
++          ? `Semantic axis: dense cosine on label embedding centroids (Tier 2.5b.bis). ${reposWithCentroid}/${repos.length} repos embedded.`
++          : `Semantic axis: lexical cosine on cached LLM labels (Tier 2.5b). ${reposWithLabels}/${repos.length} repos labeled, ${reposWithCentroid}/${repos.length} embedded — click "Embed labels" in the panel to upgrade pairs to dense embedding cosine.`,
 +    }),
 +  );
 +}
@@ -9565,10 +9856,10 @@ index 5781d26..ad64bcf 100644
          <div className="flex items-center gap-3">
 diff --git a/gitnexus-web/src/components/SimilarityPanel.tsx b/gitnexus-web/src/components/SimilarityPanel.tsx
 new file mode 100644
-index 0000000..5fc916f
+index 0000000..8b8a8bd
 --- /dev/null
 +++ b/gitnexus-web/src/components/SimilarityPanel.tsx
-@@ -0,0 +1,467 @@
+@@ -0,0 +1,601 @@
 +import { useEffect, useMemo, useState } from 'react';
 +import {
 +  X,
@@ -9577,6 +9868,7 @@ index 0000000..5fc916f
 +  Network,
 +  ShieldAlert,
 +  Info,
++  Sparkles,
 +} from '@/lib/lucide-icons';
 +import { useAppState } from '../hooks/useAppState';
 +
@@ -9616,6 +9908,8 @@ index 0000000..5fc916f
 +  policy: { isolation_required: boolean; reason: string | null; allow_merge_with: string[] } | null;
 +  lastCommitDate: string | null;
 +  semanticLabelsCount: number;
++  semanticEmbeddingsCount: number;
++  hasLabelCentroid: boolean;
 +};
 +
 +type SimilarityPair = {
@@ -9623,6 +9917,7 @@ index 0000000..5fc916f
 +  b: string;
 +  structuralScore: number;
 +  semanticScore: number | null;
++  semanticMode: 'embeddings' | 'lexical' | 'none';
 +  temporalCoupling: number;
 +  quadrant: string;
 +  recommendation: string | null;
@@ -9636,10 +9931,12 @@ index 0000000..5fc916f
 +  pairs: SimilarityPair[];
 +  thresholds: { structural: number; semantic: number; temporal: number };
 +  windowDays: number;
++  identityVersion: number;
 +  identityDims: string[];
 +  semanticAxisAvailable: boolean;
-+  semanticAxisMode: 'lexical' | 'disabled';
++  semanticAxisMode: 'lexical' | 'embeddings' | 'disabled';
 +  reposWithLabels: number;
++  reposWithCentroid: number;
 +  semanticAxisNote: string;
 +};
 +
@@ -9674,6 +9971,11 @@ index 0000000..5fc916f
 +    case 'busFactorNorm': return 'bus factor (norm)';
 +    case 'topAuthorShare': return 'top-author share';
 +    case 'foundationalRatio': return 'foundational ratio';
++    case 'growthRate': return 'growth rate';
++    case 'churnConcentration': return 'churn concentration (Gini)';
++    case 'fileSizePareto': return 'file-size Pareto (Gini)';
++    case 'languageDiversity': return 'language diversity (Shannon)';
++    case 'treeDepth': return 'tree depth (median)';
 +    default: return dim;
 +  }
 +}
@@ -9690,6 +9992,11 @@ index 0000000..5fc916f
 +    setSimilarityWindowDays,
 +    exitSimilarityMode,
 +    refreshSimilarity,
++    embedSimilarityLabels,
++    embedSimilarityLoading,
++    embedSimilarityProgress,
++    embedSimilarityError,
++    embedSimilaritySupported,
 +  } = useAppState();
 +
 +  const baseRepo = (projectName || '').split('@')[0];
@@ -9743,15 +10050,84 @@ index 0000000..5fc916f
 +            {similarityData.repos.length} repos · {similarityData.windowDays}d window
 +          </span>
 +        )}
++        {/* Embed labels — only shown when the active provider supports
++            embeddings AND at least one repo has cached labels (otherwise
++            there's nothing to embed). Clicking starts a multi-repo pass
++            that upgrades the semantic axis from lexical to dense cosine. */}
++        {similarityData && embedSimilaritySupported && similarityData.reposWithLabels > 0 && (
++          <button
++            type="button"
++            onClick={() => {
++              const labeled = similarityData.repos
++                .filter((r) => r.semanticLabelsCount > 0)
++                .map((r) => r.name);
++              if (labeled.length > 0) {
++                void embedSimilarityLabels(labeled, false);
++              }
++            }}
++            disabled={embedSimilarityLoading}
++            className={`ml-auto shrink-0 cursor-pointer rounded p-1 transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
++              embedSimilarityLoading
++                ? 'text-amber-300'
++                : 'text-violet-300 hover:bg-hover hover:text-violet-200'
++            }`}
++            title={
++              embedSimilarityLoading
++                ? 'Embedding labels…'
++                : similarityData.reposWithCentroid === similarityData.reposWithLabels
++                  ? 'Re-embed all labels (overwrites current vectors)'
++                  : `Embed labels for ${similarityData.reposWithLabels - similarityData.reposWithCentroid} more repo(s) to enable dense semantic cosine`
++            }
++          >
++            {embedSimilarityLoading ? (
++              <Loader2 className="h-3.5 w-3.5 animate-spin" />
++            ) : (
++              <Sparkles className="h-3.5 w-3.5" />
++            )}
++          </button>
++        )}
 +        <button
 +          type="button"
 +          onClick={() => exitSimilarityMode()}
-+          className="ml-auto shrink-0 cursor-pointer rounded p-1 text-text-muted transition-colors hover:bg-hover hover:text-text-primary"
++          className={`${embedSimilaritySupported && similarityData && similarityData.reposWithLabels > 0 ? '' : 'ml-auto'} shrink-0 cursor-pointer rounded p-1 text-text-muted transition-colors hover:bg-hover hover:text-text-primary`}
 +          title="Close panel"
 +        >
 +          <X className="h-3.5 w-3.5" />
 +        </button>
 +      </div>
++
++      {/* Embed-pass progress strip (Tier 2.5b.bis) — only mounted while
++          an embed pass is running OR an error just happened. */}
++      {(embedSimilarityLoading || embedSimilarityError) && (
++        <div className="shrink-0 border-b border-border-subtle bg-violet-500/5 px-3 py-1.5">
++          {embedSimilarityError ? (
++            <div className="flex items-start gap-1.5 text-[10px] text-red-400">
++              <AlertCircle className="mt-0.5 h-3 w-3 shrink-0" />
++              <span className="break-all whitespace-pre-wrap font-mono">
++                {embedSimilarityError}
++              </span>
++            </div>
++          ) : (
++            <div className="flex items-center gap-2 text-[10px] text-violet-200">
++              <Sparkles className="h-3 w-3" />
++              <span className="truncate" title={embedSimilarityProgress?.repo}>
++                Embedding {embedSimilarityProgress?.repo || '…'}: {embedSimilarityProgress?.done ?? 0}
++                {embedSimilarityProgress?.total ? ` / ${embedSimilarityProgress.total}` : ''}
++              </span>
++              {embedSimilarityProgress && embedSimilarityProgress.total > 0 && (
++                <div className="h-1 flex-1 overflow-hidden rounded-full bg-elevated">
++                  <div
++                    className="h-full bg-violet-400 transition-all"
++                    style={{
++                      width: `${(embedSimilarityProgress.done / embedSimilarityProgress.total) * 100}%`,
++                    }}
++                  />
++                </div>
++              )}
++            </div>
++          )}
++        </div>
++      )}
 +
 +      {/* Pre-flight error: not enough repos */}
 +      {similarityActive && eligibleRepos.length < 2 && !similarityLoading && (
@@ -9779,10 +10155,11 @@ index 0000000..5fc916f
 +
 +      {similarityData && !similarityLoading && (
 +        <>
-+          {/* Semantic-axis status banner — three states:
-+              - available (all repos labeled): info, mention lexical mode
-+              - partial coverage: warn that some pairs collapse to 4 cells
-+              - no labels anywhere: prompt the user to run the LLM labeler */}
++          {/* Semantic-axis status banner — context-aware:
++              - axis off entirely (no labels): prompt to run the LLM labeler
++              - partial labeling: warn that some pairs collapse to 4 cells
++              - all lexical: invite to upgrade via Embed button
++              - all dense: small "embeddings mode" confirmation */}
 +          {!similarityData.semanticAxisAvailable && (
 +            <div className="shrink-0 border-b border-border-subtle bg-violet-500/5 px-3 py-1.5 text-[10px] text-violet-200">
 +              <span className="font-semibold">Semantic axis disabled.</span>{' '}
@@ -9796,10 +10173,26 @@ index 0000000..5fc916f
 +              <div className="shrink-0 border-b border-border-subtle bg-violet-500/5 px-3 py-1.5 text-[10px] text-violet-200">
 +                <span className="font-semibold">Partial semantic coverage.</span>{' '}
 +                {similarityData.reposWithLabels}/{similarityData.repos.length} repos have labels —
-+                pairs without labels collapse to the 4-quadrant plane. Mode: lexical cosine on
-+                cached labels (2.5b).
++                pairs without labels collapse to the 4-quadrant plane.
 +              </div>
 +            )}
++          {similarityData.semanticAxisAvailable &&
++            similarityData.reposWithLabels === similarityData.repos.length &&
++            similarityData.semanticAxisMode === 'lexical' &&
++            embedSimilaritySupported && (
++              <div className="shrink-0 border-b border-border-subtle bg-violet-500/5 px-3 py-1.5 text-[10px] text-violet-200">
++                <span className="font-semibold">Lexical mode (2.5b).</span> Click ✨ above to upgrade
++                to dense embedding cosine ({similarityData.reposWithCentroid}/
++                {similarityData.repos.length} repos embedded).
++              </div>
++            )}
++          {similarityData.semanticAxisMode === 'embeddings' && (
++            <div className="shrink-0 border-b border-border-subtle bg-emerald-500/5 px-3 py-1.5 text-[10px] text-emerald-200">
++              <span className="font-semibold">Embeddings mode (2.5b.bis).</span>{' '}
++              Dense cosine on label centroids across {similarityData.reposWithCentroid}/
++              {similarityData.repos.length} repos.
++            </div>
++          )}
 +
 +          {/* Window-days control + thresholds */}
 +          <div className="flex shrink-0 items-center gap-2 border-b border-border-subtle bg-elevated px-3 py-2 text-[10px] text-text-muted">
@@ -9939,7 +10332,25 @@ index 0000000..5fc916f
 +                    <div className="text-text-primary">{fmtScore(selected.structuralScore)}</div>
 +                  </div>
 +                  <div>
-+                    <div className="text-text-muted">semantic</div>
++                    <div className="flex items-baseline gap-1 text-text-muted">
++                      <span>semantic</span>
++                      {selected.semanticMode === 'embeddings' && (
++                        <span
++                          className="rounded bg-emerald-500/20 px-1 text-[8px] text-emerald-300"
++                          title="dense cosine on label embedding centroids"
++                        >
++                          emb
++                        </span>
++                      )}
++                      {selected.semanticMode === 'lexical' && (
++                        <span
++                          className="rounded bg-violet-500/20 px-1 text-[8px] text-violet-300"
++                          title="cosine on label token-frequency vectors"
++                        >
++                          lex
++                        </span>
++                      )}
++                    </div>
 +                    <div className="text-text-primary">{fmtScore(selected.semanticScore)}</div>
 +                  </div>
 +                  <div>
@@ -9985,8 +10396,14 @@ index 0000000..5fc916f
 +                compact so the user can ground intuition about what's
 +                driving the scores. */}
 +            <div className="border-t border-border-subtle px-3 py-2">
-+              <div className="mb-1 text-[10px] font-semibold text-text-muted">
-+                Identity vectors
++              <div className="mb-1 flex items-center gap-1.5 text-[10px] font-semibold text-text-muted">
++                <span>Identity vectors</span>
++                <span
++                  className="rounded bg-elevated px-1 text-[9px] font-normal text-text-secondary"
++                  title={`Identity Vector v${similarityData.identityVersion} (${similarityData.identityDims.length} dims)`}
++                >
++                  v{similarityData.identityVersion} · {similarityData.identityDims.length} dims
++                </span>
 +              </div>
 +              <div className="overflow-x-auto">
 +                <table className="w-full font-mono text-[10px]">
@@ -10016,6 +10433,14 @@ index 0000000..5fc916f
 +                              title={`${r.semanticLabelsCount} LLM labels cached`}
 +                            >
 +                              {r.semanticLabelsCount}L
++                            </span>
++                          )}
++                          {r.hasLabelCentroid && (
++                            <span
++                              className="ml-0.5 inline rounded bg-emerald-500/15 px-1 text-[9px] text-emerald-300"
++                              title={`${r.semanticEmbeddingsCount}/${r.semanticLabelsCount} labels embedded (centroid built)`}
++                            >
++                              {r.semanticEmbeddingsCount}E
 +                            </span>
 +                          )}
 +                        </td>
@@ -11264,8 +11689,131 @@ index 0000000..a370295
 +    </div>
 +  );
 +};
+diff --git a/gitnexus-web/src/core/llm/agent.ts b/gitnexus-web/src/core/llm/agent.ts
+index c8cfa8d..a8024d7 100644
+--- a/gitnexus-web/src/core/llm/agent.ts
++++ b/gitnexus-web/src/core/llm/agent.ts
+@@ -7,11 +7,20 @@
+ 
+ import { createReactAgent } from '@langchain/langgraph/prebuilt';
+ import { SystemMessage } from '@langchain/core/messages';
+-import { ChatOpenAI, AzureChatOpenAI } from '@langchain/openai';
+-import { ChatGoogleGenerativeAI } from '@langchain/google-genai';
++import {
++  ChatOpenAI,
++  AzureChatOpenAI,
++  OpenAIEmbeddings,
++  AzureOpenAIEmbeddings,
++} from '@langchain/openai';
++import {
++  ChatGoogleGenerativeAI,
++  GoogleGenerativeAIEmbeddings,
++} from '@langchain/google-genai';
+ import { ChatAnthropic } from '@langchain/anthropic';
+-import { ChatOllama } from '@langchain/ollama';
++import { ChatOllama, OllamaEmbeddings } from '@langchain/ollama';
+ import type { BaseChatModel } from '@langchain/core/language_models/chat_models';
++import type { Embeddings } from '@langchain/core/embeddings';
+ import { createGraphRAGTools, type GraphRAGBackend } from './tools';
+ import type {
+   ProviderConfig,
+@@ -289,6 +298,94 @@ const extractInstanceName = (endpoint: string): string => {
+   }
+ };
+ 
++/**
++ * Default embedding model names per provider. Picked for "small &
++ * cheap" — we're embedding short label phrases, not long documents.
++ *   - OpenAI text-embedding-3-small: 1536 dim, $0.02/1M tokens
++ *   - Gemini text-embedding-004: 768 dim, free tier
++ *   - Ollama nomic-embed-text: 768 dim, local
++ *   - Azure: uses whatever the user deployed (deploymentName from
++ *     azureConfig — there's no way to "guess" Azure deployment names)
++ */
++const DEFAULT_EMBEDDING_MODELS = {
++  openai: 'text-embedding-3-small',
++  gemini: 'text-embedding-004',
++  ollama: 'nomic-embed-text',
++} as const;
++
++/**
++ * Build an Embeddings client for providers that expose embeddings APIs.
++ * Returns null for providers without native embeddings (Anthropic,
++ * OpenRouter, MiniMax, GLM) — the caller is expected to fall back to
++ * a non-embedding signal (e.g. lexical similarity).
++ *
++ * Tier 2.5b.bis — used by SimilarityPanel "Embed labels" to upgrade
++ * the semantic axis from lexical (Tier 2.5b) to true embedding-based.
++ *
++ * For OpenAI / Gemini / Ollama we use small, cheap default models —
++ * we're embedding short label phrases (1-4 words typically), not long
++ * documents. For Azure the user's deploymentName is what we use, since
++ * Azure deployment names are arbitrary and we can't guess.
++ */
++export const createEmbeddingsModel = (config: ProviderConfig): Embeddings | null => {
++  switch (config.provider) {
++    case 'openai': {
++      const c = config as OpenAIConfig;
++      if (!c.apiKey || c.apiKey.trim() === '') return null;
++      return new OpenAIEmbeddings({
++        apiKey: c.apiKey,
++        model: DEFAULT_EMBEDDING_MODELS.openai,
++        configuration: c.baseUrl ? { baseURL: c.baseUrl } : undefined,
++      });
++    }
++    case 'azure-openai': {
++      const c = config as AzureOpenAIConfig;
++      // Reuse the same deployment as the chat model. If the user
++      // deployed only a chat model and not an embeddings model, this
++      // will surface as a 404 at call time, which the labeler will
++      // catch and report — better than silently doing nothing.
++      return new AzureOpenAIEmbeddings({
++        azureOpenAIApiKey: c.apiKey,
++        azureOpenAIApiInstanceName: extractInstanceName(c.endpoint),
++        azureOpenAIApiEmbeddingsDeploymentName: c.deploymentName,
++        azureOpenAIApiVersion: c.apiVersion ?? '2024-12-01-preview',
++      });
++    }
++    case 'gemini': {
++      const c = config as GeminiConfig;
++      if (!c.apiKey || c.apiKey.trim() === '') return null;
++      return new GoogleGenerativeAIEmbeddings({
++        apiKey: c.apiKey,
++        model: DEFAULT_EMBEDDING_MODELS.gemini,
++      });
++    }
++    case 'ollama': {
++      const c = config as OllamaConfig;
++      return new OllamaEmbeddings({
++        baseUrl: c.baseUrl ?? DEFAULT_OLLAMA_BASE_URL,
++        model: DEFAULT_EMBEDDING_MODELS.ollama,
++      });
++    }
++    // No native embeddings: Anthropic, OpenRouter, MiniMax, GLM.
++    // Caller falls back to lexical similarity.
++    default:
++      return null;
++  }
++};
++
++/**
++ * Whether the active provider can do embeddings. Frontend uses this to
++ * decide whether to show the "Embed labels" button.
++ */
++export const providerSupportsEmbeddings = (config: ProviderConfig): boolean => {
++  return (
++    config.provider === 'openai' ||
++    config.provider === 'azure-openai' ||
++    config.provider === 'gemini' ||
++    config.provider === 'ollama'
++  );
++};
++
+ /**
+  * Create a Graph RAG agent
+  */
 diff --git a/gitnexus-web/src/hooks/useAppState.tsx b/gitnexus-web/src/hooks/useAppState.tsx
-index 25c5776..bbe9185 100644
+index 25c5776..158de16 100644
 --- a/gitnexus-web/src/hooks/useAppState.tsx
 +++ b/gitnexus-web/src/hooks/useAppState.tsx
 @@ -8,7 +8,12 @@ import {
@@ -11290,7 +11838,7 @@ index 25c5776..bbe9185 100644
    runQuery as backendRunQuery,
    search as backendSearch,
    grep as backendGrep,
-@@ -34,12 +40,20 @@ import {
+@@ -34,12 +40,22 @@ import {
    type ConnectResult,
    type JobProgress,
  } from '../services/backend-client';
@@ -11298,8 +11846,10 @@ index 25c5776..bbe9185 100644
 +import {
 +  fetchSemanticLabels,
 +  generateSemanticLabels,
++  embedSemanticLabels,
 +  type SemanticLabel,
 +} from '../services/semantic-labeler';
++import { providerSupportsEmbeddings } from '../core/llm/agent';
 +import { applyMutations, type Mutation } from '../services/mutation-engine';
  import { ERROR_RESET_DELAY_MS } from '../config/ui-constants';
  import { normalizePath } from '../lib/path-resolution';
@@ -11311,7 +11861,7 @@ index 25c5776..bbe9185 100644
  export type RightPanelTab = 'code' | 'chat';
  export type EmbeddingStatus = 'idle' | 'loading' | 'embedding' | 'indexing' | 'ready' | 'error';
  
-@@ -81,6 +95,9 @@ interface AppState {
+@@ -81,6 +97,9 @@ interface AppState {
    // View state
    viewMode: ViewMode;
    setViewMode: (mode: ViewMode) => void;
@@ -11321,7 +11871,7 @@ index 25c5776..bbe9185 100644
  
    // Graph data
    graph: KnowledgeGraph | null;
-@@ -192,6 +209,253 @@ interface AppState {
+@@ -192,6 +211,267 @@ interface AppState {
    clearAICodeReferences: () => void;
    clearCodeReferences: () => void;
    codeReferenceFocus: CodeReferenceFocus | null;
@@ -11397,8 +11947,8 @@ index 25c5776..bbe9185 100644
 +
 +  // Cross-repo similarity (ROADMAP Tier 2.5). Aggregates entropy /
 +  // ownership / lifespan / git activity across all indexed repos into
-+  // a 5-dim identity vector per repo, then positions every pair in a
-+  // structural × temporal plane (semantic axis deferred to v1.1).
++  // an identity vector per repo (v1=5 dims, v2=10 dims), then positions
++  // every pair in a structural × semantic × temporal cube.
 +  similarityActive: boolean;
 +  similarityLoading: boolean;
 +  similarityError: string | null;
@@ -11408,6 +11958,15 @@ index 25c5776..bbe9185 100644
 +  refreshSimilarity: (repos: string[]) => Promise<void>;
 +  enterSimilarityMode: () => void;
 +  exitSimilarityMode: () => void;
++  // Tier 2.5b.bis: embed cached labels for the listed repos, then
++  // refetch similarity so the panel switches from lexical → dense
++  // cosine. State is a flat progress object covering the multi-repo
++  // pass; the panel renders a small progress strip.
++  embedSimilarityLabels: (repos: string[], overwrite?: boolean) => Promise<void>;
++  embedSimilarityLoading: boolean;
++  embedSimilarityProgress: { repo: string; done: number; total: number } | null;
++  embedSimilarityError: string | null;
++  embedSimilaritySupported: boolean;
 +
 +  // Semantic labels (ROADMAP Tier 2.1). LLM-generated human-readable
 +  // labels for each detected Community. Auto-loaded from server cache
@@ -11547,6 +12106,8 @@ index 25c5776..bbe9185 100644
 +  policy: { isolation_required: boolean; reason: string | null; allow_merge_with: string[] } | null;
 +  lastCommitDate: string | null;
 +  semanticLabelsCount: number;
++  semanticEmbeddingsCount: number;
++  hasLabelCentroid: boolean;
 +}
 +
 +export interface SimilarityPair {
@@ -11554,6 +12115,7 @@ index 25c5776..bbe9185 100644
 +  b: string;
 +  structuralScore: number;
 +  semanticScore: number | null;
++  semanticMode: 'embeddings' | 'lexical' | 'none';
 +  temporalCoupling: number;
 +  quadrant: string;
 +  recommendation: string | null;
@@ -11567,15 +12129,17 @@ index 25c5776..bbe9185 100644
 +  pairs: SimilarityPair[];
 +  thresholds: { structural: number; semantic: number; temporal: number };
 +  windowDays: number;
++  identityVersion: number;
 +  identityDims: string[];
 +  semanticAxisAvailable: boolean;
-+  semanticAxisMode: 'lexical' | 'disabled';
++  semanticAxisMode: 'lexical' | 'embeddings' | 'disabled';
 +  reposWithLabels: number;
++  reposWithCentroid: number;
 +  semanticAxisNote: string;
  }
  
  const AppStateContext = createContext<AppState | null>(null);
-@@ -205,6 +469,10 @@ export const AppStateProvider = ({ children }: { children: ReactNode }) => (
+@@ -205,6 +485,10 @@ export const AppStateProvider = ({ children }: { children: ReactNode }) => (
  const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
    // View state
    const [viewMode, setViewMode] = useState<ViewMode>('onboarding');
@@ -11586,7 +12150,7 @@ index 25c5776..bbe9185 100644
  
    const {
      graph,
-@@ -343,6 +611,81 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
+@@ -343,6 +627,87 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
    const [isCodePanelOpen, setCodePanelOpen] = useState(false);
    const [codeReferenceFocus, setCodeReferenceFocus] = useState<CodeReferenceFocus | null>(null);
  
@@ -11642,6 +12206,12 @@ index 25c5776..bbe9185 100644
 +  const [similarityError, setSimilarityError] = useState<string | null>(null);
 +  const [similarityData, setSimilarityData] = useState<SimilarityData | null>(null);
 +  const [similarityWindowDays, setSimilarityWindowDays] = useState(90);
++  // Tier 2.5b.bis: per-repo embed pipeline state.
++  const [embedSimilarityLoading, setEmbedSimilarityLoading] = useState(false);
++  const [embedSimilarityProgress, setEmbedSimilarityProgress] = useState<
++    { repo: string; done: number; total: number } | null
++  >(null);
++  const [embedSimilarityError, setEmbedSimilarityError] = useState<string | null>(null);
 +
 +  // Semantic labels state.
 +  const [semanticLabels, setSemanticLabels] = useState<Map<string, SemanticLabel>>(new Map());
@@ -11668,7 +12238,7 @@ index 25c5776..bbe9185 100644
    // Map of normalized file path → node ID for graph-based lookups
    const fileNodeByPath = useMemo(() => {
      if (!graph) return new Map<string, string>();
-@@ -1207,9 +1550,474 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
+@@ -1207,9 +1572,519 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
      setCodeReferenceFocus(null);
    }, []);
  
@@ -12008,6 +12578,51 @@ index 25c5776..bbe9185 100644
 +    setSimilarityActive(false);
 +  }, []);
 +
++  // Whether the active provider supports embeddings — exposed so the
++  // SimilarityPanel can show/hide the "Embed labels" button. Recomputed
++  // when settings change (refreshLLMSettings → triggers a re-render).
++  const embedSimilaritySupported = useMemo(() => {
++    const cfg = getActiveProviderConfig();
++    return cfg ? providerSupportsEmbeddings(cfg) : false;
++  }, []);
++
++  // Multi-repo embed pass: for each repo with cached labels, run
++  // embedSemanticLabels, then refetch /similarity so the panel switches
++  // from lexical → dense cosine. Sequential to keep provider rate
++  // limits happy; we're talking 5-10 repos × dozens of labels at most.
++  const embedSimilarityLabels = useCallback(
++    async (repos: string[], overwrite: boolean = false) => {
++      setEmbedSimilarityLoading(true);
++      setEmbedSimilarityError(null);
++      try {
++        for (const repo of repos) {
++          setEmbedSimilarityProgress({ repo, done: 0, total: 0 });
++          const result = await embedSemanticLabels({
++            repo,
++            overwrite,
++            onProgress: (p) => {
++              setEmbedSimilarityProgress({ repo, done: p.done, total: p.total });
++            },
++          });
++          if (result.skipped && result.reason) {
++            // Surface but don't abort — partial success across repos is
++            // a valid outcome (e.g. one repo had no labels, others
++            // succeeded).
++            console.warn(`[similarity-embed] ${repo}: ${result.reason}`);
++          }
++        }
++        // Refetch /similarity so the panel sees the new centroids.
++        await refreshSimilarity(repos);
++      } catch (err) {
++        setEmbedSimilarityError(err instanceof Error ? err.message : 'Embed pass failed');
++      } finally {
++        setEmbedSimilarityLoading(false);
++        setEmbedSimilarityProgress(null);
++      }
++    },
++    [refreshSimilarity],
++  );
++
 +  // Semantic labels: read-only fetch (cheap, idempotent). Called
 +  // automatically when the active repo changes, and manually after a
 +  // generation pass completes.
@@ -12143,7 +12758,7 @@ index 25c5776..bbe9185 100644
      graph,
      setGraph,
      selectedNode,
-@@ -1293,6 +2101,83 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
+@@ -1293,6 +2168,88 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
      clearAICodeReferences,
      clearCodeReferences,
      codeReferenceFocus,
@@ -12207,6 +12822,11 @@ index 25c5776..bbe9185 100644
 +    refreshSimilarity,
 +    enterSimilarityMode,
 +    exitSimilarityMode,
++    embedSimilarityLabels,
++    embedSimilarityLoading,
++    embedSimilarityProgress,
++    embedSimilarityError,
++    embedSimilaritySupported,
 +    // Semantic labels
 +    semanticLabels,
 +    semanticLabelsLoading,
@@ -12794,10 +13414,10 @@ index 0000000..02e6bf4
 +}
 diff --git a/gitnexus-web/src/services/semantic-labeler.ts b/gitnexus-web/src/services/semantic-labeler.ts
 new file mode 100644
-index 0000000..0990d85
+index 0000000..42af117
 --- /dev/null
 +++ b/gitnexus-web/src/services/semantic-labeler.ts
-@@ -0,0 +1,316 @@
+@@ -0,0 +1,443 @@
 +/**
 + * Semantic labeler — ROADMAP Tier 2.1, frontend orchestration.
 + *
@@ -12829,7 +13449,7 @@ index 0000000..0990d85
 + */
 +
 +import { runQuery, getBackendUrl } from './backend-client';
-+import { createChatModel } from '../core/llm/agent';
++import { createChatModel, createEmbeddingsModel } from '../core/llm/agent';
 +import { getActiveProviderConfig } from '../core/llm/settings-service';
 +import { HumanMessage } from '@langchain/core/messages';
 +
@@ -12840,6 +13460,13 @@ index 0000000..0990d85
 +  labeledAt?: string;
 +  provider?: string;
 +  model?: string;
++  /** Embedding vector for the label (Tier 2.5b.bis). Populated by
++   *  embedSemanticLabels; absent when only the lexical label exists. */
++  embedding?: number[];
++  /** Embedding provider+model — used to invalidate when the user
++   *  switches providers and we want fresh vectors. */
++  embeddingProvider?: string;
++  embeddingModel?: string;
 +}
 +
 +export interface SemanticLabelsCache {
@@ -13098,6 +13725,126 @@ index 0000000..0990d85
 +  }
 +
 +  return { labels: newLabels, provider: providerName, model: modelName };
++}
++
++// ── Embeddings (Tier 2.5b.bis) ───────────────────────────────────────
++
++export interface EmbedProgress {
++  done: number;
++  total: number;
++  current?: string; // communityId currently being embedded
++  error?: string;
++}
++
++/**
++ * Embed already-generated labels for a repo. Reads the cache, runs
++ * embedDocuments on labels that don't have an embedding yet (or whose
++ * embedding was produced by a different model), POSTs the augmented
++ * cache back.
++ *
++ * No-op for providers without embeddings support (Anthropic, OpenRouter,
++ * MiniMax, GLM) — returns `{skipped: true, reason}` so the caller can
++ * surface the right "your provider can't do this" message.
++ *
++ * Batching: most embedding APIs accept up to 16-100 documents per call,
++ * and our label set is typically 20-80 labels per repo, so a single
++ * batch is usually enough. Falls back to sequential if the SDK
++ * complains.
++ */
++export async function embedSemanticLabels(opts: {
++  repo: string;
++  onProgress?: (p: EmbedProgress) => void;
++  signal?: AbortSignal;
++  /** When true, re-embed labels even when an embedding already exists. */
++  overwrite?: boolean;
++}): Promise<{ embedded: number; skipped?: boolean; reason?: string }> {
++  const config = getActiveProviderConfig();
++  if (!config) {
++    return { embedded: 0, skipped: true, reason: 'No LLM provider configured.' };
++  }
++  const embedder = createEmbeddingsModel(config);
++  if (!embedder) {
++    return {
++      embedded: 0,
++      skipped: true,
++      reason: `Provider "${config.provider}" has no native embeddings API. Configure OpenAI / Azure / Gemini / Ollama instead, or rely on lexical similarity (Tier 2.5b).`,
++    };
++  }
++  const providerName = config.provider;
++  const modelName = (config as { model?: string }).model || 'unknown';
++
++  const cache = await fetchSemanticLabels(opts.repo);
++  const entries = Object.entries(cache.labels);
++  if (entries.length === 0) {
++    return { embedded: 0, skipped: true, reason: 'No cached labels — run "Generate semantic labels" first.' };
++  }
++
++  // Decide what to embed: missing-or-stale-model entries unless overwrite.
++  const toEmbed: Array<{ id: string; text: string }> = [];
++  for (const [id, entry] of entries) {
++    const hasFreshEmbedding =
++      Array.isArray(entry.embedding) &&
++      entry.embedding.length > 0 &&
++      entry.embeddingProvider === providerName;
++    if (opts.overwrite || !hasFreshEmbedding) {
++      toEmbed.push({ id, text: entry.label });
++    }
++  }
++  const total = toEmbed.length;
++  if (total === 0) {
++    return { embedded: 0 };
++  }
++
++  opts.onProgress?.({ done: 0, total });
++
++  let vectors: number[][];
++  try {
++    vectors = await embedder.embedDocuments(toEmbed.map((e) => e.text));
++  } catch (err) {
++    // If batch fails, retry one-by-one so we get partial progress.
++    vectors = [];
++    for (let i = 0; i < toEmbed.length; i++) {
++      if (opts.signal?.aborted) break;
++      try {
++        const v = await embedder.embedQuery(toEmbed[i].text);
++        vectors.push(v);
++        opts.onProgress?.({ done: i + 1, total, current: toEmbed[i].id });
++      } catch (err2) {
++        opts.onProgress?.({
++          done: i + 1,
++          total,
++          current: toEmbed[i].id,
++          error: err2 instanceof Error ? err2.message : String(err2),
++        });
++        vectors.push([]); // keep alignment; we'll skip empty below
++      }
++    }
++    if (vectors.length === 0) {
++      throw err instanceof Error
++        ? err
++        : new Error('embedding call failed and one-by-one fallback returned nothing');
++    }
++  }
++
++  // Merge into cache.
++  const merged: Record<string, SemanticLabel> = {};
++  for (let i = 0; i < toEmbed.length; i++) {
++    const vec = vectors[i];
++    if (!Array.isArray(vec) || vec.length === 0) continue;
++    const prev = cache.labels[toEmbed[i].id];
++    merged[toEmbed[i].id] = {
++      ...prev,
++      embedding: vec,
++      embeddingProvider: providerName,
++      embeddingModel: modelName,
++    };
++  }
++
++  if (Object.keys(merged).length > 0) {
++    await postSemanticLabels(opts.repo, merged, providerName, modelName);
++  }
++  opts.onProgress?.({ done: total, total });
++  return { embedded: Object.keys(merged).length };
 +}
 +
 +// ── small helpers ────────────────────────────────────────────────────

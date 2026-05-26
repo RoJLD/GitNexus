@@ -1,7 +1,7 @@
 # GitNexus — Roadmap
 
 État vivant des fonctionnalités déjà livrées et des prochaines pistes.
-Dernière mise à jour : 2026-05-26 (Tier 2.5b livré : axe sémantique lexical sur labels LLM cachés — cube 2×2×2 complet).
+Dernière mise à jour : 2026-05-26 (Tier 2.5c + 2.5b.bis livrés : Identity Vector v2 à 10 dims + axe sémantique embeddings dense via createEmbeddingsModel).
 
 > 📋 **Voir aussi** [INVENTORY.md](INVENTORY.md) — état des lieux complet :
 > features upstream + nos ajouts + distance avec upstream. À utiliser
@@ -40,6 +40,8 @@ un nom marketing — et son premier pas concret.
 | 20 | **VSCode extension v0.1** (status-bar bus factor for the active file) | `vscode-extension/` (separate package) |
 | 21 | **Cross-repo similarity v1** (structural × temporal cube, 5-dim identity vector, `.gitnexus-policy.json`, auto warnings) — semantic axis pending v1.1 | `/similarity`, `SimilarityPanel.tsx`, `patches/example-gitnexus-policy.json` |
 | 22 | **Cross-repo similarity v1.b** : axe sémantique lexical (cosine BoW sur labels LLM cachés) → cube 2×2×2 complet, partial-coverage handling | `/similarity?lexicalSemantic=…`, `SimilarityPanel` partial-coverage banner |
+| 23 | **Cross-repo similarity v1.b.bis** : vrais embeddings (drop-in upgrade du lexical) — `createEmbeddingsModel` mirror `createChatModel`, button ✨ "Embed labels" dans SimilarityPanel, centroid cosine quand ≥80% des labels d'un repo sont embeddés | `core/llm/agent.ts` (`createEmbeddingsModel`), `services/semantic-labeler.ts` (`embedSemanticLabels`), `docker-server-semantic-labels.mjs` (schema embedding), `/similarity` (centroid priority) |
+| 24 | **Cross-repo similarity v1.c** : Identity Vector v2 (10 dims = v1 + `growthRate`, `churnConcentration`, `fileSizePareto`, `languageDiversity`, `treeDepth`), opt-out via `?identityVersion=1` | `/similarity?identityVersion=…`, badge "v2 · 10 dims" dans le panel |
 
 Toutes les analytics ci-dessus marchent dans un seul repo. La granularité
 est le node gitnexus (File, Function, Class, Section, …).
