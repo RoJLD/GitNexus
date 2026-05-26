@@ -1,7 +1,7 @@
 # GitNexus — Roadmap
 
 État vivant des fonctionnalités déjà livrées et des prochaines pistes.
-Dernière mise à jour : 2026-05-26 (Commit overlay livré : `/commit/footprint` + bouton "Show on graph" dans EntropyCommitTimeline — highlight les nodes touchés sur le snapshot le plus proche).
+Dernière mise à jour : 2026-05-26 (Phase A incremental-snapshots livrée : `/snapshot/auto` qui snapshotte les commits aux pics d'entropy avec debounce + cap — densifie la timeline sans exploser le coût).
 
 > 📋 **Voir aussi** [INVENTORY.md](INVENTORY.md) — état des lieux complet :
 > features upstream + nos ajouts + distance avec upstream. À utiliser
@@ -52,6 +52,7 @@ un nom marketing — et son premier pas concret.
 | 32 | **Commit Δ sparkline frontend (Tier 2bis.2 UI)** : `EntropyCommitTimeline.tsx` au-dessus de la Timeline. Toggle Commit Δ dans la Timeline. SVG sparkline avec bars verticaux (rouge = dégradation / vert = amélioration / gris = straggler), boundaries snapshot marquées en dashed amber, drill-down par commit (sha + author + date + filesTouched + window deltas + copy-SHA + git-show snippet). Switch metric density/modularity. Window input | `components/EntropyCommitTimeline.tsx`, Timeline toggle Activity icon |
 | 33 | **Snapshot preload (Play smoothness)** : bouton Preload dans la Timeline, fetch parallel pool=3 de tous les snapshots du base repo en mémoire, switchRepo sert depuis le cache → frame swap instantané (pas de LoadingOverlay entre frames du Play loop). Badge "N/M" cached + bouton clear + cancel-able. Invalidation auto au switch de base repo | `useAppState` cache Map + actions, `Timeline` Preload button |
 | 34 | **Commit overlay (Tier 2bis.2 follow-up)** : `GET /commit/footprint?repo=&sha=` retourne files touched + status (A/M/D) via `git show --name-status`. Bouton "Show on graph" dans le drill-down de EntropyCommitTimeline → résout files → node IDs (par `filePath` match dans le graph chargé) → `setHighlightedNodeIds`. Banner partial-match si fichiers non-résolus (deletions, renames, configs non-tracked). MCP tool `gitnexus_commit_footprint`. **Honest framing** : ce n'est PAS le graph reconstruit au commit, c'est le footprint highlighté sur le snapshot le plus proche. Pour le vrai per-commit graph → snapshot incremental (chantier suivant) | `/commit/footprint`, MCP tool, `EntropyCommitTimeline` Show/Hide button |
+| 35 | **Auto-snapshot aux pics — Phase A** : `POST /snapshot/auto?repo=` qui (1) attribue les deltas entropy par commit (réutilise l'algo de /entropy/commits), (2) garde top-P% par \|Δ\|, (3) filtre merges + minDelta + debounce, (4) cap maxToCreate ≤ 5 (HARD_CAP env-overrideable), (5) `dryRun: true` retourne le plan, (6) sinon createSnapshot séquentiel. Surface config `.gitnexus.json > auto_snapshot`. MCP tool `gitnexus_snapshot_auto` (17 tools). Live test : 1 snapshot créé end-to-end en 55s sur hmm_studio | `/snapshot/auto`, `upstream/docker-server-snapshot-auto.mjs`, parser config étendu |
 
 Toutes les analytics ci-dessus marchent dans un seul repo. La granularité
 est le node gitnexus (File, Function, Class, Section, …).
