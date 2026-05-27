@@ -164,6 +164,56 @@ commit({
   },
 });
 
+// Commit 12 (alice, 2025-02-12) — Audit-specific fixture changes:
+//   - flip ### 1.2 to ⏳ (planned, still pending) + add **Expected by** line
+//     so Audit can compute slippage / expired metrics.
+//   - add ### 2.2 — Cancelled feature 🗑️ to give the cancellation-rate
+//     metric a second data point beyond 2.1.
+// Section 1.1 is left ✅ on purpose so we still have a "materialized"
+// ghost in the audit dataset.
+commit({
+  author: ALICE,
+  date: '2025-02-12T10:00:00 +0100',
+  message: 'docs(roadmap): flip 1.2 to planned + expectedBy + add cancelled 2.2',
+  files: {
+    'ROADMAP.md': [
+      '# Sample Project — Roadmap',
+      '',
+      '## ✅ Déjà livré',
+      '',
+      '| # | Feature | Endpoint(s) / Composant(s) |',
+      '|---|---|---|',
+      '| 1 | **Login flow** | `src/auth/login.ts` |',
+      '| 2 | **DB schema** | `src/db/schema.ts` |',
+      '',
+      '## 🎯 Tier 1',
+      '',
+      '### 1.1 — Migration runner ✅',
+      '**Promesse** : runner pour appliquer les migrations.',
+      '',
+      '**Premier pas** : `src/db/orphan.py` placeholder.',
+      '',
+      '### 1.2 — Helpers utility ⏳',
+      '**Expected by** : 2026-Q2',
+      '',
+      '**Promesse** : fonctions partagées.',
+      '',
+      '**Premier pas** : `src/utils/helpers.ts` exports an `id` function.',
+      '',
+      '### 2.1 — Audit log 🗑️',
+      "**Promesse** : journal d'audit.",
+      '',
+      '**Premier pas** : cancelled, not implementing.',
+      '',
+      '### 2.2 — Cancelled feature 🗑️',
+      '**Promesse** : another feature we never shipped.',
+      '',
+      '**Premier pas** : cancelled, kept here to exercise audit cancellation-rate.',
+      '',
+    ].join('\n'),
+  },
+});
+
 // Normalise the git repo so tar output is byte-identical across regens.
 // 1. gc packs loose objects and removes non-deterministic loose-object files.
 // 2. read-tree HEAD rewrites .git/index clearing per-file stat cache
