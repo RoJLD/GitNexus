@@ -56,6 +56,9 @@ Pré-requis local : Rancher Desktop running, **Node ≥ 22 LTS**. CI : `.github/
 | Install hooks | `unit/install-brainstorm-hooks.test.mjs` | Claude merge + git-hook template + GHA workflow template |
 | SysML — PlantUML renderer | unit/sysml-export-plantuml.test.mjs | safeId + renderPlantUml + tier filter + satisfy + deriveReqt |
 | SysML — Mermaid renderer | unit/sysml-export-mermaid.test.mjs | renderMermaid (graph TD + subgraphs) |
+| Timeline zoom — pure date/position fns | `unit/timeline-zoom.test.mjs` | computeZoomWindow + mapDateToPosition + mapPositionToDate + snapToNearestSnapshot (18 cases) |
+| Timeline zoom — useAppState slice | `unit/use-app-state-timeline.test.tsx` | cursorA/B + zoomWindow + graphMode init + auto-swap + mutual exclusion (8 cases) |
+| Timeline zoom — intra-repo graph diff | `unit/graph-diff-between-snapshots.test.mjs` | diffBetweenSnapshots alias + edges by triple + empty snapshots (5 cases) |
 
 ### Components React (unit)
 | Test | Fichier | Couvre |
@@ -131,6 +134,7 @@ Pré-requis local : Rancher Desktop running, **Node ≥ 22 LTS**. CI : `.github/
 | E2E audit panel | `e2e/specs/03-ghost-audit-panel.spec.ts` | panel renders + churner highlight |
 | Augmented graph | `e2e/specs/04-augmented-graph.spec.ts` | "Show ghosts" master toggle → per-Tier + cancelled sub-toggles visibles |
 | Gantt panel | `e2e/specs/05-gantt-panel.spec.ts` | toggle button + swimlanes |
+| Timeline zoom + cursor diff | `e2e/specs/timeline-zoom-and-diff.spec.ts` | Cursors A/B render + Zoom button + Compare button + Z & Shift+D shortcuts + duration indicator (Task 11 diff coloring wiring deferred) |
 
 ## Tests désactivés / connus fragiles
 
