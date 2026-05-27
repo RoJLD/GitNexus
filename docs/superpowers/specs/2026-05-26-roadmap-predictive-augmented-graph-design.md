@@ -274,3 +274,97 @@ Le Gantt panel actuel est **complémentaire** : vue calendaire tabulaire pour co
 ### Effort estimé (si livré)
 
 **~1-2 jours** une fois Augmented graph + Timeline integration trouvée. La mécanique de scrubbing existe déjà côté Timeline ; la mécanique d'overlay ghosts existe déjà côté Augmented graph. Il s'agit de connecter les deux et de filtrer les ghosts selon le temps actif.
+
+---
+
+## Update 2026-05-27 — Shipped
+
+Augmented graph view livrée end-to-end (Tasks 1-16 du plan
+`2026-05-26-roadmap-predictive-augmented-graph.md`). Notes
+d'implémentation par rapport au spec :
+
+### Update 1 (computeGhostVisualState) shipped
+
+L'opacité time-decaying est livrée comme prévu dans `lib/ghost-layout.ts`
+avec les 4 `alertLevel` (`fresh` ≥0.5 / `mature` 0.4 / `late` 0.3 orange
+`#e67e22` / `critical` 0.2 rouge `#c0392b`). Couvert par
+`tests/unit/ghost-layout-decay.test.mjs` avec dates calibrées sur les 4
+niveaux + fallback opacity 0.4 quand `expectedBy` absent. La logique
+existante pour `materialized` (masqué) et `cancelled` (opacity 0.3 grise)
+est préservée.
+
+### Update 2 (Augmented Timeline) explicitement out-of-scope
+
+La fusion Augmented graph + Timeline scrubable n'a pas été tentée. Reste
+notée comme follow-up à brainstormer en sub-spec dédiée. La mécanique
+d'overlay ghosts + le reducer Sigma sont écrits de façon idempotente
+pour ne pas bloquer cette fusion future (registration `GhostNodeProgram`
++ merge ghost data fait dans `useSigma` sans toucher au flux Timeline).
+
+### Sigma 3 NodeCircleProgram + canvas dashed outline (pragmatic v1)
+
+Le contour dashed des ghosts est rendu en deux passes : (1) le node
+fill via `NodeCircleProgram` standard de Sigma 3 (couleur tier +
+opacité venue de `computeGhostVisualState`), (2) une seconde passe
+canvas par-dessus le WebGL pour dessiner le cercle pointillé. Pas de
+nouvelle dep Sigma — l'extension du shader fragment pour les patterns
+dashed aurait demandé plus d'effort que la valeur ajoutée. Cette
+décision écarte l'open question 1 du spec (« custom WebGL program
+~30 lignes ») au profit d'un fallback plus simple ; visuellement
+indistinguable à l'échelle du graph.
+
+### State lifté dans `useAppState` (pas dans Filters)
+
+Le spec laissait ouvert le ownership du state `ghostFilters` (master
+toggle + per-Tier + cancelled). Choix retenu : lifter dans
+`useAppState` (pattern existant des autres filtres du panel — cf
+`coupling`, `growth`). Conséquences : (a) survit aux toggles
+d'overlays, (b) accessible par `GraphCanvas` pour le reducer Sigma,
+(c) testable comme un hook isolé.
+
+### Filters lives in `FileTreePanel.tsx`
+
+Le spec décrivait un fichier `components/Filters.tsx` séparé. La réalité
+du code : les filtres existants sont concentrés dans
+`FileTreePanel.tsx` (pattern in-place vs. fichier dédié). On a suivi le
+pattern existant — la section "Roadmap predictive" hiérarchique
+(master + per-Tier + cancelled) est ajoutée dans `GhostFiltersSection.tsx`
+puis montée dans `FileTreePanel.tsx`. Test correspondant :
+`tests/unit/components/Filters.test.tsx` (cible le sous-composant
+isolé, pas le panel entier).
+
+### Tests écrits mais Vitest bloqué localement (Node 21)
+
+Les 5 unit tests + 1 e2e sont livrés (cf `tests/README.md` rows
+ajoutées). Vitest 1.x exige Node ≥ 22 ; la machine locale tourne
+encore Node 21 (cf `docs/superpowers/decisions/2026-05-26-defer-node22-upgrade.md`).
+Conséquence : les tests sont validés syntaxiquement (`node --check`)
+et alignés avec le pyramid spec, mais leur première exécution réelle
+viendra avec le bump Node 22. Le guard `scripts/check-test-inventory.mjs`
+exit 0 — pas d'orphans, pas de drift README.
+
+### Open questions résolues
+
+| # | Question | Résolution |
+|---|---|---|
+| 1 | `circle-dashed` natif Sigma | Non — fallback canvas dashed outline (cf section ci-dessus). |
+| 2 | Couleur ghost edges + alpha | RGBA `rgba(<tier>, 0.5)` (inchangé). |
+| 3 | Mode 3D | Toujours out-of-scope. |
+| 4 | Cache `/ghosts` client | 30s mémoire + `invalidateGhostsCache()` exposé pour refresh manuel. |
+| 5 | Performance >100 ghosts | Non testée à grande échelle ; le grid 5 cols satellite suffit pour le volume actuel (<50 ghosts par repo). |
+
+### Artefacts livrés
+
+- `upstream/gitnexus-web/src/lib/ghost-layout.ts` (pure fns + decay)
+- `upstream/gitnexus-web/src/lib/ghost-node-program.ts` (Sigma 3 + canvas outline)
+- `upstream/gitnexus-web/src/services/ghosts-client.ts` (fetch + cache)
+- `upstream/gitnexus-web/src/components/GhostTooltip.tsx` (popup)
+- `upstream/gitnexus-web/src/components/GhostFiltersSection.tsx` (toggles)
+- `upstream/gitnexus-web/src/components/GraphCanvas.tsx` (wiring fetch + click)
+- `upstream/gitnexus-web/src/components/FileTreePanel.tsx` (mount section)
+- `upstream/gitnexus-web/src/hooks/useSigma.ts` (reducer extension + program register)
+- `upstream/gitnexus-web/src/hooks/useAppState.tsx` (`ghostFilters` lifted)
+- `tests/unit/ghost-layout.test.mjs` + `ghost-layout-decay.test.mjs` + `ghosts-client.test.mjs`
+- `tests/unit/components/GhostTooltip.test.tsx` + `Filters.test.tsx`
+- `tests/e2e/specs/04-augmented-graph.spec.ts`
+- `ROADMAP.md` row 39, `INVENTORY.md` sub-section, `tests/README.md` 6 nouvelles rows.
