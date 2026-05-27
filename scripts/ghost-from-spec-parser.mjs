@@ -53,3 +53,36 @@ export function extractTier(md) {
   const m = md.match(TIER_RE);
   return m ? m[1] : null;
 }
+
+const DESIGN_SECTION_RE = /^##\s+3\.\s+Design\s*$/i;
+const BACKTICK_RE = /`([^`]+)`/g;
+const PATH_HINT_RE = /\/|\.(?:mjs|ts|tsx|js|jsx|py|css|scss|json|yaml|yml|md|sh|sql|rs|go|java|kt|swift)$/;
+
+export function extractExpectedLinks(md) {
+  if (!md) return [];
+  const lines = md.split('\n');
+  let inDesign = false;
+  const tokens = new Set();
+  for (const line of lines) {
+    if (DESIGN_SECTION_RE.test(line)) { inDesign = true; continue; }
+    if (!inDesign) continue;
+    for (const m of line.matchAll(BACKTICK_RE)) {
+      tokens.add(m[1]);
+    }
+  }
+  return [...tokens].map(t => ({
+    kind: PATH_HINT_RE.test(t) ? 'path' : 'label',
+    value: t,
+  }));
+}
+
+export function parseSpec(filePath, md) {
+  return {
+    id: deriveId(filePath),
+    title: extractTitle(md),
+    description: extractDescription(md),
+    tier: extractTier(md),
+    status: 'planned',
+    expectedLinks: extractExpectedLinks(md),
+  };
+}

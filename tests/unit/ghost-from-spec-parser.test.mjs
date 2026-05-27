@@ -4,6 +4,8 @@ import {
   extractTitle,
   extractDescription,
   extractTier,
+  extractExpectedLinks,
+  parseSpec,
 } from '../../scripts/ghost-from-spec-parser.mjs';
 
 describe('deriveId', () => {
@@ -72,5 +74,54 @@ describe('extractTier', () => {
 
   it('matches multi-segment tiers', () => {
     expect(extractTier('# T\n\nTier 2.5.b stuff')).toBe('2.5'); // major.minor only
+  });
+});
+
+describe('extractExpectedLinks', () => {
+  it('extracts backticked tokens that look like paths from the Design section', () => {
+    const md = '# T\n\n## 3. Design\n\nUses `services/foo.ts` and `Button.tsx` and `docker-server-bar.mjs`.';
+    const out = extractExpectedLinks(md);
+    expect(out).toContainEqual({ kind: 'path', value: 'services/foo.ts' });
+    expect(out).toContainEqual({ kind: 'path', value: 'Button.tsx' });
+    expect(out).toContainEqual({ kind: 'path', value: 'docker-server-bar.mjs' });
+  });
+
+  it('marks non-path backticked tokens as label kind', () => {
+    const md = '# T\n\n## 3. Design\n\n`some label` is interesting.';
+    const out = extractExpectedLinks(md);
+    expect(out).toContainEqual({ kind: 'label', value: 'some label' });
+  });
+
+  it('returns empty array if no Design section', () => {
+    expect(extractExpectedLinks('# T\n\nbody')).toEqual([]);
+  });
+});
+
+describe('parseSpec (integration)', () => {
+  const md = [
+    '# Roadmap Predictive — Audit view design',
+    '## 1. Context', 'before',
+    '## 2. Goal',
+    '',
+    'Build the audit view to track Tier 2.3 ghosts.',
+    '',
+    '## 3. Design',
+    '',
+    'Uses `services/foo.ts` and `Button.tsx`.',
+  ].join('\n');
+
+  it('returns a fully-populated ghost object', () => {
+    const ghost = parseSpec('docs/superpowers/specs/2026-05-26-audit-design.md', md);
+    expect(ghost).toMatchObject({
+      id: 'spec-2026-05-26-audit',
+      title: 'Roadmap Predictive — Audit view',
+      description: expect.stringContaining('Build the audit view'),
+      tier: '2.3',
+      status: 'planned',
+      expectedLinks: expect.arrayContaining([
+        { kind: 'path', value: 'services/foo.ts' },
+        { kind: 'path', value: 'Button.tsx' },
+      ]),
+    });
   });
 });
