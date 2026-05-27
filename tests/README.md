@@ -59,6 +59,8 @@ Pré-requis local : Rancher Desktop running, **Node ≥ 22 LTS**. CI : `.github/
 | Timeline zoom — pure date/position fns | `unit/timeline-zoom.test.mjs` | computeZoomWindow + mapDateToPosition + mapPositionToDate + snapToNearestSnapshot (18 cases) |
 | Timeline zoom — useAppState slice | `unit/use-app-state-timeline.test.tsx` | cursorA/B + zoomWindow + graphMode init + auto-swap + mutual exclusion (8 cases) |
 | Timeline zoom — intra-repo graph diff | `unit/graph-diff-between-snapshots.test.mjs` | diffBetweenSnapshots alias + edges by triple + empty snapshots (5 cases) |
+| Augmented Timeline — pure fns | `unit/augmented-timeline.test.mjs` | selectGhostsAt (closest-prior + lock mode + empty + before-earliest) + computeTransitions (materializing/cancelling/dedup) + resolveAugmentedTimelineMode (lock + skew tolerance) |
+| Augmented Timeline — snapshot ghosts cache | `unit/snapshot-ghosts-cache.test.mjs` | parallel pool fetch + 30s TTL cache hit + cap 50 + abort signal propagation |
 | Clusters parser | `unit/ghosts-clusters-parser.test.mjs` | `parseClusters` from ROADMAP.md |
 | Clusters auto-derive | `unit/ghosts-clusters-auto-derive.test.mjs` | Union-Find sur `dependsOn` |
 | Cluster status | `unit/ghosts-clusters-status.test.mjs` | aggregate + synthesis + expired + override |
@@ -93,6 +95,7 @@ Pré-requis local : Rancher Desktop running, **Node ≥ 22 LTS**. CI : `.github/
 | GanttRow | `unit/components/gantt/GanttRow.test.tsx` | label + bars area + click |
 | ClusterTooltip | `unit/components/ClusterTooltip.test.tsx` | popup render + click member |
 | ClustersCard | `unit/components/audit/ClustersCard.test.tsx` | 7ème card + drill-down |
+| Augmented Timeline — Animate button | `unit/components/Timeline.augmented.test.tsx` | Animate roadmap button visible + click sets cursor/animationActive/ghostFilters + banner shown when animationActive |
 
 ### Stack health
 | Test | Fichier | Couvre |
@@ -143,6 +146,7 @@ Pré-requis local : Rancher Desktop running, **Node ≥ 22 LTS**. CI : `.github/
 | Gantt panel | `e2e/specs/05-gantt-panel.spec.ts` | toggle button + swimlanes |
 | Timeline zoom + cursor diff | `e2e/specs/timeline-zoom-and-diff.spec.ts` | Cursors A/B render + Zoom button + Compare button + Z & Shift+D shortcuts + duration indicator (Task 11 diff coloring wiring deferred) |
 | E2E cluster halos | `e2e/specs/06-cluster-halos.spec.ts` | toggle + halo + tooltip |
+| E2E Augmented Timeline | `e2e/specs/07-augmented-timeline.spec.ts` | Scrub cursorB with ghosts ON (skip if no snapshots) + Animate roadmap button shows banner |
 
 ## Tests désactivés / connus fragiles
 

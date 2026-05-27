@@ -241,6 +241,18 @@ Pure frontend overlay — aucune route serveur, consomme `/ghosts?repo=` du CORE
 - **Out** : XMI, SysML v2, CALLS/IMPORTS edges, rendering PNG/SVG (le user rend chez lui), composant frontend.
 - **Usage** : `curl :4173/sysml-export?repo=hmm_studio > diagram.puml` puis ouvrir dans PlantUML server / VSCode extension.
 
+#### Roadmap-predictive Augmented Timeline (Tier 3.x, 2026-05-27)
+Pure frontend extension de la Timeline existante — aucune route serveur, réutilise `/ghosts/at` du CORE :
+- `upstream/gitnexus-web/src/lib/augmented-timeline.ts` — pure fns : `selectGhostsAt` (closest-prior), `computeTransitions` (Play cross-fade window), `resolveAugmentedTimelineMode` (auto-detect : live ↔ time-aware via `lockGhostsToHead` + 60s skew tolerance).
+- `upstream/gitnexus-web/src/services/snapshot-ghosts-cache.ts` — parallel pool fetch (POOL=3) des `<repo>/snapshot/<sha>/ghosts.json` via `/ghosts/at` CORE endpoint, Map<sha, SnapshotGhosts> cache 30s TTL, cap 50 snapshots, abort-aware.
+- `upstream/gitnexus-web/src/components/Timeline.tsx` — bouton "🎬 Animate roadmap" (`data-testid="animate-roadmap-button"`) : auto-cursor earliest + auto-Play + setAnimationActive(true), banner `Animating roadmap…` (`data-testid="animate-roadmap-banner"`) pendant l'animation. Auto-clear `animationActive` à Stop / fin de Play.
+- `upstream/gitnexus-web/src/components/GhostFiltersSection.tsx` — toggle "Lock ghosts to today's view" sous le bloc per-Tier, visible uniquement quand `showGhosts` ON. Câblage transmis via `FileTreePanel.tsx`.
+- `upstream/gitnexus-web/src/components/GraphCanvas.tsx` — useEffect mode-resolution sur (`cursorB`, `lockGhostsToHead`, `animationActive`) : `resolveAugmentedTimelineMode` → live vs time-aware → `selectGhostsAt` choisit le ghost set effectif → `applyGhostLayer`. Pre-fetch déclenché sur repo change quand l'overlay est ON.
+- `upstream/gitnexus-web/src/hooks/useSigma.ts` — `opacityOverrideRef` (ghost id → opacité) consulté par le node reducer + `startGhostCrossFade(id, ms)` / `startRealNodeCrossFade(id, ms)` / `clearCrossFades()`. Single shared rAF loop interpole linéairement et refresh Sigma une fois par frame.
+- `upstream/gitnexus-web/src/hooks/useAppState.tsx` — nouveaux états `lockGhostsToHead: boolean` + `animationActive: boolean` + setters. Defaults `false`.
+- **Réutilise 100%** des sidecars CORE existants (`/ghosts/at?repo=&commit=`). Aucun endpoint serveur nouveau.
+- 3 activation triggers : (1) auto-detect quand cursor B < HEAD - 60s, (2) Lock toggle filters, (3) Animate roadmap button.
+
 #### Roadmap-predictive Ghost Cluster (Tier 3.x, 2026-05-27)
 - `upstream/docker-server-ghosts-core.mjs` — `parseClusters` (markdown), `deriveAutoClusters` (Union-Find sur dependsOn), `computeClusterStatus` (aggregate + synthesis + expired + override).
 - `upstream/docker-server-ghosts.mjs` — `syncGhostsForRepo` écrit aussi `.gitnexus/clusters.json` sidecar. `readLatestClusters` / `readSnapshotClusters` exportés.
