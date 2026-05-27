@@ -8751,10 +8751,10 @@ index 0000000..2b22870
 +}
 diff --git a/docker-server-sysml-export-core.mjs b/docker-server-sysml-export-core.mjs
 new file mode 100644
-index 0000000..31519fe
+index 0000000..65f5880
 --- /dev/null
 +++ b/docker-server-sysml-export-core.mjs
-@@ -0,0 +1,88 @@
+@@ -0,0 +1,145 @@
 +// upstream/docker-server-sysml-export-core.mjs
 +//
 +// Pure renderers for SysML export. No I/O. Consumes runtime ghosts (from
@@ -8841,6 +8841,63 @@ index 0000000..31519fe
 +  }
 +
 +  lines.push('@enduml');
++  return lines.join('\n') + '\n';
++}
++
++export function renderMermaid({ ghosts, files, repoName, tierFilter }) {
++  const selected = selectRenderableGhosts(ghosts, tierFilter);
++  const fileSet = new Set(files || []);
++  for (const g of selected) for (const l of g.links || []) if (l.file) fileSet.add(l.file);
++
++  const byTier = new Map();
++  for (const g of selected) {
++    const k = tierMajor(g.tier);
++    if (!byTier.has(k)) byTier.set(k, []);
++    byTier.get(k).push(g);
++  }
++  const fileTier = new Map();
++  for (const g of selected) {
++    const k = tierMajor(g.tier);
++    for (const l of g.links || []) if (l.file && !fileTier.has(l.file)) fileTier.set(l.file, k);
++  }
++  for (const f of fileSet) if (!fileTier.has(f)) fileTier.set(f, 'none');
++  const filesByTier = new Map();
++  for (const [f, k] of fileTier) {
++    if (!filesByTier.has(k)) filesByTier.set(k, []);
++    filesByTier.get(k).push(f);
++  }
++
++  const lines = [];
++  lines.push('graph TD');
++  lines.push(`%% gitnexus — Roadmap predictive (${repoName || 'unknown'})`);
++
++  const tiers = ['1', '2', '3', 'none'];
++  for (const t of tiers) {
++    const tGhosts = byTier.get(t) || [];
++    const tFiles = filesByTier.get(t) || [];
++    if (tGhosts.length === 0 && tFiles.length === 0) continue;
++    lines.push(`subgraph Tier_${t === 'none' ? 'none' : t}["${t === 'none' ? 'Sans tier' : `Tier ${t}`}"]`);
++    for (const f of tFiles.sort()) {
++      lines.push(`  B_${safeId(f)}[<<B>> ${f}]`);
++    }
++    for (const g of tGhosts.sort((a, b) => a.id.localeCompare(b.id))) {
++      const title = (g.declared?.title || g.id);
++      lines.push(`  R_${safeId(g.id)}[<<R>> ${title}]`);
++    }
++    lines.push('end');
++  }
++  for (const t of tiers) {
++    for (const g of (byTier.get(t) || [])) {
++      for (const l of g.links || []) {
++        if (l.file && fileSet.has(l.file)) {
++          lines.push(`R_${safeId(g.id)} -->|satisfy| B_${safeId(l.file)}`);
++        }
++      }
++      for (const depId of g.dependsOn || []) {
++        lines.push(`R_${safeId(g.id)} -->|deriveReqt| R_${safeId(depId)}`);
++      }
++    }
++  }
 +  return lines.join('\n') + '\n';
 +}
 diff --git a/docker-server-watches.mjs b/docker-server-watches.mjs
