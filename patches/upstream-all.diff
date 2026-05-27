@@ -12486,7 +12486,7 @@ index 0000000..05e7618
 +  );
 +};
 diff --git a/gitnexus-web/src/components/GraphCanvas.tsx b/gitnexus-web/src/components/GraphCanvas.tsx
-index e34fd43..c9f6f19 100644
+index e34fd43..a988ac8 100644
 --- a/gitnexus-web/src/components/GraphCanvas.tsx
 +++ b/gitnexus-web/src/components/GraphCanvas.tsx
 @@ -9,6 +9,7 @@ import {
@@ -12497,7 +12497,17 @@ index e34fd43..c9f6f19 100644
  } from '@/lib/lucide-icons';
  import { useSigma } from '../hooks/useSigma';
  import { useAppState } from '../hooks/useAppState';
-@@ -46,6 +47,10 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -21,6 +22,9 @@ import {
+ import type { GraphNode } from 'gitnexus-shared';
+ import { QueryFAB } from './QueryFAB';
+ import Graph from 'graphology';
++import GhostTooltip from './GhostTooltip';
++import type { GhostRuntime } from '../services/ghosts-client';
++import { matchExistingNodes } from '../lib/ghost-layout';
+ 
+ export interface GraphCanvasHandle {
+   focusNode: (nodeId: string) => void;
+@@ -46,9 +50,24 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
      clearAICitationHighlights,
      clearBlastRadius,
      animatedNodes,
@@ -12508,7 +12518,53 @@ index e34fd43..c9f6f19 100644
    } = useAppState();
    const [hoveredNodeName, setHoveredNodeName] = useState<string | null>(null);
  
-@@ -147,6 +152,9 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
++  // Augmented graph (Section D — Task 9). The ghosts payload itself
++  // is fetched in Task 12 (which wires the `useEffect` + the
++  // `applyGhostLayer` call). Here we declare both pieces of state so
++  // the click handler can already route clicks on `kind: 'ghost'`
++  // nodes to the GhostTooltip rather than the normal file-click flow.
++  // `setGhosts` is the setter Task 12 will fill in; intentional that
++  // ghosts stays null at this stage.
++  const [ghosts, setGhosts] = useState<GhostRuntime[] | null>(null);
++  const [selectedGhostId, setSelectedGhostId] = useState<string | null>(null);
++  void setGhosts; // wired in Task 12 (GraphCanvas fetch /ghosts useEffect)
++
+   const effectiveHighlightedNodeIds = useMemo(() => {
+     if (!isAIHighlightsEnabled) return highlightedNodeIds;
+     const next = new Set(highlightedNodeIds);
+@@ -82,6 +101,23 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+ 
+   const handleNodeClick = useCallback(
+     (nodeId: string) => {
++      // Branch on ghost-layer nodes : their click opens the
++      // GhostTooltip instead of the regular file/Code-panel flow.
++      // The id stored on the Sigma node is `ghost:<ghostId>`; we look
++      // up the original ghost id from the underlying graphology
++      // attributes so cancelling/aliasing won't break this.
++      const sigma = sigmaRef.current;
++      if (sigma) {
++        const sigmaGraph = sigma.getGraph() as Graph<SigmaNodeAttributes, SigmaEdgeAttributes>;
++        if (sigmaGraph.hasNode(nodeId)) {
++          const attrs = sigmaGraph.getNodeAttributes(nodeId) as { kind?: string; ghostId?: string };
++          if (attrs.kind === 'ghost' && attrs.ghostId) {
++            setSelectedGhostId(attrs.ghostId);
++            return;
++          }
++        }
++      }
++
+       if (!graph) return;
+       const node = nodeById.get(nodeId);
+       if (node) {
+@@ -89,6 +125,7 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+         openCodePanel();
+       }
+     },
++    // eslint-disable-next-line react-hooks/exhaustive-deps -- sigmaRef identity never changes
+     [graph, nodeById, setSelectedNode, openCodePanel],
+   );
+ 
+@@ -147,6 +184,9 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
      blastRadiusNodeIds: effectiveBlastRadiusNodeIds,
      animatedNodes: effectiveAnimatedNodes,
      visibleEdgeTypes,
@@ -12518,7 +12574,40 @@ index e34fd43..c9f6f19 100644
    });
  
    // Expose focusNode to parent via ref
-@@ -350,8 +358,16 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -249,6 +289,32 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+         className="sigma-container h-full w-full cursor-grab active:cursor-grabbing"
+       />
+ 
++      {/* Ghost tooltip — opens when a ghost-layer node is clicked
++          (Section D / Task 9). The matchedNodeIds list is computed
++          against the live graph's node IDs so the tooltip can mark
++          each expectedLink as ✓ matched / ✗ unmatched. */}
++      {(() => {
++        if (!selectedGhostId || !ghosts) return null;
++        const selectedGhost = ghosts.find((g) => g.id === selectedGhostId);
++        if (!selectedGhost) return null;
++        const sigma = sigmaRef.current;
++        const allNodeIds: string[] = sigma
++          ? (sigma.getGraph() as Graph<SigmaNodeAttributes, SigmaEdgeAttributes>).nodes()
++          : [];
++        const matched = matchExistingNodes(
++          selectedGhost.declared.expectedLinks,
++          allNodeIds,
++        );
++        return (
++          <GhostTooltip
++            ghost={selectedGhost}
++            matchedNodeIds={matched}
++            onClose={() => setSelectedGhostId(null)}
++            onOpenRoadmap={(id) => window.open(`/ROADMAP.md#${id}`, '_blank')}
++          />
++        );
++      })()}
++
+       {/* Hovered node tooltip - only show when NOT selected */}
+       {hoveredNodeName && !sigmaSelectedNode && (
+         <div className="pointer-events-none absolute top-4 left-1/2 z-20 -translate-x-1/2 animate-fade-in rounded-lg border border-border-subtle bg-elevated/95 px-3 py-1.5 backdrop-blur-sm">
+@@ -350,8 +416,16 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
        {/* Query FAB */}
        <QueryFAB />
  
