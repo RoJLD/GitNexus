@@ -33,10 +33,26 @@ export function upsertManagedSection(md, ghost, specPath) {
   const specName = basename(specPath).replace(/\.md$/i, '');
   const newRow = renderRow(ghost, specPath);
 
-  const startIdx = md.indexOf(START_MARKER);
-  const endIdx = md.indexOf(END_MARKER);
+  // Anchor on the section header AT LINE START: the description of an
+  // unrelated row (e.g. the Brainstorm-hook ROADMAP entry itself) can contain
+  // the literal `## 🧪 From spec brainstorms` AND `<!-- specs:start -->` AND
+  // `<!-- specs:end -->` text inside backtick code spans. Without this
+  // line-anchored search, indexOf would match the in-prose mentions and
+  // either split the row or write into the description.
+  const headerRe = new RegExp(`^${SECTION_HEADER.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*$`, 'm');
+  const headerMatch = md.match(headerRe);
+  const searchFrom = headerMatch ? headerMatch.index : 0;
+  // After the header, both markers appear as the FIRST chars of their own
+  // lines (no leading whitespace, no backticks before). Use a line-anchored
+  // regex search rather than indexOf.
+  const startRe = new RegExp(`^${START_MARKER.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*$`, 'm');
+  const endRe = new RegExp(`^${END_MARKER.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*$`, 'm');
+  const startMatch = md.slice(searchFrom).match(startRe);
+  const startIdx = startMatch ? searchFrom + startMatch.index : -1;
+  const endMatch = startIdx === -1 ? null : md.slice(startIdx).match(endRe);
+  const endIdx = endMatch ? startIdx + endMatch.index : -1;
 
-  if (startIdx === -1 || endIdx === -1) {
+  if (!headerMatch || startIdx === -1 || endIdx === -1) {
     // Append a fresh section.
     const block = [
       '',
