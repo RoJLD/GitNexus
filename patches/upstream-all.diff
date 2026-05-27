@@ -15105,7 +15105,7 @@ index 0000000..05e7618
 +  );
 +};
 diff --git a/gitnexus-web/src/components/GraphCanvas.tsx b/gitnexus-web/src/components/GraphCanvas.tsx
-index e34fd43..71497f7 100644
+index e34fd43..8d9178c 100644
 --- a/gitnexus-web/src/components/GraphCanvas.tsx
 +++ b/gitnexus-web/src/components/GraphCanvas.tsx
 @@ -1,4 +1,4 @@
@@ -15271,7 +15271,20 @@ index e34fd43..71497f7 100644
    });
  
    // Expose focusNode to parent via ref
-@@ -205,6 +303,198 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -189,8 +287,10 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+     });
+ 
+     const sigmaGraph = knowledgeGraphToGraphology(graph, communityMemberships);
+-    setSigmaGraph(sigmaGraph);
+-  }, [graph, nodeById, setSigmaGraph]);
++    // projectName already encodes the snapshot suffix (e.g.
++    // `hmm_studio@c2ac699`) so it doubles as the layout cache key.
++    setSigmaGraph(sigmaGraph, { cacheKey: projectName || undefined });
++  }, [graph, nodeById, setSigmaGraph, projectName]);
+ 
+   // Update node visibility when filters change
+   useEffect(() => {
+@@ -205,6 +305,198 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
      // eslint-disable-next-line react-hooks/exhaustive-deps -- sigmaRef identity never changes
    }, [visibleLabels, depthFilter, appSelectedNode]);
  
@@ -15470,7 +15483,7 @@ index e34fd43..71497f7 100644
    // Sync app selected node with sigma
    useEffect(() => {
      if (appSelectedNode) {
-@@ -249,6 +539,130 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -249,6 +541,130 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
          className="sigma-container h-full w-full cursor-grab active:cursor-grabbing"
        />
  
@@ -15601,7 +15614,7 @@ index e34fd43..71497f7 100644
        {/* Hovered node tooltip - only show when NOT selected */}
        {hoveredNodeName && !sigmaSelectedNode && (
          <div className="pointer-events-none absolute top-4 left-1/2 z-20 -translate-x-1/2 animate-fade-in rounded-lg border border-border-subtle bg-elevated/95 px-3 py-1.5 backdrop-blur-sm">
-@@ -350,8 +764,16 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -350,8 +766,16 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
        {/* Query FAB */}
        <QueryFAB />
  
