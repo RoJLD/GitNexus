@@ -59,6 +59,9 @@ Pré-requis local : Rancher Desktop running, **Node ≥ 22 LTS**. CI : `.github/
 | Timeline zoom — pure date/position fns | `unit/timeline-zoom.test.mjs` | computeZoomWindow + mapDateToPosition + mapPositionToDate + snapToNearestSnapshot (18 cases) |
 | Timeline zoom — useAppState slice | `unit/use-app-state-timeline.test.tsx` | cursorA/B + zoomWindow + graphMode init + auto-swap + mutual exclusion (8 cases) |
 | Timeline zoom — intra-repo graph diff | `unit/graph-diff-between-snapshots.test.mjs` | diffBetweenSnapshots alias + edges by triple + empty snapshots (5 cases) |
+| Temporal filter — pure client fns | `unit/temporal-filter-modes.test.mjs` | computeStrictFilter + computeNormalFilter (intersection + union) |
+| Temporal filter — backend core | `unit/nodes-alive-between-core.test.mjs` | filterSnapshotsInWindow + unionSnapshotNodeIds |
+| Temporal filter — useAppState slice | `unit/use-app-state-temporal-filter.test.tsx` | 4 modes + localStorage persist + restore |
 | Augmented Timeline — pure fns | `unit/augmented-timeline.test.mjs` | selectGhostsAt (closest-prior + lock mode + empty + before-earliest) + computeTransitions (materializing/cancelling/dedup) + resolveAugmentedTimelineMode (lock + skew tolerance) |
 | Augmented Timeline — snapshot ghosts cache | `unit/snapshot-ghosts-cache.test.mjs` | parallel pool fetch + 30s TTL cache hit + cap 50 + abort signal propagation |
 | Clusters parser | `unit/ghosts-clusters-parser.test.mjs` | `parseClusters` from ROADMAP.md |
@@ -104,6 +107,7 @@ Pré-requis local : Rancher Desktop running, **Node ≥ 22 LTS**. CI : `.github/
 
 ### Endpoints integration
 | Test | Fichier | Couvre |
+| Nodes alive between | `integration/endpoints/nodes-alive-between.test.mjs` | GET 200 + 400 missing params + 404 unknown repo + cache hit |
 |---|---|---|
 | Snapshots | `integration/endpoints/snapshot.test.mjs` | `POST /snapshot`, `GET /snapshots` |
 | Snapshots bulk | `integration/endpoints/snapshot-bulk.test.mjs` | `POST /snapshot/bulk` + status |
@@ -145,6 +149,7 @@ Pré-requis local : Rancher Desktop running, **Node ≥ 22 LTS**. CI : `.github/
 | Augmented graph | `e2e/specs/04-augmented-graph.spec.ts` | "Show ghosts" master toggle → per-Tier + cancelled sub-toggles visibles |
 | Gantt panel | `e2e/specs/05-gantt-panel.spec.ts` | toggle button + swimlanes |
 | Timeline zoom + cursor diff | `e2e/specs/timeline-zoom-and-diff.spec.ts` | Cursors A/B render + Zoom button + Compare button + Z & Shift+D shortcuts + duration indicator (Task 11 diff coloring wiring deferred) |
+| Timeline Temporal Filter | `e2e/specs/timeline-temporal-filter.spec.ts` | 4 modes dropdown + localStorage + backend call (permissive) + composition with Compare A↔B (8 cases) |
 | E2E cluster halos | `e2e/specs/06-cluster-halos.spec.ts` | toggle + halo + tooltip |
 | E2E Augmented Timeline | `e2e/specs/07-augmented-timeline.spec.ts` | Scrub cursorB with ghosts ON (skip if no snapshots) + Animate roadmap button shows banner |
 
