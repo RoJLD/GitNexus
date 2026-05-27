@@ -1,4 +1,4 @@
-﻿diff --git a/Dockerfile.web b/Dockerfile.web
+diff --git a/Dockerfile.web b/Dockerfile.web
 index b102a70..219e3b9 100644
 --- a/Dockerfile.web
 +++ b/Dockerfile.web
@@ -15113,7 +15113,7 @@ index 0000000..05e7618
 +  );
 +};
 diff --git a/gitnexus-web/src/components/GraphCanvas.tsx b/gitnexus-web/src/components/GraphCanvas.tsx
-index e34fd43..8d9178c 100644
+index e34fd43..5a492c8 100644
 --- a/gitnexus-web/src/components/GraphCanvas.tsx
 +++ b/gitnexus-web/src/components/GraphCanvas.tsx
 @@ -1,4 +1,4 @@
@@ -15164,7 +15164,7 @@ index e34fd43..8d9178c 100644
    const {
      graph,
      setSelectedNode,
-@@ -46,9 +68,57 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -46,9 +68,63 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
      clearAICitationHighlights,
      clearBlastRadius,
      animatedNodes,
@@ -15181,6 +15181,12 @@ index e34fd43..8d9178c 100644
 +    cursorB,
 +    temporalFilteredNodeIds,
 +  } = appState;
++  // Layout cache bridge (Task 5). Read defensively so this file compiles
++  // against pre-layout-cache builds.
++  const registerRecomputeLayout: ((fn: ((cacheKey?: string) => void) | null) => void) | undefined =
++    (appState as unknown as {
++      registerRecomputeLayout?: (fn: ((cacheKey?: string) => void) | null) => void;
++    }).registerRecomputeLayout;
 +  // Augmented Timeline (Tier 3.x) — read defensively so this file
 +  // compiles against pre-Task-5 builds (and old Storybook snapshots).
 +  const lockGhostsToHead: boolean =
@@ -15223,7 +15229,7 @@ index e34fd43..8d9178c 100644
    const effectiveHighlightedNodeIds = useMemo(() => {
      if (!isAIHighlightsEnabled) return highlightedNodeIds;
      const next = new Set(highlightedNodeIds);
-@@ -82,6 +152,23 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -82,6 +158,23 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
  
    const handleNodeClick = useCallback(
      (nodeId: string) => {
@@ -15247,7 +15253,7 @@ index e34fd43..8d9178c 100644
        if (!graph) return;
        const node = nodeById.get(nodeId);
        if (node) {
-@@ -89,6 +176,7 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -89,6 +182,7 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
          openCodePanel();
        }
      },
@@ -15255,7 +15261,15 @@ index e34fd43..8d9178c 100644
      [graph, nodeById, setSelectedNode, openCodePanel],
    );
  
-@@ -139,6 +227,12 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -130,6 +224,7 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+     containerRef,
+     sigmaRef,
+     setGraph: setSigmaGraph,
++    recomputeLayout: sigmaRecomputeLayout,
+     zoomIn,
+     zoomOut,
+     resetZoom,
+@@ -139,6 +234,12 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
      stopLayout,
      selectedNode: sigmaSelectedNode,
      setSelectedNode: setSigmaSelectedNode,
@@ -15268,7 +15282,7 @@ index e34fd43..8d9178c 100644
    } = useSigma({
      onNodeClick: handleNodeClick,
      onNodeHover: handleNodeHover,
-@@ -147,6 +241,10 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -147,6 +248,10 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
      blastRadiusNodeIds: effectiveBlastRadiusNodeIds,
      animatedNodes: effectiveAnimatedNodes,
      visibleEdgeTypes,
@@ -15279,7 +15293,7 @@ index e34fd43..8d9178c 100644
    });
  
    // Expose focusNode to parent via ref
-@@ -189,8 +287,10 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -189,8 +294,20 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
      });
  
      const sigmaGraph = knowledgeGraphToGraphology(graph, communityMemberships);
@@ -15289,10 +15303,20 @@ index e34fd43..8d9178c 100644
 +    // `hmm_studio@c2ac699`) so it doubles as the layout cache key.
 +    setSigmaGraph(sigmaGraph, { cacheKey: projectName || undefined });
 +  }, [graph, nodeById, setSigmaGraph, projectName]);
++
++  // Expose useSigma.recomputeLayout up to useAppState so the Header
++  // "Recompute layout" button can fire it. The action lives on
++  // useAppState (close to projectName/cacheKey) but the implementation
++  // is inside useSigma — this bridge keeps Header.tsx side-effect free.
++  useEffect(() => {
++    if (!registerRecomputeLayout) return;
++    registerRecomputeLayout(sigmaRecomputeLayout);
++    return () => registerRecomputeLayout(null);
++  }, [registerRecomputeLayout, sigmaRecomputeLayout]);
  
    // Update node visibility when filters change
    useEffect(() => {
-@@ -205,6 +305,198 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -205,6 +322,198 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
      // eslint-disable-next-line react-hooks/exhaustive-deps -- sigmaRef identity never changes
    }, [visibleLabels, depthFilter, appSelectedNode]);
  
@@ -15491,7 +15515,7 @@ index e34fd43..8d9178c 100644
    // Sync app selected node with sigma
    useEffect(() => {
      if (appSelectedNode) {
-@@ -249,6 +541,130 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -249,6 +558,130 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
          className="sigma-container h-full w-full cursor-grab active:cursor-grabbing"
        />
  
@@ -15622,7 +15646,7 @@ index e34fd43..8d9178c 100644
        {/* Hovered node tooltip - only show when NOT selected */}
        {hoveredNodeName && !sigmaSelectedNode && (
          <div className="pointer-events-none absolute top-4 left-1/2 z-20 -translate-x-1/2 animate-fade-in rounded-lg border border-border-subtle bg-elevated/95 px-3 py-1.5 backdrop-blur-sm">
-@@ -350,8 +766,16 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -350,8 +783,16 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
        {/* Query FAB */}
        <QueryFAB />
  
@@ -16171,10 +16195,10 @@ index 0000000..cedd939
 +  );
 +};
 diff --git a/gitnexus-web/src/components/Header.tsx b/gitnexus-web/src/components/Header.tsx
-index 3061a2e..5b78e27 100644
+index 3061a2e..2f3dc84 100644
 --- a/gitnexus-web/src/components/Header.tsx
 +++ b/gitnexus-web/src/components/Header.tsx
-@@ -10,7 +10,12 @@ import {
+@@ -10,7 +10,13 @@ import {
    Trash2,
    RefreshCw,
    Loader2,
@@ -16182,22 +16206,37 @@ index 3061a2e..5b78e27 100644
 +  FileArchive,
 +  GitBranch,
 +  Camera,
++  Network,
  } from '@/lib/lucide-icons';
 +import { SnapshotsPanel } from './SnapshotsPanel';
  import { useAppState } from '../hooks/useAppState';
  import {
    deleteRepo,
-@@ -63,6 +68,9 @@ export const Header = ({
+@@ -55,6 +61,7 @@ export const Header = ({
+   onAnalyzeComplete,
+   onReposChanged,
+ }: HeaderProps) => {
++  const appState = useAppState();
+   const {
+     projectName,
+     graph,
+@@ -63,13 +70,27 @@ export const Header = ({
      rightPanelTab,
      setSettingsPanelOpen,
      setHelpDialogBoxOpen,
+-  } = useAppState();
 +    diffMode,
 +    diffLoading,
 +    enterDiffMode,
-   } = useAppState();
++  } = appState;
++  // Layout cache (Task 5). Read defensively so the Header compiles
++  // against pre-layout-cache builds.
++  const recomputeLayout: ((cacheKey?: string) => void) | undefined =
++    (appState as unknown as { recomputeLayout?: (cacheKey?: string) => void })
++      .recomputeLayout;
    const [searchQuery, setSearchQuery] = useState('');
    const [isRepoDropdownOpen, setIsRepoDropdownOpen] = useState(false);
-@@ -70,6 +78,12 @@ export const Header = ({
+   const [showAnalyzer, setShowAnalyzer] = useState(false);
    const [reanalyzing, setReanalyzing] = useState<string | null>(null); // repo name being re-analyzed
    const [reanalyzeProgress, setReanalyzeProgress] = useState<JobProgress | null>(null);
    const reanalyzeSseRef = useRef<AbortController | null>(null);
@@ -16210,7 +16249,7 @@ index 3061a2e..5b78e27 100644
    const repoDropdownRef = useRef<HTMLDivElement>(null);
    const [isSearchOpen, setIsSearchOpen] = useState(false);
    const [selectedIndex, setSelectedIndex] = useState(0);
-@@ -111,6 +125,24 @@ export const Header = ({
+@@ -111,6 +132,24 @@ export const Header = ({
      };
    }, []);
  
@@ -16235,7 +16274,7 @@ index 3061a2e..5b78e27 100644
    // Keyboard shortcut (Cmd+K / Ctrl+K)
    useEffect(() => {
      const handleKeyDown = (e: KeyboardEvent) => {
-@@ -204,13 +236,16 @@ export const Header = ({
+@@ -204,13 +243,16 @@ export const Header = ({
                    </div>
                  ) : (
                    <>
@@ -16255,7 +16294,7 @@ index 3061a2e..5b78e27 100644
                            <div
                              key={repo.name}
                              className={`group flex items-center gap-2 px-4 py-2 transition-colors ${
-@@ -236,6 +271,102 @@ export const Header = ({
+@@ -236,6 +278,102 @@ export const Header = ({
                                  </span>
                                )}
                              </button>
@@ -16358,7 +16397,7 @@ index 3061a2e..5b78e27 100644
                              {/* Re-analyze */}
                              <button
                                onClick={async (e) => {
-@@ -278,7 +409,7 @@ export const Header = ({
+@@ -278,7 +416,7 @@ export const Header = ({
                                className={`cursor-pointer rounded p-1 transition-all ${
                                  reanalyzing === repo.name
                                    ? 'text-accent'
@@ -16367,7 +16406,7 @@ index 3061a2e..5b78e27 100644
                                }`}
                                title={
                                  reanalyzing === repo.name
-@@ -316,7 +447,7 @@ export const Header = ({
+@@ -316,7 +454,7 @@ export const Header = ({
                                    console.error('Failed to delete repo:', err);
                                  }
                                }}
@@ -16376,7 +16415,7 @@ index 3061a2e..5b78e27 100644
                                title={`Delete ${repo.name}`}
                              >
                                <Trash2 className="h-3.5 w-3.5" />
-@@ -326,6 +457,30 @@ export const Header = ({
+@@ -326,6 +464,30 @@ export const Header = ({
                        </div>
                      )}
  
@@ -16407,6 +16446,25 @@ index 3061a2e..5b78e27 100644
                      {/* Re-analyze progress bar */}
                      {reanalyzing && reanalyzeProgress && (
                        <div className="border-t border-border-subtle bg-accent/5 px-4 py-2.5">
+@@ -458,6 +620,18 @@ export const Header = ({
+         <EmbeddingStatus />
+ 
+         {/* Icon buttons */}
++        {recomputeLayout && (
++          <button
++            type="button"
++            data-testid="recompute-layout-button"
++            disabled={!projectName}
++            onClick={() => projectName && recomputeLayout(projectName)}
++            className="flex h-9 w-9 cursor-pointer items-center justify-center rounded-md text-text-secondary transition-colors hover:bg-hover hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-50"
++            title="Recompute graph layout (wipes cached positions for the current view)"
++          >
++            <Network className="h-4.5 w-4.5" />
++          </button>
++        )}
+         <button
+           onClick={() => setSettingsPanelOpen(true)}
+           className="flex h-9 w-9 cursor-pointer items-center justify-center rounded-md text-text-secondary transition-colors hover:bg-hover hover:text-text-primary"
 diff --git a/gitnexus-web/src/components/LifespanPanel.tsx b/gitnexus-web/src/components/LifespanPanel.tsx
 new file mode 100644
 index 0000000..5a069d6
@@ -21850,7 +21908,7 @@ index 49862a9..5c552dd 100644
   * Create a Graph RAG agent
   */
 diff --git a/gitnexus-web/src/hooks/useAppState.tsx b/gitnexus-web/src/hooks/useAppState.tsx
-index 25c5776..c8df445 100644
+index 25c5776..a576f1c 100644
 --- a/gitnexus-web/src/hooks/useAppState.tsx
 +++ b/gitnexus-web/src/hooks/useAppState.tsx
 @@ -8,7 +8,12 @@ import {
@@ -22631,7 +22689,7 @@ index 25c5776..c8df445 100644
        } catch (err: unknown) {
          console.error('Repo switch failed:', err);
          setProgress({
-@@ -1207,9 +1914,1089 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
+@@ -1207,9 +1914,1110 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
      setCodeReferenceFocus(null);
    }, []);
  
@@ -23441,6 +23499,27 @@ index 25c5776..c8df445 100644
 +    preloadAbortRef.current = null;
 +  }, [serverBaseUrl, projectName, availableRepos]);
 +
++  // GraphCanvas calls this on mount to expose `useSigma.recomputeLayout`
++  // up to the global action. Stored in a ref so changes don't retrigger
++  // consumers that just want to fire `recomputeLayout(cacheKey)`.
++  const registerRecomputeLayout = useCallback(
++    (fn: ((cacheKey?: string) => void) | null) => {
++      recomputeLayoutRef.current = fn;
++    },
++    [],
++  );
++
++  // Header "Recompute layout" entrypoint. Defaults to the active
++  // projectName as the cache key, since that's what setSigmaGraph used
++  // when saving the positions.
++  const recomputeLayout = useCallback(
++    (cacheKey?: string) => {
++      const key = cacheKey ?? projectName ?? undefined;
++      recomputeLayoutRef.current?.(key);
++    },
++    [projectName],
++  );
++
 +  // ── Commit footprint overlay ──────────────────────────────────────
 +
 +  const clearCommitFootprint = useCallback(() => {
@@ -23721,7 +23800,7 @@ index 25c5776..c8df445 100644
      graph,
      setGraph,
      selectedNode,
-@@ -1293,6 +3080,153 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
+@@ -1293,6 +3101,156 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
      clearAICodeReferences,
      clearCodeReferences,
      codeReferenceFocus,
@@ -23823,6 +23902,9 @@ index 25c5776..c8df445 100644
 +    preloadAllSnapshots,
 +    cancelPreload,
 +    clearSnapshotCache,
++    // Layout cache bridge (Header "Recompute layout")
++    recomputeLayout,
++    registerRecomputeLayout,
 +    // Commit footprint overlay
 +    commitFootprint,
 +    commitFootprintLoading,
