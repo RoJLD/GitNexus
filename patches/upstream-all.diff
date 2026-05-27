@@ -13534,10 +13534,10 @@ index 98c20c6..162ab80 100644
              <h3 className="mb-3 text-xs font-medium tracking-wide text-text-secondary uppercase">
 diff --git a/gitnexus-web/src/components/GanttPanel.tsx b/gitnexus-web/src/components/GanttPanel.tsx
 new file mode 100644
-index 0000000..73252ac
+index 0000000..614d86c
 --- /dev/null
 +++ b/gitnexus-web/src/components/GanttPanel.tsx
-@@ -0,0 +1,313 @@
+@@ -0,0 +1,461 @@
 +/**
 + * GanttPanel — fetch /ghosts, compute Gantt layout, render SVG + CSV export.
 + *
@@ -13565,6 +13565,11 @@ index 0000000..73252ac
 +  DEFAULT_GHOST_FILTERS,
 +  type GhostFilters,
 +} from '../lib/ghost-layout';
++import { assignSwimlanes } from '../lib/cluster-layout';
++import {
++  fetchClusters,
++  type ClusterRuntime,
++} from '../services/clusters-client';
 +import GanttAxis from './gantt/GanttAxis';
 +import GanttRow from './gantt/GanttRow';
 +
@@ -13631,6 +13636,49 @@ index 0000000..73252ac
 +  return `Tier ${tier}`;
 +}
 +
++/**
++ * Collapse the rows of a cluster lane into a single synthetic Gantt
++ * row. Start = min(plannedAt) across members; end = the latest
++ * materializedAt fallback to the latest expectedBy / cancelledAt the
++ * member rows already carry. Used when `showOnlyClusterBars` is on.
++ */
++function collapseClusterRows(
++  cluster: ClusterRuntime,
++  rows: GanttRowData[],
++): GanttRowData {
++  let minStart: string | undefined;
++  let maxEnd: string | undefined;
++  for (const r of rows) {
++    for (const b of r.bars) {
++      if (b.startDate && (!minStart || b.startDate < minStart)) minStart = b.startDate;
++      if (b.endDate && (!maxEnd || b.endDate > maxEnd)) maxEnd = b.endDate;
++    }
++  }
++  // Pick a bar kind that GanttBar already knows how to render. Shipped
++  // clusters land on `solid`; expired/planned use `dashed` (a forecast
++  // band); cancelled uses `grey`. This avoids teaching GanttBar a new
++  // shape just for the synthetic cluster bar — Tier 3 follow-up.
++  let kind: 'solid' | 'dashed' | 'grey' = 'dashed';
++  if (cluster.synthesizedStatus === 'shipped') kind = 'solid';
++  else if (cluster.synthesizedStatus === 'cancelled') kind = 'grey';
++  const color =
++    cluster.source === 'declared' ? '#7c3aed' /* violet */ : '#f59e0b' /* amber */;
++  return {
++    ghostId: `cluster:${cluster.id}`,
++    title: cluster.title,
++    tier: null,
++    status: cluster.synthesizedStatus === 'shipped' ? 'materialized' : cluster.synthesizedStatus,
++    bars: [
++      {
++        kind,
++        color,
++        startDate: minStart ?? null,
++        endDate: maxEnd ?? null,
++      },
++    ],
++  } as unknown as GanttRowData;
++}
++
 +function rowsToCsv(rows: GanttRowData[]): string {
 +  const header = 'ghostId,title,tier,status,bar_kind,bar_start,bar_end';
 +  const lines: string[] = [header];
@@ -13667,10 +13715,21 @@ index 0000000..73252ac
 +
 +const GROUP_HEADER_HEIGHT = 22;
 +
++/** Swimlane modes are 3-state since Task 12 (Ghost Cluster Section G).
++ *  - `flat`    : default, one row per ghost, no group headers.
++ *  - `tier`    : group by major tier (1/2/3/none), historical behavior.
++ *  - `cluster` : group by declared / auto cluster (uses `assignSwimlanes`
++ *                from cluster-layout.ts). Ghosts that belong to no
++ *                cluster fall into the "Unclustered" lane at the bottom.
++ */
++export type GanttSwimlaneMode = 'flat' | 'tier' | 'cluster';
++
 +export default function GanttPanel({ repo, onGhostSelect, ghostFilters }: Props) {
 +  const [ghosts, setGhosts] = useState<GhostRuntime[] | null>(null);
 +  const [error, setError] = useState<string | null>(null);
-+  const [swimlanes, setSwimlanes] = useState(false);
++  const [swimlaneMode, setSwimlaneMode] = useState<GanttSwimlaneMode>('flat');
++  const [showOnlyClusterBars, setShowOnlyClusterBars] = useState(false);
++  const [clusters, setClusters] = useState<ClusterRuntime[] | null>(null);
 +
 +  // Use the caller's filters when provided, otherwise the Gantt-local
 +  // default (showGhosts: true, showCancelled: true) so the panel is
@@ -13697,6 +13756,26 @@ index 0000000..73252ac
 +      cancelled = true;
 +    };
 +  }, [repo]);
++
++  // Clusters — fetched lazily; only consumed when the swimlane mode
++  // is `cluster`. The shared 30 s cache means switching back and forth
++  // between modes is free after the first hit.
++  useEffect(() => {
++    if (swimlaneMode !== 'cluster') return;
++    let cancelled = false;
++    fetchClusters(repo)
++      .then((data) => {
++        if (cancelled) return;
++        setClusters(data?.clusters ?? []);
++      })
++      .catch(() => {
++        if (cancelled) return;
++        setClusters([]);
++      });
++    return () => {
++      cancelled = true;
++    };
++  }, [repo, swimlaneMode]);
 +
 +  // Filter the runtime ghosts BEFORE projecting into layout inputs.
 +  // Reuses `passesFilter` from ghost-layout so the Gantt agrees with
@@ -13764,7 +13843,7 @@ index 0000000..73252ac
 +
 +  const items: RenderItem[] = [];
 +  let cursorY = AXIS_HEIGHT;
-+  if (swimlanes) {
++  if (swimlaneMode === 'tier') {
 +    const groups = groupByTier(rows);
 +    for (const group of groups) {
 +      items.push({ kind: 'header', label: tierGroupLabel(group.tier), y: cursorY });
@@ -13772,6 +13851,33 @@ index 0000000..73252ac
 +      for (const row of group.rows) {
 +        items.push({ kind: 'row', row, y: cursorY });
 +        cursorY += ROW_HEIGHT;
++      }
++    }
++  } else if (swimlaneMode === 'cluster') {
++    // Cluster lanes via the pure `assignSwimlanes` helper, which sorts
++    // clusters by min(plannedAt) ASC and folds the unclustered ghosts
++    // into a final "Unclustered" lane.
++    const lanes = assignSwimlanes(rows, clusters ?? []);
++    for (const lane of lanes) {
++      // Look up the matching cluster object so the header can carry
++      // the synthesizedStatus + completion %. `Unclustered` has no
++      // match in `clusters` — we just render the title.
++      const cluster =
++        clusters?.find((c) => c.title === lane.lane || c.id === lane.lane) ?? null;
++      const headerLabel = cluster
++        ? `${cluster.title} · ${cluster.aggregate.completionPct.toFixed(0)}% · ${cluster.synthesizedStatus}`
++        : lane.lane;
++      items.push({ kind: 'header', label: headerLabel, y: cursorY });
++      cursorY += GROUP_HEADER_HEIGHT;
++      if (showOnlyClusterBars && cluster && lane.rows.length > 0) {
++        const collapsed = collapseClusterRows(cluster, lane.rows);
++        items.push({ kind: 'row', row: collapsed, y: cursorY });
++        cursorY += ROW_HEIGHT;
++      } else {
++        for (const row of lane.rows) {
++          items.push({ kind: 'row', row, y: cursorY });
++          cursorY += ROW_HEIGHT;
++        }
 +      }
 +    }
 +  } else {
@@ -13786,15 +13892,57 @@ index 0000000..73252ac
 +    <div className="gantt-panel" data-testid="gantt-panel">
 +      <header style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
 +        <h3 style={{ margin: 0 }}>Gantt roadmap</h3>
-+        <label style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-+          <input
-+            type="checkbox"
-+            checked={swimlanes}
-+            onChange={(e) => setSwimlanes(e.target.checked)}
-+            data-testid="gantt-swimlanes-toggle"
-+          />
-+          Swimlanes by Tier
-+        </label>
++        <div
++          role="radiogroup"
++          aria-label="Swimlane mode"
++          style={{ display: 'flex', alignItems: 'center', gap: 8 }}
++          data-testid="gantt-swimlanes-radio"
++        >
++          <label style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
++            <input
++              type="radio"
++              name="gantt-swimlanes"
++              value="flat"
++              checked={swimlaneMode === 'flat'}
++              onChange={() => setSwimlaneMode('flat')}
++              data-testid="gantt-swimlanes-flat"
++            />
++            Flat
++          </label>
++          <label style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
++            <input
++              type="radio"
++              name="gantt-swimlanes"
++              value="tier"
++              checked={swimlaneMode === 'tier'}
++              onChange={() => setSwimlaneMode('tier')}
++              data-testid="gantt-swimlanes-tier"
++            />
++            By Tier
++          </label>
++          <label style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
++            <input
++              type="radio"
++              name="gantt-swimlanes"
++              value="cluster"
++              checked={swimlaneMode === 'cluster'}
++              onChange={() => setSwimlaneMode('cluster')}
++              data-testid="gantt-swimlanes-cluster"
++            />
++            By Cluster
++          </label>
++        </div>
++        {swimlaneMode === 'cluster' && (
++          <label style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
++            <input
++              type="checkbox"
++              checked={showOnlyClusterBars}
++              onChange={(e) => setShowOnlyClusterBars(e.target.checked)}
++              data-testid="gantt-show-only-cluster-bars"
++            />
++            Cluster bars only
++          </label>
++        )}
 +        <button
 +          type="button"
 +          onClick={onExportCsv}
