@@ -2586,6 +2586,65 @@ index 0000000..325cefe
 +  out.list.sort((a, b) => b.daysPastExpiry - a.daysPastExpiry);
 +  return out;
 +}
+diff --git a/docker-server-ghost-audit.mjs b/docker-server-ghost-audit.mjs
+new file mode 100644
+index 0000000..1ba9912
+--- /dev/null
++++ b/docker-server-ghost-audit.mjs
+@@ -0,0 +1,53 @@
++/**
++ * I/O wrapper for the roadmap-predictive Audit view.
++ * Reads CORE sidecars (.gitnexus/ghosts.json and snapshots/*\/ghosts.json),
++ * computes metrics via pure fns, optionally caches.
++ *
++ * See docs/superpowers/specs/2026-05-26-roadmap-predictive-audit-design.md
++ */
++import { readFile, writeFile, stat, readdir, mkdir, access } from 'node:fs/promises';
++import { join } from 'node:path';
++import {
++  computeSummary, computeLeadTime, computeSlippage,
++  computePlanChurn, computeVelocity,
++} from './docker-server-ghost-audit-core.mjs';
++
++async function fileExists(p) { try { await access(p); return true; } catch { return false; } }
++
++async function readJsonOrNull(p) {
++  try { return JSON.parse(await readFile(p, 'utf8')); } catch { return null; }
++}
++
++async function loadLatestGhosts(repoPath) {
++  return readJsonOrNull(join(repoPath, '.gitnexus', 'ghosts.json'));
++}
++
++async function loadAllSnapshots(repoPath) {
++  const snapshotsDir = join(repoPath, '.gitnexus', 'snapshots');
++  if (!(await fileExists(snapshotsDir))) return [];
++  const entries = await readdir(snapshotsDir);
++  const out = [];
++  for (const sha of entries) {
++    const ghostsPath = join(snapshotsDir, sha, 'ghosts.json');
++    if (!(await fileExists(ghostsPath))) continue;
++    const data = await readJsonOrNull(ghostsPath);
++    if (data) out.push({ sha, date: data.syncedAt ?? null, ghosts: data.ghosts ?? [] });
++  }
++  return out;
++}
++
++export async function buildAudit(repoPath, opts = {}) {
++  const latest = await loadLatestGhosts(repoPath);
++  if (!latest) return null; // signals 404 to the route handler
++  const ghosts = latest.ghosts ?? [];
++  const snapshots = await loadAllSnapshots(repoPath);
++  return {
++    computedAt: new Date().toISOString(),
++    cached: false,
++    summary: computeSummary(ghosts),
++    leadTime: computeLeadTime(ghosts),
++    slippage: computeSlippage(ghosts),
++    planChurn: computePlanChurn(snapshots),
++    velocity: computeVelocity(ghosts, { windowDays: opts.windowDays ?? 28 }),
++  };
++}
 diff --git a/docker-server-ghosts-core.mjs b/docker-server-ghosts-core.mjs
 new file mode 100644
 index 0000000..71f15da
