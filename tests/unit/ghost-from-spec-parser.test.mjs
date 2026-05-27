@@ -86,14 +86,48 @@ describe('extractExpectedLinks', () => {
     expect(out).toContainEqual({ kind: 'path', value: 'docker-server-bar.mjs' });
   });
 
-  it('marks non-path backticked tokens as label kind', () => {
-    const md = '# T\n\n## 3. Design\n\n`some label` is interesting.';
+  it('marks single-word backticked tokens (no slash, no extension) as label kind', () => {
+    const md = '# T\n\n## 3. Design\n\n`repoId` is interesting and so is `WatchSpec`.';
     const out = extractExpectedLinks(md);
-    expect(out).toContainEqual({ kind: 'label', value: 'some label' });
+    expect(out).toContainEqual({ kind: 'label', value: 'repoId' });
+    expect(out).toContainEqual({ kind: 'label', value: 'WatchSpec' });
   });
 
   it('returns empty array if no Design section', () => {
     expect(extractExpectedLinks('# T\n\nbody')).toEqual([]);
+  });
+
+  // --- Negative tests for the tightened heuristic (2026-05-27) ---
+
+  it('rejects query-string fragments starting with ?', () => {
+    const md = '# T\n\n## 3. Design\n\nCall it with `?format=mermaid` or `?includeEdges=imports,calls`.';
+    const out = extractExpectedLinks(md);
+    expect(out.map(o => o.value)).not.toContain('?format=mermaid');
+    expect(out.map(o => o.value)).not.toContain('?includeEdges=imports,calls');
+  });
+
+  it('rejects endpoint paths (leading / with no file extension)', () => {
+    const md = '# T\n\n## 3. Design\n\nHit `/ghosts` then `/ghosts/sync`. But `/scripts/foo.mjs` is a real file.';
+    const out = extractExpectedLinks(md);
+    const values = out.map(o => o.value);
+    expect(values).not.toContain('/ghosts');
+    expect(values).not.toContain('/ghosts/sync');
+    expect(values).toContain('/scripts/foo.mjs');
+  });
+
+  it('rejects tokens with whitespace or shell metacharacters', () => {
+    const md = '# T\n\n## 3. Design\n\nRun `curl > out.puml` and `cat foo | jq` and `$VAR`.';
+    const out = extractExpectedLinks(md);
+    const values = out.map(o => o.value);
+    expect(values).not.toContain('curl > out.puml');
+    expect(values).not.toContain('cat foo | jq');
+    expect(values).not.toContain('$VAR');
+  });
+
+  it('rejects pure punctuation / single-char tokens', () => {
+    const md = '# T\n\n## 3. Design\n\nSee `-` and `/` and `.`.';
+    const out = extractExpectedLinks(md);
+    expect(out).toEqual([]);
   });
 });
 

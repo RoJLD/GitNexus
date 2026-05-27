@@ -56,7 +56,41 @@ export function extractTier(md) {
 
 const DESIGN_SECTION_RE = /^##\s+3\.\s+Design\s*$/i;
 const BACKTICK_RE = /`([^`]+)`/g;
-const PATH_HINT_RE = /\/|\.(?:mjs|ts|tsx|js|jsx|py|css|scss|json|yaml|yml|md|sh|sql|rs|go|java|kt|swift)$/;
+// File-extension whitelist used both for path classification (`kind`) and as
+// the gate for backtick tokens that contain a `/` (endpoint paths like
+// `/ghosts` are NOT files and must be rejected even though they contain `/`).
+const PATH_EXT_RE = /\.(?:mjs|ts|tsx|js|jsx|py|css|scss|json|yaml|yml|md|sh|sql|rs|go|java|kt|swift|html)$/i;
+// Reject tokens with shell metacharacters / whitespace — `curl > out.puml`,
+// `?includeEdges=imports,calls`, etc. (Spaces inside backticks are common
+// in prose like `some label`, those are kept as label-kind below; this RE
+// only filters shell-noise candidates for the path/label classification.)
+const SHELL_NOISE_RE = /[<>|&$]/;
+
+/**
+ * Decide whether a backticked token is "interesting enough" to show up as
+ * an expected-link entry in the ROADMAP row. Rejection rules (tightened on
+ * 2026-05-27 after the brainstorm-hook self-test caught noise like
+ * `?format=mermaid`, `/ghosts`, `curl > out.puml`, `?includeEdges=...`):
+ *  - empty / single-char / pure punctuation → reject
+ *  - starts with `?` (query string fragment) → reject
+ *  - contains whitespace OR shell metacharacters → reject
+ *  - starts with `/` AND has no file extension → reject (endpoint path)
+ *  - has a `/` but no file extension → reject (e.g. `foo/bar`)
+ * A token is classified as `path` iff it has a recognized file extension;
+ * otherwise it stays a `label` (e.g. `repoId`, `WatchSpec`).
+ */
+function isAcceptableToken(t) {
+  if (!t) return false;
+  const s = t.trim();
+  if (s.length <= 1) return false;
+  if (/^[\p{P}\p{S}]+$/u.test(s)) return false; // pure punctuation
+  if (s.startsWith('?')) return false;
+  if (/\s/.test(s)) return false;
+  if (SHELL_NOISE_RE.test(s)) return false;
+  const hasExt = PATH_EXT_RE.test(s);
+  if (s.includes('/') && !hasExt) return false; // endpoint path
+  return true;
+}
 
 export function extractExpectedLinks(md) {
   if (!md) return [];
@@ -70,10 +104,12 @@ export function extractExpectedLinks(md) {
       tokens.add(m[1]);
     }
   }
-  return [...tokens].map(t => ({
-    kind: PATH_HINT_RE.test(t) ? 'path' : 'label',
-    value: t,
-  }));
+  return [...tokens]
+    .filter(isAcceptableToken)
+    .map(t => ({
+      kind: PATH_EXT_RE.test(t) ? 'path' : 'label',
+      value: t,
+    }));
 }
 
 export function parseSpec(filePath, md) {
