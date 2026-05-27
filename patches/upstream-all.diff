@@ -22102,7 +22102,7 @@ index 49862a9..5c552dd 100644
   * Create a Graph RAG agent
   */
 diff --git a/gitnexus-web/src/hooks/useAppState.tsx b/gitnexus-web/src/hooks/useAppState.tsx
-index 25c5776..114c8c1 100644
+index 25c5776..65dd2c0 100644
 --- a/gitnexus-web/src/hooks/useAppState.tsx
 +++ b/gitnexus-web/src/hooks/useAppState.tsx
 @@ -8,7 +8,12 @@ import {
@@ -22168,7 +22168,7 @@ index 25c5776..114c8c1 100644
  
    // Graph data
    graph: KnowledgeGraph | null;
-@@ -192,6 +219,456 @@ interface AppState {
+@@ -192,6 +219,457 @@ interface AppState {
    clearAICodeReferences: () => void;
    clearCodeReferences: () => void;
    codeReferenceFocus: CodeReferenceFocus | null;
@@ -22450,6 +22450,7 @@ index 25c5776..114c8c1 100644
 +  timeline: { name: string; date: string; isLive: boolean }[];
 +  counts: Record<LifespanBucket, number>;
 +  nodes: Record<LifespanBucket, LifespanNode[]>;
++  windowed?: { from: string; to: string; snapshotCount: number };
 +}
 +
 +export interface OwnershipAuthor {
@@ -22625,7 +22626,7 @@ index 25c5776..114c8c1 100644
  }
  
  const AppStateContext = createContext<AppState | null>(null);
-@@ -205,6 +682,10 @@ export const AppStateProvider = ({ children }: { children: ReactNode }) => (
+@@ -205,6 +683,10 @@ export const AppStateProvider = ({ children }: { children: ReactNode }) => (
  const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
    // View state
    const [viewMode, setViewMode] = useState<ViewMode>('onboarding');
@@ -22636,7 +22637,7 @@ index 25c5776..114c8c1 100644
  
    const {
      graph,
-@@ -343,6 +824,165 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
+@@ -343,6 +825,165 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
    const [isCodePanelOpen, setCodePanelOpen] = useState(false);
    const [codeReferenceFocus, setCodeReferenceFocus] = useState<CodeReferenceFocus | null>(null);
  
@@ -22802,7 +22803,7 @@ index 25c5776..114c8c1 100644
    // Map of normalized file path → node ID for graph-based lookups
    const fileNodeByPath = useMemo(() => {
      if (!graph) return new Map<string, string>();
-@@ -1029,6 +1669,66 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
+@@ -1029,6 +1670,66 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
      async (repoName: string) => {
        if (!serverBaseUrl) return;
  
@@ -22869,7 +22870,7 @@ index 25c5776..114c8c1 100644
        setProgress({
          phase: 'extracting',
          percent: 0,
-@@ -1105,6 +1805,13 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
+@@ -1105,6 +1806,13 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
          for (const node of result.nodes) newGraph.addNode(node);
          for (const rel of result.relationships) newGraph.addRelationship(rel);
          setGraph(newGraph);
@@ -22883,7 +22884,7 @@ index 25c5776..114c8c1 100644
        } catch (err: unknown) {
          console.error('Repo switch failed:', err);
          setProgress({
-@@ -1207,9 +1914,1129 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
+@@ -1207,9 +1915,1130 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
      setCodeReferenceFocus(null);
    }, []);
  
@@ -23374,6 +23375,7 @@ index 25c5776..114c8c1 100644
 +        timeline: data.timeline || [],
 +        counts: data.counts || { foundational: 0, recent: 0, discontinued: 0, ephemeral: 0 },
 +        nodes: data.nodes || { foundational: [], recent: [], discontinued: [], ephemeral: [] },
++        windowed: data.windowed,
 +      });
 +      setLifespanActive(true);
 +    } catch (err) {
@@ -24013,7 +24015,7 @@ index 25c5776..114c8c1 100644
      graph,
      setGraph,
      selectedNode,
-@@ -1293,6 +3120,156 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
+@@ -1293,6 +3122,156 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
      clearAICodeReferences,
      clearCodeReferences,
      codeReferenceFocus,
