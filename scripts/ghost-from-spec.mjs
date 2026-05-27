@@ -8,7 +8,7 @@
  * See docs/superpowers/specs/2026-05-26-roadmap-predictive-brainstorm-hook-design.md
  */
 import { readFile, writeFile } from 'node:fs/promises';
-import { dirname, resolve, join } from 'node:path';
+import { dirname, resolve, join, relative } from 'node:path';
 import { existsSync } from 'node:fs';
 import { parseSpec } from './ghost-from-spec-parser.mjs';
 import { upsertManagedSection } from './ghost-from-spec-roadmap.mjs';
@@ -45,7 +45,13 @@ async function main(argv) {
     process.exit(1);
   }
   const roadmapMd = await readFile(roadmapPath, 'utf8');
-  const updated = upsertManagedSection(roadmapMd, ghost, resolved.replace(/\\/g, '/'));
+  // Make the spec link repo-relative + POSIX-style so the markdown link
+  // works on GitHub and any markdown viewer regardless of where the repo
+  // is cloned. `path.relative` yields a path with the host OS separator,
+  // which on Windows is '\' — normalize to '/'.
+  const roadmapDir = dirname(roadmapPath);
+  const specPathForLink = relative(roadmapDir, resolved).replaceAll('\\', '/');
+  const updated = upsertManagedSection(roadmapMd, ghost, specPathForLink);
 
   if (updated === roadmapMd) {
     console.log(`No change to ROADMAP.md (ghost ${ghost.id} already up-to-date).`);
