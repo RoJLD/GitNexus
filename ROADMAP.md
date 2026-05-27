@@ -1,7 +1,7 @@
 # GitNexus — Roadmap
 
 État vivant des fonctionnalités déjà livrées et des prochaines pistes.
-Dernière mise à jour : 2026-05-27 (Timeline zoom + 2 cursors A/B Phase 1 livré : drag cursors blue/orange avec auto-swap A≤B, bouton "Zoom to window" qui stretch [A,B] sur full width + mini-map collapsible localStorage-persisted, indicateur de durée adaptatif (heures/jours/années), bouton "Compare A↔B" qui toggle graphMode mutuellement exclusif avec cross-repo diffMode, raccourcis clavier Z et Shift+D. Task 11 (wiring du diff visuel intra-repo) DEFERRED — nécessite App.tsx + useSigma exploration. Phase 2 — filtre temporel du graphe à la fenêtre — parquée).
+Dernière mise à jour : 2026-05-27 (Roadmap predictive — Ghost Cluster (granularité intermédiaire) livré : convention markdown `## 🔗 Clusters` dans ROADMAP.md + auto-derivation Union-Find sur dependsOn[] connected components (≥ 2 ghosts). 4 surfaces UI : Augmented halo SVG overlay (convex hull) + Gantt swimlanes 3-state mode + Audit ClustersCard 7ème + Filters 3 toggles hiérarchiques. Sidecar `.gitnexus/clusters.json` + roadmap.yml `clusters:` section reflection. `GET /clusters?repo=&source=declared|auto` + MCP tool `gitnexus_clusters` (20ème). Status synthétisé (shipped/planned/cancelled/expired) avec declaredStatus override).
 
 > 📋 **Voir aussi** [INVENTORY.md](INVENTORY.md) — état des lieux complet :
 > features upstream + nos ajouts + distance avec upstream. À utiliser
@@ -65,6 +65,7 @@ un nom marketing — et son premier pas concret.
 | 45 | **Incremental snapshots — Phase C reconstruction** : `GET /graph/at-commit?repo=&commit=[&lazy=true]` reconstruit le graph à n'importe quel commit = baseline snapshot ancêtre le plus proche + replay des diffs per-commit (delete writeSet files → insert subgraph → prune dangling rels). 409 + liste si diffs manquants, `?lazy=true` les génère à la volée. **Fidelity validée : 4387/4387 nodes structurels exacts** (label par label) vs full snapshot, même avec chaîne à filtres mixtes ; seuls les globaux Community/Process restent baseline-stale (design, cf §2.2). Reconstruction 4-commit en 1.8s. Identity case (chain=0) = baseline exact. | `/graph/at-commit`, `handleGraphAtCommitRoute` + `applyDiff` + `findNearestBaseline` dans `upstream/docker-server-snapshot-incremental.mjs` |
 | 46 | **Incremental snapshots — Phase C frontend (Rebuild @ commit)** : bouton **Rebuild @ commit** dans le drill-down de `EntropyCommitTimeline` (à côté de "Show on graph"). Fetch `/graph/at-commit`, swap le `KnowledgeGraph` complet sur le canvas (vs footprint = highlight overlay), préserve le graph live pour le restore. Banner violet "Reconstructed graph @ <sha>" avec counts + baseline distance + warning "mixed filters", bouton **Back to live**. 409 → strip ambre "N diff(s) missing" + bouton **Generate & retry** (relance avec `?lazy=true`). | `useAppState` (`loadGraphAtCommit`/`exitGraphAtCommit` + état `atCommit*`), `components/EntropyCommitTimeline.tsx` (bouton History + banners) |
 | 47 | **Timeline zoom + 2 cursors A/B (Phase 1 sur 2)** : drag cursors blue/orange directement sur la Timeline (auto-swap A≤B), bouton "Zoom to window" qui stretche [A,B] sur la largeur complète + mini-map collapsible (visible quand zoomed, état persisté localStorage), indicateur de durée adaptatif "[A]→[B] · Δ X (hours/days/years) · N snapshots", bouton "Compare A↔B" qui toggle graphMode (état mutuellement exclusif avec cross-repo diffMode), raccourcis clavier Z (zoom) + Shift+D (compare). `diffBetweenSnapshots` alias dans graph-diff.ts. **Task 11 (wiring du diff visuel intra-repo en App.tsx + useSigma) reste DEFERRED** — graphMode='diff' set l'état mais le canvas ne reflète pas encore (follow-up). Phase 2 — filtre temporel du graphe à la fenêtre — parquée out-of-scope. | `Timeline.tsx`, `lib/timeline-zoom.ts`, `lib/graph-diff.ts::diffBetweenSnapshots`, state cursorA/B/zoomWindow/graphMode dans `useAppState.tsx` |
+| 48 | **Roadmap predictive — Ghost Cluster** (granularité intermédiaire) : convention markdown `## 🔗 Clusters` dans ROADMAP.md + auto-derivation Union-Find sur dependsOn[] connected components (≥ 2 ghosts). 4 surfaces UI : Augmented halo SVG overlay (convex hull) + Gantt swimlanes 3-state mode + Audit ClustersCard 7ème + Filters 3 toggles hiérarchiques. Sidecar `.gitnexus/clusters.json` + roadmap.yml clusters: section reflection. `GET /clusters?repo=&source=declared|auto` + MCP tool `gitnexus_clusters` (20ème). Status synthétisé (shipped/planned/cancelled/expired) avec declaredStatus override. | `/clusters`, `upstream/docker-server-ghosts-core.mjs` (parseClusters, deriveAutoClusters, computeClusterStatus), `upstream/docker-server-cluster-audit.mjs`, `upstream/gitnexus-web/src/lib/cluster-layout.ts`, `upstream/gitnexus-web/src/services/clusters-client.ts`, `upstream/gitnexus-web/src/components/{ClusterTooltip,GraphCanvas,GanttPanel,GhostFiltersSection,audit/ClustersCard,audit/ClusterDrillModal,audit/AuditSummary,AuditPanel}.tsx`, `upstream/gitnexus-web/src/hooks/{useSigma,useAppState}.tsx` |
 
 Toutes les analytics ci-dessus marchent dans un seul repo. La granularité
 est le node gitnexus (File, Function, Class, Section, …).
@@ -989,3 +990,14 @@ fin. Tout ce qui suit s'appuie sur Tier 1 + Tier 2.1-2.4 ✅ déjà livrés.
 | Spec | Tier | Title | Endpoint(s) / Composant(s) |
 |---|---|---|---|
 <!-- specs:end -->
+
+---
+
+## 🔗 Clusters
+
+> Section gérée à la main. Chaque cluster regroupe 2+ ghosts liés thématiquement.
+> Les ghosts non-déclarés ici peuvent être auto-groupés par le CORE via leurs
+> `dependsOn[]`. Pour stabilité d'id, préférer la déclaration manuelle.
+
+<!-- clusters:start -->
+<!-- clusters:end -->

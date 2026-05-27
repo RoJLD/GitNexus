@@ -150,6 +150,18 @@ When you add a backend endpoint or a new docker-server module:
 
 ## After-restart smoke checks (canonical commands)
 
+> **Note — `repo=hmm_studio` is an index *name*, not a path.** The
+> `hmm_studio` source no longer sits at the workspace root; it lives at
+> `C:/Users/rdenis/VScode/Tools/hmm_studio` (→ `/data/projects/Tools/hmm_studio`
+> in the container). The gitnexus backend already records that real path
+> against the indexed name, so the smoke commands below keep using
+> `repo=hmm_studio` unchanged. Do **not** rewrite it to `repo=Tools/hmm_studio`
+> — no repo is *named* that, so it 404s (`repo not found`). The smoke loop
+> resolves repos by indexed name; check `curl http://localhost:4747/api/repos`
+> if you need to see name→path mappings. Right after a container recreate the
+> first churn/coupling calls are slow (git + graph warm-up) — use a generous
+> `--max-time` or they spuriously read `000`.
+
 ```bash
 # Curl every backend module so we catch regressions in routing wiring.
 for ep in snapshots churn coupling growth lifespan entropy ownership semantic-labels ghost-audit; do
@@ -200,6 +212,10 @@ curl -s -o /dev/null -w "watches: HTTP %{http_code}\n" \
 # SysML export (Tier 3.x bonus — pure read-only, no side effects)
 curl -s -o /dev/null -w "sysml-export: HTTP %{http_code}\n" \
   "http://localhost:4173/sysml-export?repo=hmm_studio&format=plantuml"
+
+# Ghost Clusters (Tier 3.x granularité intermédiaire)
+curl -s -o /dev/null -w "clusters: HTTP %{http_code}\n" \
+  "http://localhost:4173/clusters?repo=hmm_studio"
 
 # MCP sidecar — stdio JSON-RPC against the live stack. Exercises the
 # wrapper layer that exposes our analytics to Claude Code / Cursor.

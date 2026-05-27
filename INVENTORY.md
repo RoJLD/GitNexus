@@ -241,6 +241,17 @@ Pure frontend overlay — aucune route serveur, consomme `/ghosts?repo=` du CORE
 - **Out** : XMI, SysML v2, CALLS/IMPORTS edges, rendering PNG/SVG (le user rend chez lui), composant frontend.
 - **Usage** : `curl :4173/sysml-export?repo=hmm_studio > diagram.puml` puis ouvrir dans PlantUML server / VSCode extension.
 
+#### Roadmap-predictive Ghost Cluster (Tier 3.x, 2026-05-27)
+- `upstream/docker-server-ghosts-core.mjs` — `parseClusters` (markdown), `deriveAutoClusters` (Union-Find sur dependsOn), `computeClusterStatus` (aggregate + synthesis + expired + override).
+- `upstream/docker-server-ghosts.mjs` — `syncGhostsForRepo` écrit aussi `.gitnexus/clusters.json` sidecar. `readLatestClusters` / `readSnapshotClusters` exportés.
+- `upstream/docker-server-cluster-audit.mjs` — `GET /clusters?repo=&source=`.
+- `upstream/gitnexus-web/src/lib/cluster-layout.ts` — `convexHull`, `clusterHullPolygon`, `polygonCentroid`, `assignSwimlanes`, `pointInPolygon`.
+- `upstream/gitnexus-web/src/services/clusters-client.ts` — 30s cache.
+- 4 surfaces UI : `ClusterTooltip` popup (Augmented), `GanttPanel.swimlanes='cluster'` mode (3-state radio + showOnlyClusterBars option), `audit/ClustersCard` + `audit/ClusterDrillModal` (7ème card AuditSummary), `GhostFiltersSection` (3 nouveaux toggles hiérarchiques).
+- MCP tool `gitnexus_clusters` (20ème) avec `formatClustersSummary`.
+- Status synthétisé : `shipped` (all-terminal + ≥1 materialized), `cancelled` (all cancelled), `expired` (cluster expectedBy + grace dépassé), `planned` (sinon). `declaredStatus` override.
+- Auto-cluster id = `auto-cluster-<sha256(sorted-memberIds)[:8]>` — instable si membres changent (limitation documentée).
+
 #### Dépendances ajoutées
 - `react-force-graph-3d`, `three` (pour le mode 3D) — déclarées dans `gitnexus-web/package.json`
 - `umap-js` (Tier 2.6.bis) — dynamic-importé par `SimilarityPanel/GalaxyView` quand le user clique sur "UMAP", reste out-of-bundle sinon

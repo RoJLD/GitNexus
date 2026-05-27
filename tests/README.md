@@ -59,6 +59,10 @@ Pré-requis local : Rancher Desktop running, **Node ≥ 22 LTS**. CI : `.github/
 | Timeline zoom — pure date/position fns | `unit/timeline-zoom.test.mjs` | computeZoomWindow + mapDateToPosition + mapPositionToDate + snapToNearestSnapshot (18 cases) |
 | Timeline zoom — useAppState slice | `unit/use-app-state-timeline.test.tsx` | cursorA/B + zoomWindow + graphMode init + auto-swap + mutual exclusion (8 cases) |
 | Timeline zoom — intra-repo graph diff | `unit/graph-diff-between-snapshots.test.mjs` | diffBetweenSnapshots alias + edges by triple + empty snapshots (5 cases) |
+| Clusters parser | `unit/ghosts-clusters-parser.test.mjs` | `parseClusters` from ROADMAP.md |
+| Clusters auto-derive | `unit/ghosts-clusters-auto-derive.test.mjs` | Union-Find sur `dependsOn` |
+| Cluster status | `unit/ghosts-clusters-status.test.mjs` | aggregate + synthesis + expired + override |
+| Cluster layout | `unit/cluster-layout.test.mjs` | convex hull + swimlanes + `pointInPolygon` |
 
 ### Components React (unit)
 | Test | Fichier | Couvre |
@@ -87,6 +91,8 @@ Pré-requis local : Rancher Desktop running, **Node ≥ 22 LTS**. CI : `.github/
 | GanttAxis | `unit/components/gantt/GanttAxis.test.tsx` | monthly ticks + today line |
 | GanttBar | `unit/components/gantt/GanttBar.test.tsx` | 4 kinds rendered |
 | GanttRow | `unit/components/gantt/GanttRow.test.tsx` | label + bars area + click |
+| ClusterTooltip | `unit/components/ClusterTooltip.test.tsx` | popup render + click member |
+| ClustersCard | `unit/components/audit/ClustersCard.test.tsx` | 7ème card + drill-down |
 
 ### Stack health
 | Test | Fichier | Couvre |
@@ -122,6 +128,7 @@ Pré-requis local : Rancher Desktop running, **Node ≥ 22 LTS**. CI : `.github/
 | Brainstorm-hook e2e | `integration/endpoints/brainstorm-hook-e2e.test.mjs` | script run → ROADMAP managed section → CORE parser emits planned ghost |
 | SysML endpoint | integration/endpoints/sysml-export.test.mjs | GET 200 (text/plain), 400 missing repo, 400 invalid format |
 | MCP ghost_audit | `integration/mcp/ghost_audit.test.mjs` | stdio JSON-RPC tool call |
+| Clusters endpoint | `integration/endpoints/clusters.test.mjs` | `GET /clusters` 200/400/404 + filter |
 
 ### UI flows e2e
 | Test | Fichier | Couvre |
@@ -135,6 +142,7 @@ Pré-requis local : Rancher Desktop running, **Node ≥ 22 LTS**. CI : `.github/
 | Augmented graph | `e2e/specs/04-augmented-graph.spec.ts` | "Show ghosts" master toggle → per-Tier + cancelled sub-toggles visibles |
 | Gantt panel | `e2e/specs/05-gantt-panel.spec.ts` | toggle button + swimlanes |
 | Timeline zoom + cursor diff | `e2e/specs/timeline-zoom-and-diff.spec.ts` | Cursors A/B render + Zoom button + Compare button + Z & Shift+D shortcuts + duration indicator (Task 11 diff coloring wiring deferred) |
+| E2E cluster halos | `e2e/specs/06-cluster-halos.spec.ts` | toggle + halo + tooltip |
 
 ## Tests désactivés / connus fragiles
 
