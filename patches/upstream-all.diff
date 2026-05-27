@@ -25837,3 +25837,121 @@ index 0000000..42af117
 +  void getBackendUrl;
 +  return '';
 +}
+diff --git a/gitnexus-web/src/services/snapshot-ghosts-cache.ts b/gitnexus-web/src/services/snapshot-ghosts-cache.ts
+new file mode 100644
+index 0000000..1ba3d67
+--- /dev/null
++++ b/gitnexus-web/src/services/snapshot-ghosts-cache.ts
+@@ -0,0 +1,112 @@
++/**
++ * Per-repo cache of per-snapshot ghost sets, for the Augmented Timeline.
++ *
++ * Hits `/snapshots?repo=` then fans out parallel `/ghosts/at?repo=&commit=`
++ * fetches via a 3-worker pool, capped at the 50 most recent snapshots
++ * to bound the initial pre-fetch. Result is a `Map<shortHash, SnapshotGhosts>`
++ * keyed by commit shortHash + the snapshot's commit date.
++ *
++ * Cache layer: a module-level `Map<repoName, { at, promise }>` with a
++ * 30 s TTL — repeated callers within 30 s share the in-flight promise.
++ *
++ * See docs/superpowers/specs/2026-05-27-roadmap-predictive-augmented-timeline-design.md
++ *   §3.2 (parallel pool + cap + TTL).
++ */
++
++import type { SnapshotGhosts } from '../lib/augmented-timeline';
++
++const TTL_MS = 30_000;
++const POOL = 3;
++const CAP = 50;
++
++type CacheEntry = {
++  at: number;
++  promise: Promise<Map<string, SnapshotGhosts>>;
++};
++
++const cache = new Map<string, CacheEntry>();
++
++/** Drop every cached repo entry — used by tests + on explicit invalidation. */
++export function clearSnapshotGhostsCache(): void {
++  cache.clear();
++}
++
++type SnapshotListItem = {
++  key?: string;
++  name?: string;
++  commit?: {
++    shortHash?: string;
++    date?: string;
++  };
++};
++
++/**
++ * Pre-fetch every per-snapshot ghosts.json for a repo. Returns a Map
++ * keyed by the snapshot's commit shortHash with the parsed ghost set
++ * + the commit's ISO date — both needed by `selectGhostsAt` to do
++ * closest-prior lookup.
++ *
++ * Idempotent within the 30 s TTL window: subsequent callers share the
++ * same in-flight promise so the network round-trips happen once.
++ * `signal` aborts in-flight fetches if the caller unmounts.
++ */
++export async function prefetchSnapshotGhosts(
++  repo: string,
++  signal?: AbortSignal,
++): Promise<Map<string, SnapshotGhosts>> {
++  const now = Date.now();
++  const cached = cache.get(repo);
++  if (cached && now - cached.at < TTL_MS) return cached.promise;
++
++  const promise = (async (): Promise<Map<string, SnapshotGhosts>> => {
++    const out = new Map<string, SnapshotGhosts>();
++
++    let snapshots: SnapshotListItem[] = [];
++    try {
++      const listRes = await fetch(
++        `/snapshots?repo=${encodeURIComponent(repo)}`,
++        signal ? { signal } : {},
++      );
++      if (!listRes.ok) return out;
++      const listBody = await listRes.json();
++      snapshots = Array.isArray(listBody?.snapshots) ? listBody.snapshots : [];
++    } catch {
++      return out;
++    }
++
++    // Cap to the CAP most recent (server returns newest-first; slice
++    // from the top so we keep the freshest history). Reversing isn't
++    // necessary — the cache is keyed by sha and date does the sorting
++    // work at lookup time in `selectGhostsAt`.
++    const capped = snapshots.slice(0, CAP);
++
++    const queue: SnapshotListItem[] = [...capped];
++    async function worker(): Promise<void> {
++      while (queue.length) {
++        const s = queue.shift();
++        if (!s) return;
++        const sha = s.commit?.shortHash || s.key;
++        const date = s.commit?.date;
++        if (!sha || !date) continue;
++        try {
++          const r = await fetch(
++            `/ghosts/at?repo=${encodeURIComponent(repo)}&commit=${encodeURIComponent(sha)}`,
++            signal ? { signal } : {},
++          );
++          if (!r.ok) continue;
++          const body = await r.json();
++          out.set(sha, { sha, date, ghosts: Array.isArray(body?.ghosts) ? body.ghosts : [] });
++        } catch {
++          // Skip silently — partial fetch is better than an outright
++          // throw that would kill the entire cache build for a single
++          // missing sidecar. Aborts also land here.
++        }
++      }
++    }
++    await Promise.all(Array.from({ length: POOL }, () => worker()));
++    return out;
++  })();
++
++  cache.set(repo, { at: now, promise });
++  return promise;
++}
