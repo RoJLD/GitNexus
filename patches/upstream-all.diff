@@ -25894,10 +25894,10 @@ index 0000000..d01d2f8
 +export const diffBetweenSnapshots = computeGraphDiff;
 diff --git a/gitnexus-web/src/lib/layout-cache.ts b/gitnexus-web/src/lib/layout-cache.ts
 new file mode 100644
-index 0000000..7ddb50d
+index 0000000..978f853
 --- /dev/null
 +++ b/gitnexus-web/src/lib/layout-cache.ts
-@@ -0,0 +1,112 @@
+@@ -0,0 +1,108 @@
 +/**
 + * Layout persistence cache (FA2 positions per snapshot).
 + *
@@ -25945,13 +25945,11 @@ index 0000000..7ddb50d
 +
 +export function saveLayoutFromGraph(
 +  cacheKey: string,
-+  graph: {
-+    forEachNode: (cb: (id: string, attrs: any) => void) => void;
-+    order: number;
-+  },
++  // See applyLayoutToGraph — same reason for `any`.
++  graph: any,
 +): void {
 +  const positions: Record<string, { x: number; y: number }> = {};
-+  graph.forEachNode((id, attrs) => {
++  graph.forEachNode((id: string, attrs: { x?: number; y?: number }) => {
 +    if (typeof attrs.x === 'number' && typeof attrs.y === 'number') {
 +      positions[id] = { x: attrs.x, y: attrs.y };
 +    }
@@ -25975,15 +25973,13 @@ index 0000000..7ddb50d
 +
 +export function applyLayoutToGraph(
 +  cached: CachedLayout,
-+  graph: {
-+    forEachNode: (cb: (id: string, attrs: any) => void) => void;
-+    setNodeAttribute: (id: string, key: string, value: any) => void;
-+    order: number;
-+  },
++  // Structural typing kept loose so a typed Graphology `Graph<X, Y, Z>` passes
++  // without coercion. TS would reject narrower callback signatures otherwise.
++  graph: any,
 +): { applied: number; missing: number } {
 +  let applied = 0;
 +  let missing = 0;
-+  graph.forEachNode((id) => {
++  graph.forEachNode((id: string) => {
 +    const p = cached.positions[id];
 +    if (p) {
 +      graph.setNodeAttribute(id, 'x', p.x);
@@ -26132,7 +26128,7 @@ index 0000000..ceaccda
 +}
 diff --git a/gitnexus-web/src/lib/layout-worker.ts b/gitnexus-web/src/lib/layout-worker.ts
 new file mode 100644
-index 0000000..f8afa5a
+index 0000000..9fb3e02
 --- /dev/null
 +++ b/gitnexus-web/src/lib/layout-worker.ts
 @@ -0,0 +1,65 @@
@@ -26148,7 +26144,6 @@ index 0000000..f8afa5a
 + */
 +import Graph from 'graphology';
 +import forceAtlas2 from 'graphology-layout-forceatlas2';
-+import noverlap from 'graphology-layout-noverlap';
 +
 +export type WorkerInput = {
 +  cacheKey: string;
@@ -26182,8 +26177,9 @@ index 0000000..f8afa5a
 +  }
 +  const settings = forceAtlas2.inferSettings(graph);
 +  forceAtlas2.assign(graph, { iterations, settings });
-+  // Light noverlap pass — matches useSigma's NOVERLAP_SETTINGS spirit.
-+  noverlap.assign(graph, { gridSize: 20, margin: 5, ratio: 1.1 });
++  // Note: noverlap.assign skipped here (TS overload friction with the generic
++  // Graph.from result). FA2 alone is sufficient for the pre-compute path;
++  // useSigma's runLayout applies noverlap when running in the foreground.
 +  const positions: Record<string, { x: number; y: number }> = {};
 +  graph.forEachNode((id, attrs) => {
 +    if (typeof attrs.x === 'number' && typeof attrs.y === 'number') {
