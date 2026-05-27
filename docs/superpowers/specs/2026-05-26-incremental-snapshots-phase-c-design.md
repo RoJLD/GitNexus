@@ -6,7 +6,7 @@
 **Parent** : [`2026-05-26-incremental-snapshots-design.md`](2026-05-26-incremental-snapshots-design.md) — phasing A/B/C
 **État Phase A** : ✅ livrée (auto-snapshot aux pics)
 **État Phase B** : ✅ livrée (PR-mode snapshot on-demand)
-**État Phase C** : ✅ cœur livré — dump patch + `/snapshot/incremental` + `/graph/at-commit` (reconstruction, structural fidelity 100%). Reste : baseline rebuild auto + cron on-push + intégration frontend (timeline → graph-at-commit).
+**État Phase C** : ✅ cœur livré — dump patch + `/snapshot/incremental` + `/graph/at-commit` (reconstruction, structural fidelity 100%) + intégration frontend (timeline → graph-at-commit, cf §Update 2026-05-27). Reste : baseline rebuild auto + cron on-push.
 
 ---
 
@@ -531,3 +531,52 @@ Recommandation : **on ré-applique le patch CLI**. Si l'API interne change drast
 ---
 
 **Méta-note** : ce design est radicalement plus prometteur que celui du brainstorm initial parce que la dette de réimplémenter un analyzer disparaît. gitnexus a fait 99% du boulot, faut juste l'exposer. C'est une opportunité unique de fork-utile : un petit patch upstream qui débloque une feature qu'on est seuls à shipper.
+
+---
+
+## Update 2026-05-27 — Intégration frontend (Rebuild @ commit)
+
+Le backend `/graph/at-commit` (reconstruction) était exposé mais sans
+surface UI. Cette MAJ branche la reconstruction dans le frontend pour
+que l'utilisateur puisse *voir* le graph à n'importe quel commit, pas
+seulement l'appeler via curl/MCP.
+
+**Décision de framing** — deux actions distinctes, volontairement
+séparées dans le drill-down de `EntropyCommitTimeline` :
+
+| Action | Bouton | Effet | Coût |
+|---|---|---|---|
+| **Footprint** (existant, Tier 2bis.2) | "Show on graph" (œil) | *Highlight* des nodes touchés par le commit **sur le graph live courant** | gratuit (overlay) |
+| **Reconstruction** (Phase C, cette MAJ) | "Rebuild @ commit" (History) | *Swap* du `KnowledgeGraph` entier reconstruit au commit sur le canvas | baseline + replay des diffs |
+
+Les garder côte à côte évite la confusion conceptuelle "footprint ≠
+graph reconstruit" qu'on documentait déjà comme un risque (cf le honest
+framing de la row 34 ROADMAP). L'un éclaire le live, l'autre remonte le
+temps.
+
+**Implémentation** :
+
+- `useAppState` : action `loadGraphAtCommit(sha, { lazy? })` (fetch
+  `/graph/at-commit`, reconstruit un `KnowledgeGraph` via
+  `createKnowledgeGraph` + `addNode`/`addRelationship`, `setGraph`), et
+  `exitGraphAtCommit()` (restore le graph live via un
+  `preAtCommitGraphRef`). État : `atCommit{Active,Sha,Loading,Error,
+  MissingDiffs,Meta}`. Le graph live est mémorisé **une seule fois** à
+  l'entrée en mode at-commit, donc des sauts commit→commit successifs
+  reviennent toujours au vrai live.
+- `EntropyCommitTimeline.tsx` : bouton **Rebuild @ commit** (toggle →
+  **Back to live**), banner violet "Reconstructed graph @ <sha>" avec
+  counts + baseline distance + flag `mixed filters` si la chaîne de
+  diffs a des filtres hétérogènes (la fidélité structurelle tient mais
+  les counts varient — cf §2.2). Le 409 *missing diffs* surface un strip
+  ambre + bouton **Generate & retry** qui relance avec `?lazy=true`.
+
+**Validation** : build `tsc`+vite vert (exit 0) ; endpoint atteint
+post-rebuild → 400 sur commit vide, 409 `no snapshot is an ancestor`
+sur un repo sans baseline (le chemin git rev-parse → findNearestBaseline
+s'exécute). Le chemin 200 (replay réel) reste validé par la session
+précédente (4387/4387 nodes structurels exacts, §3.ter).
+
+**Reste après cette MAJ** : baseline rebuild auto + cron on-push (le
+mode at-commit suppose qu'un snapshot ancêtre existe ; sinon l'UI montre
+le strip "seed a baseline first" mais ne le crée pas automatiquement).
