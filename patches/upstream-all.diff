@@ -14942,9 +14942,15 @@ index 0000000..05e7618
 +  );
 +};
 diff --git a/gitnexus-web/src/components/GraphCanvas.tsx b/gitnexus-web/src/components/GraphCanvas.tsx
-index e34fd43..112ddc6 100644
+index e34fd43..27194eb 100644
 --- a/gitnexus-web/src/components/GraphCanvas.tsx
 +++ b/gitnexus-web/src/components/GraphCanvas.tsx
+@@ -1,4 +1,4 @@
+-import { useEffect, useCallback, useMemo, useState, forwardRef, useImperativeHandle } from 'react';
++import { useEffect, useCallback, useMemo, useRef, useState, forwardRef, useImperativeHandle } from 'react';
+ import {
+   ZoomIn,
+   ZoomOut,
 @@ -9,6 +9,7 @@ import {
    Pause,
    Lightbulb,
@@ -14953,7 +14959,7 @@ index e34fd43..112ddc6 100644
  } from '@/lib/lucide-icons';
  import { useSigma } from '../hooks/useSigma';
  import { useAppState } from '../hooks/useAppState';
-@@ -21,12 +22,25 @@ import {
+@@ -21,12 +22,33 @@ import {
  import type { GraphNode } from 'gitnexus-shared';
  import { QueryFAB } from './QueryFAB';
  import Graph from 'graphology';
@@ -14969,6 +14975,14 @@ index e34fd43..112ddc6 100644
 +} from '../services/clusters-client';
 +import { matchExistingNodes } from '../lib/ghost-layout';
 +import type { ClusterHaloOverlay } from '../hooks/useSigma';
++// Augmented Timeline (Tier 3.x, 2026-05-27).
++import {
++  selectGhostsAt,
++  resolveAugmentedTimelineMode,
++  computeTransitions,
++  type SnapshotGhosts,
++} from '../lib/augmented-timeline';
++import { prefetchSnapshotGhosts } from '../services/snapshot-ghosts-cache';
  
  export interface GraphCanvasHandle {
    focusNode: (nodeId: string) => void;
@@ -14979,7 +14993,7 @@ index e34fd43..112ddc6 100644
    const {
      graph,
      setSelectedNode,
-@@ -46,9 +60,48 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -46,9 +68,56 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
      clearAICitationHighlights,
      clearBlastRadius,
      animatedNodes,
@@ -14992,7 +15006,15 @@ index e34fd43..112ddc6 100644
 +    setSelectedGhostId,
 +    ghostFilters,
 +    projectName,
++    availableRepos,
++    cursorB,
 +  } = appState;
++  // Augmented Timeline (Tier 3.x) — read defensively so this file
++  // compiles against pre-Task-5 builds (and old Storybook snapshots).
++  const lockGhostsToHead: boolean =
++    (appState as unknown as { lockGhostsToHead?: boolean }).lockGhostsToHead ?? false;
++  const animationActive: boolean =
++    (appState as unknown as { animationActive?: boolean }).animationActive ?? false;
 +  // Task 14 lands `showClusterHalos` + filter knobs on AppState. Read
 +  // them defensively so this file works against the pre-Task-14 state
 +  // shape too — see useAppState.tsx for the canonical types.
@@ -15029,7 +15051,7 @@ index e34fd43..112ddc6 100644
    const effectiveHighlightedNodeIds = useMemo(() => {
      if (!isAIHighlightsEnabled) return highlightedNodeIds;
      const next = new Set(highlightedNodeIds);
-@@ -82,6 +135,23 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -82,6 +151,23 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
  
    const handleNodeClick = useCallback(
      (nodeId: string) => {
@@ -15053,7 +15075,7 @@ index e34fd43..112ddc6 100644
        if (!graph) return;
        const node = nodeById.get(nodeId);
        if (node) {
-@@ -89,6 +159,7 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -89,6 +175,7 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
          openCodePanel();
        }
      },
@@ -15061,7 +15083,7 @@ index e34fd43..112ddc6 100644
      [graph, nodeById, setSelectedNode, openCodePanel],
    );
  
-@@ -139,6 +210,10 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -139,6 +226,12 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
      stopLayout,
      selectedNode: sigmaSelectedNode,
      setSelectedNode: setSigmaSelectedNode,
@@ -15069,10 +15091,12 @@ index e34fd43..112ddc6 100644
 +    applyClusterHalos,
 +    removeClusterHalos,
 +    hitTestClusterHalo,
++    startGhostCrossFade,
++    clearCrossFades,
    } = useSigma({
      onNodeClick: handleNodeClick,
      onNodeHover: handleNodeHover,
-@@ -147,6 +222,9 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -147,6 +240,9 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
      blastRadiusNodeIds: effectiveBlastRadiusNodeIds,
      animatedNodes: effectiveAnimatedNodes,
      visibleEdgeTypes,
@@ -15082,7 +15106,7 @@ index e34fd43..112ddc6 100644
    });
  
    // Expose focusNode to parent via ref
-@@ -205,6 +283,111 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -205,6 +301,198 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
      // eslint-disable-next-line react-hooks/exhaustive-deps -- sigmaRef identity never changes
    }, [visibleLabels, depthFilter, appSelectedNode]);
  
@@ -15111,18 +15135,105 @@ index e34fd43..112ddc6 100644
 +    };
 +  }, [projectName]);
 +
++  // Augmented Timeline — per-snapshot ghosts cache. Filled on repo
++  // change (when the overlay is on); consulted by the ghost-layer
++  // effect below when the cursor is in the past.
++  const snapshotGhostsCacheRef = useRef<Map<string, SnapshotGhosts>>(new Map());
++  const prevCursorRef = useRef<Date>(new Date());
++
++  useEffect(() => {
++    if (!projectName || !ghostFilters.showGhosts) {
++      snapshotGhostsCacheRef.current = new Map();
++      return;
++    }
++    const baseRepo = projectName.split('@')[0];
++    const ctrl = new AbortController();
++    prefetchSnapshotGhosts(baseRepo, ctrl.signal)
++      .then((cache) => {
++        snapshotGhostsCacheRef.current = cache;
++      })
++      .catch(() => {
++        // Network errors are silently absorbed — `selectGhostsAt`
++        // returns `[]` for an empty cache and the live ghosts still
++        // render via the lock path.
++      });
++    return () => ctrl.abort();
++  }, [projectName, ghostFilters.showGhosts]);
++
 +  // Augmented graph — push the ghost layer into Sigma whenever the
-+  // payload, the filter state, or the underlying graph changes.
-+  // `applyGhostLayer` is idempotent : it removes the previous layer
-+  // before re-applying, so this useEffect is safe to fire as often
-+  // as React schedules it.
++  // payload, the filter state, the underlying graph, OR the timeline
++  // cursor changes. `applyGhostLayer` is idempotent : it removes the
++  // previous layer before re-applying, so this useEffect is safe to
++  // fire as often as React schedules it.
 +  useEffect(() => {
 +    if (!ghostFilters.showGhosts) {
 +      applyGhostLayer(null, ghostFilters);
++      clearCrossFades();
 +      return;
 +    }
-+    applyGhostLayer(ghosts, ghostFilters);
-+  }, [ghosts, ghostFilters, graph, applyGhostLayer]);
++
++    // Resolve mode. HEAD = the live repo's `indexedAt` (the moment
++    // gitnexus last ran ingestion). Cursor missing → live mode.
++    const baseRepo = projectName ? projectName.split('@')[0] : '';
++    const headRepo = availableRepos.find((r) => r.name === baseRepo);
++    const headDate = headRepo?.indexedAt ? new Date(headRepo.indexedAt) : new Date();
++    const cursorDate = cursorB ? new Date(cursorB) : headDate;
++    const mode = resolveAugmentedTimelineMode({
++      cursor: cursorDate,
++      head: headDate,
++      lockGhostsToHead,
++    });
++
++    // Pick the effective ghost set. In live mode we forward the
++    // current `/ghosts` payload as before. In time-aware mode we
++    // closest-prior lookup the per-snapshot cache.
++    let effectiveGhosts: GhostRuntime[] | null = ghosts;
++    if (mode === 'time-aware') {
++      const historical = selectGhostsAt(
++        snapshotGhostsCacheRef.current,
++        cursorDate,
++        'time-aware',
++        // `liveGhosts` is unused in this branch, but the contract is
++        // symmetric so we still forward the current payload.
++        (ghosts ?? []) as unknown as Parameters<typeof selectGhostsAt>[3],
++      );
++      effectiveGhosts = historical as unknown as GhostRuntime[];
++    }
++
++    applyGhostLayer(effectiveGhosts, ghostFilters);
++
++    // Cross-fade trigger — only while Play animation is active. We
++    // compute the materializing / cancelling transitions between the
++    // previous cursor position and the new one, then start a 200 ms
++    // ghost cross-fade per affected id. The shared rAF loop in
++    // `useSigma` interpolates without spawning extra frames.
++    if (animationActive) {
++      const transitions = computeTransitions(
++        snapshotGhostsCacheRef.current,
++        prevCursorRef.current,
++        cursorDate,
++      );
++      for (const id of transitions.materializing) startGhostCrossFade(id, 200);
++      for (const id of transitions.cancelling) startGhostCrossFade(id, 200);
++    } else {
++      // Outside animation, make sure leftover overrides don't bleed
++      // into a fresh repo / mode.
++      clearCrossFades();
++    }
++    prevCursorRef.current = cursorDate;
++  }, [
++    ghosts,
++    ghostFilters,
++    graph,
++    applyGhostLayer,
++    cursorB,
++    lockGhostsToHead,
++    animationActive,
++    projectName,
++    availableRepos,
++    startGhostCrossFade,
++    clearCrossFades,
++  ]);
 +
 +  // Cluster halos — fetch /clusters whenever the active repo changes.
 +  // The clusters-client owns a 30s in-memory cache (per repo × source
@@ -15194,7 +15305,7 @@ index e34fd43..112ddc6 100644
    // Sync app selected node with sigma
    useEffect(() => {
      if (appSelectedNode) {
-@@ -249,6 +432,130 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -249,6 +537,130 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
          className="sigma-container h-full w-full cursor-grab active:cursor-grabbing"
        />
  
@@ -15325,7 +15436,7 @@ index e34fd43..112ddc6 100644
        {/* Hovered node tooltip - only show when NOT selected */}
        {hoveredNodeName && !sigmaSelectedNode && (
          <div className="pointer-events-none absolute top-4 left-1/2 z-20 -translate-x-1/2 animate-fade-in rounded-lg border border-border-subtle bg-elevated/95 px-3 py-1.5 backdrop-blur-sm">
-@@ -350,8 +657,16 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -350,8 +762,16 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
        {/* Query FAB */}
        <QueryFAB />
  
