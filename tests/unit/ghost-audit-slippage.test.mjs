@@ -21,3 +21,49 @@ describe('parseTargetDate', () => {
     expect(parseTargetDate('')).toBeNull();
   });
 });
+
+describe('computeSlippage', () => {
+  const ghost = (id, plannedFor, matDate) => ({
+    id,
+    declared: { plannedFor },
+    materializedAt: matDate ? { date: matDate } : null,
+  });
+
+  it('classifies ghosts into 4 buckets', () => {
+    const out = computeSlippage([
+      ghost('a', '2026-06-30', '2026-06-15'), // early (15d before)
+      ghost('b', '2026-06-30', '2026-06-30'), // on time
+      ghost('c', '2026-06-30', '2026-07-15'), // late
+      ghost('d', null,         '2026-06-30'), // no target
+    ]);
+    expect(out).toMatchObject({ early: 1, onTime: 1, late: 1, noTarget: 1 });
+  });
+
+  it('excludes noTarget from onTimePct', () => {
+    const out = computeSlippage([
+      ghost('a', '2026-06-30', '2026-06-15'),
+      ghost('b', '2026-06-30', '2026-06-30'),
+      ghost('c', null,         '2026-06-30'),
+    ]);
+    // early=1, onTime=1, late=0, total non-null = 2, onTimePct = 1/2
+    expect(out.onTimePct).toBeCloseTo(0.5, 6);
+  });
+
+  it('returns 0/0 when no materialized ghosts', () => {
+    const out = computeSlippage([{ id: 'x', materializedAt: null, declared: {} }]);
+    expect(out).toMatchObject({ early: 0, onTime: 0, late: 0, noTarget: 0 });
+    expect(out.onTimePct).toBeNull();
+  });
+
+  it('treats bucket-granularity targets as on-time anywhere within the bucket', () => {
+    // plannedFor = "2026-Q3" → bucket ends 2026-09-30 ; matDate 2026-08-15 is well before
+    // but still "in the bucket" if we relax bucket semantics. The spec says:
+    // for Q/M granularity, anywhere within the bucket = onTime.
+    const out = computeSlippage([
+      ghost('a', '2026-Q3', '2026-08-15'), // within Q3 → onTime
+      ghost('b', '2026-Q3', '2026-10-15'), // after Q3 end → late
+      ghost('c', '2026-Q3', '2026-06-30'), // before Q3 start → early
+    ]);
+    expect(out).toMatchObject({ early: 1, onTime: 1, late: 1 });
+  });
+});
