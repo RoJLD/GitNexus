@@ -12605,7 +12605,7 @@ index 0000000..05e7618
 +  );
 +};
 diff --git a/gitnexus-web/src/components/GraphCanvas.tsx b/gitnexus-web/src/components/GraphCanvas.tsx
-index e34fd43..a988ac8 100644
+index e34fd43..4217368 100644
 --- a/gitnexus-web/src/components/GraphCanvas.tsx
 +++ b/gitnexus-web/src/components/GraphCanvas.tsx
 @@ -9,6 +9,7 @@ import {
@@ -12626,7 +12626,7 @@ index e34fd43..a988ac8 100644
  
  export interface GraphCanvasHandle {
    focusNode: (nodeId: string) => void;
-@@ -46,9 +50,24 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -46,9 +50,23 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
      clearAICitationHighlights,
      clearBlastRadius,
      animatedNodes,
@@ -12634,24 +12634,23 @@ index e34fd43..a988ac8 100644
 +    diffData,
 +    churnActive,
 +    churnScores,
++    selectedGhostId,
++    setSelectedGhostId,
    } = useAppState();
    const [hoveredNodeName, setHoveredNodeName] = useState<string | null>(null);
  
-+  // Augmented graph (Section D — Task 9). The ghosts payload itself
-+  // is fetched in Task 12 (which wires the `useEffect` + the
-+  // `applyGhostLayer` call). Here we declare both pieces of state so
-+  // the click handler can already route clicks on `kind: 'ghost'`
-+  // nodes to the GhostTooltip rather than the normal file-click flow.
-+  // `setGhosts` is the setter Task 12 will fill in; intentional that
-+  // ghosts stays null at this stage.
++  // Augmented graph (Section D — Task 9 / Section F — Task 12).
++  // `ghosts` is the payload fetched in Task 12; `selectedGhostId`
++  // lives in the AppState context (Task 11) so future flows like
++  // jump-to-graph from the audit panel can open the tooltip without
++  // owning canvas state.
 +  const [ghosts, setGhosts] = useState<GhostRuntime[] | null>(null);
-+  const [selectedGhostId, setSelectedGhostId] = useState<string | null>(null);
 +  void setGhosts; // wired in Task 12 (GraphCanvas fetch /ghosts useEffect)
 +
    const effectiveHighlightedNodeIds = useMemo(() => {
      if (!isAIHighlightsEnabled) return highlightedNodeIds;
      const next = new Set(highlightedNodeIds);
-@@ -82,6 +101,23 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -82,6 +100,23 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
  
    const handleNodeClick = useCallback(
      (nodeId: string) => {
@@ -12675,7 +12674,7 @@ index e34fd43..a988ac8 100644
        if (!graph) return;
        const node = nodeById.get(nodeId);
        if (node) {
-@@ -89,6 +125,7 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -89,6 +124,7 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
          openCodePanel();
        }
      },
@@ -12683,7 +12682,7 @@ index e34fd43..a988ac8 100644
      [graph, nodeById, setSelectedNode, openCodePanel],
    );
  
-@@ -147,6 +184,9 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -147,6 +183,9 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
      blastRadiusNodeIds: effectiveBlastRadiusNodeIds,
      animatedNodes: effectiveAnimatedNodes,
      visibleEdgeTypes,
@@ -12693,7 +12692,7 @@ index e34fd43..a988ac8 100644
    });
  
    // Expose focusNode to parent via ref
-@@ -249,6 +289,32 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -249,6 +288,32 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
          className="sigma-container h-full w-full cursor-grab active:cursor-grabbing"
        />
  
@@ -12726,7 +12725,7 @@ index e34fd43..a988ac8 100644
        {/* Hovered node tooltip - only show when NOT selected */}
        {hoveredNodeName && !sigmaSelectedNode && (
          <div className="pointer-events-none absolute top-4 left-1/2 z-20 -translate-x-1/2 animate-fade-in rounded-lg border border-border-subtle bg-elevated/95 px-3 py-1.5 backdrop-blur-sm">
-@@ -350,8 +416,16 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -350,8 +415,16 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
        {/* Query FAB */}
        <QueryFAB />
  
@@ -17934,7 +17933,7 @@ index 49862a9..5c552dd 100644
   * Create a Graph RAG agent
   */
 diff --git a/gitnexus-web/src/hooks/useAppState.tsx b/gitnexus-web/src/hooks/useAppState.tsx
-index 25c5776..52d2c64 100644
+index 25c5776..aa19274 100644
 --- a/gitnexus-web/src/hooks/useAppState.tsx
 +++ b/gitnexus-web/src/hooks/useAppState.tsx
 @@ -8,7 +8,12 @@ import {
@@ -17959,7 +17958,7 @@ index 25c5776..52d2c64 100644
    runQuery as backendRunQuery,
    search as backendSearch,
    grep as backendGrep,
-@@ -34,12 +40,22 @@ import {
+@@ -34,12 +40,23 @@ import {
    type ConnectResult,
    type JobProgress,
  } from '../services/backend-client';
@@ -17972,6 +17971,7 @@ index 25c5776..52d2c64 100644
 +} from '../services/semantic-labeler';
 +import { providerSupportsEmbeddings } from '../core/llm/agent';
 +import { applyMutations, type Mutation } from '../services/mutation-engine';
++import { DEFAULT_GHOST_FILTERS, type GhostFilters } from '../lib/ghost-layout';
  import { ERROR_RESET_DELAY_MS } from '../config/ui-constants';
  import { normalizePath } from '../lib/path-resolution';
  import { FILE_REF_REGEX, NODE_REF_REGEX } from '../lib/grounding-patterns';
@@ -17982,7 +17982,7 @@ index 25c5776..52d2c64 100644
  export type RightPanelTab = 'code' | 'chat';
  export type EmbeddingStatus = 'idle' | 'loading' | 'embedding' | 'indexing' | 'ready' | 'error';
  
-@@ -81,6 +97,9 @@ interface AppState {
+@@ -81,6 +98,9 @@ interface AppState {
    // View state
    viewMode: ViewMode;
    setViewMode: (mode: ViewMode) => void;
@@ -17992,7 +17992,7 @@ index 25c5776..52d2c64 100644
  
    // Graph data
    graph: KnowledgeGraph | null;
-@@ -192,6 +211,371 @@ interface AppState {
+@@ -192,6 +212,385 @@ interface AppState {
    clearAICodeReferences: () => void;
    clearCodeReferences: () => void;
    codeReferenceFocus: CodeReferenceFocus | null;
@@ -18134,6 +18134,20 @@ index 25c5776..52d2c64 100644
 +  refreshSemanticLabels: () => Promise<void>;
 +  generateSemanticLabelsAction: (overwrite?: boolean) => Promise<void>;
 +  cancelSemanticLabelGen: () => void;
++
++  // Augmented graph (roadmap-predictive). Holds the user's hierarchical
++  // filter state for the ghost overlay (master toggle + per-Tier
++  // checkboxes + cancelled toggle). Consumed by GhostFiltersSection
++  // (the "Roadmap predictive" block in FileTreePanel's Filters tab)
++  // and by GraphCanvas (which forwards it to `applyGhostLayer`).
++  ghostFilters: GhostFilters;
++  setGhostFilters: (filters: GhostFilters) => void;
++  /** Tracks the ghost the user clicked in the canvas (if any). The
++   *  GhostTooltip renders against this id; `null` means no tooltip.
++   *  Lifted here so non-canvas code (e.g. an AuditPanel jump-to-graph)
++   *  can also open the tooltip later. */
++  selectedGhostId: string | null;
++  setSelectedGhostId: (id: string | null) => void;
 +
 +  // What-if simulator (ROADMAP Tier 2.3). Holds a user-built list of
 +  // structural mutations and, on demand, computes the predicted graph
@@ -18364,7 +18378,7 @@ index 25c5776..52d2c64 100644
  }
  
  const AppStateContext = createContext<AppState | null>(null);
-@@ -205,6 +589,10 @@ export const AppStateProvider = ({ children }: { children: ReactNode }) => (
+@@ -205,6 +604,10 @@ export const AppStateProvider = ({ children }: { children: ReactNode }) => (
  const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
    // View state
    const [viewMode, setViewMode] = useState<ViewMode>('onboarding');
@@ -18375,7 +18389,7 @@ index 25c5776..52d2c64 100644
  
    const {
      graph,
-@@ -343,6 +731,111 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
+@@ -343,6 +746,119 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
    const [isCodePanelOpen, setCodePanelOpen] = useState(false);
    const [codeReferenceFocus, setCodeReferenceFocus] = useState<CodeReferenceFocus | null>(null);
  
@@ -18471,6 +18485,14 @@ index 25c5776..52d2c64 100644
 +  const [semanticLabelsError, setSemanticLabelsError] = useState<string | null>(null);
 +  const semanticLabelsAbortRef = useRef<AbortController | null>(null);
 +
++  // Augmented graph filters (roadmap-predictive). Hierarchical : a
++  // master `showGhosts` toggle, plus per-Tier checkboxes and a
++  // cancelled-ghosts switch. Default keeps the overlay off so
++  // existing users don't suddenly see ghosts on their canvas.
++  const [ghostFilters, setGhostFilters] =
++    useState<GhostFilters>(DEFAULT_GHOST_FILTERS);
++  const [selectedGhostId, setSelectedGhostId] = useState<string | null>(null);
++
 +  // What-if simulator state.
 +  const [whatIfPanelOpen, setWhatIfPanelOpen] = useState(false);
 +  const [whatIfActive, setWhatIfActive] = useState(false);
@@ -18487,7 +18509,7 @@ index 25c5776..52d2c64 100644
    // Map of normalized file path → node ID for graph-based lookups
    const fileNodeByPath = useMemo(() => {
      if (!graph) return new Map<string, string>();
-@@ -1029,6 +1522,62 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
+@@ -1029,6 +1545,62 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
      async (repoName: string) => {
        if (!serverBaseUrl) return;
  
@@ -18550,7 +18572,7 @@ index 25c5776..52d2c64 100644
        setProgress({
          phase: 'extracting',
          percent: 0,
-@@ -1105,6 +1654,13 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
+@@ -1105,6 +1677,13 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
          for (const node of result.nodes) newGraph.addNode(node);
          for (const rel of result.relationships) newGraph.addRelationship(rel);
          setGraph(newGraph);
@@ -18564,7 +18586,7 @@ index 25c5776..52d2c64 100644
        } catch (err: unknown) {
          console.error('Repo switch failed:', err);
          setProgress({
-@@ -1207,9 +1763,732 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
+@@ -1207,9 +1786,732 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
      setCodeReferenceFocus(null);
    }, []);
  
@@ -19297,7 +19319,7 @@ index 25c5776..52d2c64 100644
      graph,
      setGraph,
      selectedNode,
-@@ -1293,6 +2572,111 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
+@@ -1293,6 +2595,116 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
      clearAICodeReferences,
      clearCodeReferences,
      codeReferenceFocus,
@@ -19406,6 +19428,11 @@ index 25c5776..52d2c64 100644
 +    setWhatIfMutations,
 +    enterWhatIfMode,
 +    exitWhatIfMode,
++    // Augmented graph (roadmap-predictive)
++    ghostFilters,
++    setGhostFilters,
++    selectedGhostId,
++    setSelectedGhostId,
    };
  
    return <AppStateContext.Provider value={value}>{children}</AppStateContext.Provider>;
