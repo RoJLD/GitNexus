@@ -16848,6 +16848,78 @@ index 0000000..a370295
 +    </div>
 +  );
 +};
+diff --git a/gitnexus-web/src/components/audit/AuditSummary.tsx b/gitnexus-web/src/components/audit/AuditSummary.tsx
+new file mode 100644
+index 0000000..2b136a3
+--- /dev/null
++++ b/gitnexus-web/src/components/audit/AuditSummary.tsx
+@@ -0,0 +1,66 @@
++/**
++ * AuditSummary — 5 always-on cards + a 6th "Expired" card that only
++ * appears when the audit response carries an `expired` block with
++ * `total > 0` (Update 1, computeExpired). The card uses a red badge
++ * (status-expired) to draw the eye to overdue ghosts.
++ *
++ * Spec : docs/superpowers/specs/2026-05-26-roadmap-predictive-audit-design.md
++ */
++
++type Summary = {
++  total: number;
++  materialized: number;
++  planned: number;
++  cancelled: number;
++  cancellationRate: number;
++};
++
++type Expired = {
++  total: number;
++  critical: number;
++  expiredButRecent: number;
++  list: { id: string; expectedBy: string; daysPastExpiry: number; alertLevel: string }[];
++};
++
++type Props = {
++  data: Summary;
++  expired?: Expired;
++};
++
++export default function AuditSummary({ data, expired }: Props) {
++  return (
++    <div className="audit-summary" data-testid="audit-summary">
++      <div className="stat">
++        <div className="value">{data.total}</div>
++        <div className="label">Total</div>
++      </div>
++      <div className="stat status-mat">
++        <div className="value">{data.materialized}</div>
++        <div className="label">Materialized</div>
++      </div>
++      <div className="stat status-planned">
++        <div className="value">{data.planned}</div>
++        <div className="label">Planned</div>
++      </div>
++      <div className="stat status-cancelled">
++        <div className="value">{data.cancelled}</div>
++        <div className="label">Cancelled</div>
++      </div>
++      <div className="stat">
++        <div className="value">{(data.cancellationRate * 100).toFixed(1)}%</div>
++        <div className="label">Cancel rate</div>
++      </div>
++      {expired && expired.total > 0 && (
++        <div className="stat status-expired" data-testid="stat-expired">
++          <div className="value">{expired.total}</div>
++          <div className="label">Expired</div>
++          {expired.critical > 0 && (
++            <div className="badge badge-red" title={`${expired.critical} critical`}>
++              {expired.critical} critical
++            </div>
++          )}
++        </div>
++      )}
++    </div>
++  );
++}
 diff --git a/gitnexus-web/src/core/llm/agent.ts b/gitnexus-web/src/core/llm/agent.ts
 index 49862a9..5c552dd 100644
 --- a/gitnexus-web/src/core/llm/agent.ts
