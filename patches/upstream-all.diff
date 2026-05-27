@@ -925,6 +925,138 @@ index 0000000..d616ecc
 +  }
 +  return best;
 +}
+diff --git a/docker-server-connectors.mjs b/docker-server-connectors.mjs
+new file mode 100644
+index 0000000..d16bdbb
+--- /dev/null
++++ b/docker-server-connectors.mjs
+@@ -0,0 +1,126 @@
++// upstream/docker-server-connectors.mjs
++//
++// `/ghosts/connector-suggestions` endpoint — reads .gitnexus.json's
++// `connectors.*` config for a repo, runs each enabled connector's
++// fetchOpenWorkItems + fetchClosedWorkItems, fuzzy-matches each ticket
++// against the latest ghosts, and returns
++//   { suggestions: [{ ghostId, connectorName, ticketRef, suggestedAction, ... }] }
++//
++// Connectors live under ./connectors/*.mjs. Each one must export an
++// object with `fetchOpenWorkItems(cfg)` and `fetchClosedWorkItems(cfg)`.
++
++import { fuzzyMatchTicketToGhost } from './docker-server-connectors-core.mjs';
++import { readLatestGhosts } from './docker-server-ghosts.mjs';
++import { findRepoByName } from './docker-server-snapshots.mjs';
++import { planeConnector } from './connectors/plane.mjs';
++import { linearConnector } from './connectors/linear.mjs';
++import { githubConnector } from './connectors/github.mjs';
++import { jiraConnector } from './connectors/jira.mjs';
++import { readFile } from 'node:fs/promises';
++import { join } from 'node:path';
++
++const CONNECTORS = {
++  plane: planeConnector,
++  linear: linearConnector,
++  github: githubConnector,
++  jira: jiraConnector,
++};
++
++async function loadConnectorConfig(repoPath) {
++  try {
++    const raw = await readFile(join(repoPath, '.gitnexus.json'), 'utf8');
++    const cfg = JSON.parse(raw);
++    return cfg?.connectors || {};
++  } catch { return {}; }
++}
++
++function envFor(name) {
++  switch (name) {
++    case 'plane': return process.env.PLANE_API_KEY;
++    case 'linear': return process.env.LINEAR_API_KEY;
++    case 'github': return process.env.GITHUB_TOKEN;
++    case 'jira': return process.env.JIRA_API_TOKEN;
++    default: return null;
++  }
++}
++
++export async function buildConnectorSuggestions(repoPath) {
++  const runtime = await readLatestGhosts(repoPath);
++  if (!runtime) return { suggestions: [] };
++  const ghosts = runtime.ghosts || [];
++  const connectorConfig = await loadConnectorConfig(repoPath);
++
++  const suggestions = [];
++  for (const [name, connector] of Object.entries(CONNECTORS)) {
++    const cfg = connectorConfig[name];
++    if (!cfg || cfg.enabled !== true) continue;
++    const apiKey = cfg.apiKey || envFor(name);
++    let openItems = [], closedItems = [];
++    try {
++      openItems = await connector.fetchOpenWorkItems({ ...cfg, apiKey });
++      closedItems = await connector.fetchClosedWorkItems({ ...cfg, apiKey });
++    } catch (err) {
++      suggestions.push({ connectorName: name, error: err.message });
++      continue;
++    }
++    for (const ticket of openItems) {
++      const match = fuzzyMatchTicketToGhost(ticket, ghosts, cfg.matchThreshold ?? 0.7);
++      if (match) {
++        suggestions.push({
++          ghostId: match.ghost.id,
++          connectorName: name,
++          ticketRef: ticket.id,
++          ticketTitle: ticket.title,
++          suggestedAction: 'reaffirm',
++          rationale: `${name} ticket "${ticket.title}" still open (score ${match.score.toFixed(2)})`,
++          externalUrl: ticket.externalUrl,
++        });
++      }
++    }
++    for (const ticket of closedItems) {
++      const match = fuzzyMatchTicketToGhost(ticket, ghosts, cfg.matchThreshold ?? 0.7);
++      if (match) {
++        suggestions.push({
++          ghostId: match.ghost.id,
++          connectorName: name,
++          ticketRef: ticket.id,
++          ticketTitle: ticket.title,
++          suggestedAction: 'cancel',
++          rationale: `${name} ticket "${ticket.title}" closed (score ${match.score.toFixed(2)})`,
++          externalUrl: ticket.externalUrl,
++        });
++      }
++    }
++  }
++  return { suggestions };
++}
++
++async function handleConnectorSuggestions(url, res, opts) {
++  const repoName = url.searchParams.get('repo');
++  if (!repoName) {
++    res.writeHead(400, { 'Content-Type': 'application/json' });
++    return res.end(JSON.stringify({ error: 'missing repo' }));
++  }
++  const repo = await findRepoByName(repoName, opts.api);
++  if (!repo) {
++    res.writeHead(400, { 'Content-Type': 'application/json' });
++    return res.end(JSON.stringify({ error: `repo not found: ${repoName}` }));
++  }
++  const repoPath = repo.repoPath || repo.path;
++  try {
++    const result = await buildConnectorSuggestions(repoPath);
++    res.writeHead(200, { 'Content-Type': 'application/json' });
++    res.end(JSON.stringify(result));
++  } catch (err) {
++    res.writeHead(500, { 'Content-Type': 'application/json' });
++    res.end(JSON.stringify({ error: err.message }));
++  }
++}
++
++export async function handleConnectorsRoute(req, url, res, opts) {
++  if (url.pathname === '/ghosts/connector-suggestions' && req.method === 'GET') {
++    await handleConnectorSuggestions(url, res, opts);
++    return true;
++  }
++  return false;
++}
 diff --git a/docker-server-coupling-cross.mjs b/docker-server-coupling-cross.mjs
 new file mode 100644
 index 0000000..0f8e30e
@@ -8660,10 +8792,10 @@ index 0000000..c6a7798
 +  return false;
 +}
 diff --git a/docker-server.mjs b/docker-server.mjs
-index 8143eb4..e58e4ee 100644
+index 8143eb4..56e2e73 100644
 --- a/docker-server.mjs
 +++ b/docker-server.mjs
-@@ -1,12 +1,60 @@
+@@ -1,12 +1,61 @@
 -import { createReadStream } from 'node:fs';
 -import { stat } from 'node:fs/promises';
 +import { createReadStream, createWriteStream } from 'node:fs';
@@ -8696,6 +8828,7 @@ index 8143eb4..e58e4ee 100644
 +import { handleGhostsRoute } from './docker-server-ghosts.mjs';
 +import { handleGhostAuditRoute } from './docker-server-ghost-audit.mjs';
 +import { handleGhostsCleanupRoute } from './docker-server-ghost-cleanup.mjs';
++import { handleConnectorsRoute } from './docker-server-connectors.mjs';
  
  const host = '0.0.0.0';
  const port = Number(process.env.PORT || '4173');
@@ -8727,7 +8860,7 @@ index 8143eb4..e58e4ee 100644
  const contentTypes = {
    '.css': 'text/css; charset=utf-8',
    '.html': 'text/html; charset=utf-8',
-@@ -20,6 +68,416 @@ const contentTypes = {
+@@ -20,6 +69,416 @@ const contentTypes = {
    '.woff2': 'font/woff2',
  };
  
@@ -9144,7 +9277,7 @@ index 8143eb4..e58e4ee 100644
  // Static asset server for the gitnexus-web Docker image.
  //
  // Path-injection containment: the request handler is intentionally a single
-@@ -39,8 +497,73 @@ const contentTypes = {
+@@ -39,8 +498,75 @@ const contentTypes = {
  // the request handler's reassignment paths in vanilla JS. The inline-at-sink
  // shape below is the documented analyzer-friendly idiom.
  const server = createServer(async (req, res) => {
@@ -9214,12 +9347,14 @@ index 8143eb4..e58e4ee 100644
 +  if (await handleGhostAuditRoute(req, reqUrl, res, { api: GITNEXUS_API })) return;
 +  // Roadmap-predictive cleanup-at-expiration (LLM-assisted)
 +  if (await handleGhostsCleanupRoute(req, reqUrl, res, { api: GITNEXUS_API })) return;
++  // Roadmap-predictive connector suggestions (Plane / Linear / GitHub / Jira)
++  if (await handleConnectorsRoute(req, reqUrl, res, { api: GITNEXUS_API })) return;
  
 +  // ── Static asset serving (v1.6.5 CodeQL-compliant pipeline) ───────────
    let decoded;
    try {
      decoded = decodeURIComponent(urlPath);
-@@ -117,4 +640,7 @@ const server = createServer(async (req, res) => {
+@@ -117,4 +643,7 @@ const server = createServer(async (req, res) => {
  
  server.listen(port, host, () => {
    console.log(`gitnexus-web listening on http://${host}:${port}`);
