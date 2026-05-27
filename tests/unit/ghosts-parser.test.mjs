@@ -77,6 +77,52 @@ describe('parseRoadmap — table rows', () => {
   });
 });
 
+describe('parseRoadmap — managed "From spec brainstorms" section', () => {
+  const md = [
+    '# Roadmap', '',
+    '## ✅ Déjà livré', '',
+    '| # | Feature | Endpoint(s) / Composant(s) |',
+    '|---|---|---|',
+    '| 1 | **Old feature** | `old.ts` |',
+    '',
+    '## 🧪 From spec brainstorms', '',
+    '<!-- specs:start -->',
+    '| Spec | Tier | Title | Endpoint(s) / Composant(s) |',
+    '|---|---|---|---|',
+    '| [2026-05-26-foo-design](path) | 2.3 | Foo planned | `services/foo.ts` |',
+    '<!-- specs:end -->',
+  ].join('\n');
+
+  it('picks up rows from the managed section with status: planned', () => {
+    const ghosts = parseRoadmap(md);
+    const foo = ghosts.find(g => g.title === 'Foo planned');
+    expect(foo).toBeDefined();
+    expect(foo.status).toBe('planned');
+    expect(foo.tier).toBe('2.3');
+    expect(foo.expectedLinks.some(l => l.value === 'services/foo.ts')).toBe(true);
+  });
+
+  it('still picks up the Déjà livré section with status: materialized', () => {
+    const ghosts = parseRoadmap(md);
+    expect(ghosts.find(g => g.title === 'Old feature').status).toBe('materialized');
+  });
+
+  it('handles a missing tier as null (em-dash placeholder)', () => {
+    const md2 = [
+      '## 🧪 From spec brainstorms', '',
+      '<!-- specs:start -->',
+      '| Spec | Tier | Title | Endpoint(s) / Composant(s) |',
+      '|---|---|---|---|',
+      '| [2026-05-26-bar-design](path) | — | Bar | `bar.ts` |',
+      '<!-- specs:end -->',
+    ].join('\n');
+    const ghosts = parseRoadmap(md2);
+    const bar = ghosts.find(g => g.title === 'Bar');
+    expect(bar.tier).toBeNull();
+    expect(bar.status).toBe('planned');
+  });
+});
+
 describe('parseRoadmap — Tier sections', () => {
   const md = [
     '## 🎯 Tier 1 — Prochaines briques',

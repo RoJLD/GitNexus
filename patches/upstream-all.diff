@@ -3178,10 +3178,10 @@ index 0000000..24517f0
 +}
 diff --git a/docker-server-ghosts-core.mjs b/docker-server-ghosts-core.mjs
 new file mode 100644
-index 0000000..71f15da
+index 0000000..4f76fc0
 --- /dev/null
 +++ b/docker-server-ghosts-core.mjs
-@@ -0,0 +1,334 @@
+@@ -0,0 +1,377 @@
 +/**
 + * Pure functions for the roadmap-predictive CORE.
 + * No I/O, no fs, no fetch — testable in isolation.
@@ -3193,6 +3193,12 @@ index 0000000..71f15da
 +const TABLE_HEADER_RE = /^\|\s*#\s*\|/;
 +const TABLE_SEP_RE = /^\|[\s:-]+\|/;
 +const SHIPPED_SECTION_RE = /^##\s+✅\s+Déjà livré\s*$/i;
++// Managed section appended by scripts/ghost-from-spec.mjs. Rows here
++// emit ghosts with status='planned' (vs 'materialized' for Déjà livré).
++// Cf. docs/superpowers/specs/2026-05-26-roadmap-predictive-brainstorm-hook-design.md
++const FROM_SPEC_SECTION_RE = /^##\s+🧪\s+From spec brainstorms\s*$/i;
++const FROM_SPEC_TABLE_HEADER_RE = /^\|\s*Spec\s*\|/i;
++const FROM_SPEC_ROW_RE = /^\|\s*\[([^\]]+)\]\(([^)]+)\)\s*\|\s*(.+?)\s*\|\s*(.+?)\s*\|\s*(.+?)\s*\|\s*$/;
 +const BACKTICK_RE = /`([^`]+)`/g;
 +const TIER_HEADING_RE = /^###\s+(\d+(?:\.\d+)*)\s*[—-]\s*(.+?)\s*(✅|🗑️|⏳|🔬)?\s*$/;
 +const PROMISE_RE = /^\*\*Promesse\*\*\s*:\s*(.+)$/;
@@ -3233,41 +3239,78 @@ index 0000000..71f15da
 +  const ghosts = [];
 +
 +  // --- Pass A : table "Déjà livré" rows (UNCHANGED from Task 1) ---
-+  let inShippedSection = false;
++  // + managed "🧪 From spec brainstorms" section (Brainstorm-hook Update 2026-05-27).
++  // Both sections share the same control flow, only `defaultStatus` differs.
++  let inGhostTableSection = false;
++  let defaultStatus = null; // 'materialized' for Déjà livré, 'planned' for From spec brainstorms
 +  let inTable = false;
 +  let tableHasSep = false;
++  let isSpecTable = false; // true when parsing the 4-col Spec/Tier/Title/Links shape
 +
 +  for (const line of lines) {
 +    if (SHIPPED_SECTION_RE.test(line)) {
-+      inShippedSection = true;
++      inGhostTableSection = true;
++      defaultStatus = 'materialized';
++      isSpecTable = false;
 +      inTable = false;
 +      tableHasSep = false;
 +      continue;
 +    }
-+    if (line.startsWith('## ') && !SHIPPED_SECTION_RE.test(line)) {
-+      inShippedSection = false;
++    if (FROM_SPEC_SECTION_RE.test(line)) {
++      inGhostTableSection = true;
++      defaultStatus = 'planned';
++      isSpecTable = true;
 +      inTable = false;
 +      tableHasSep = false;
 +      continue;
 +    }
-+    if (!inShippedSection) continue;
-+    if (TABLE_HEADER_RE.test(line)) { inTable = true; tableHasSep = false; continue; }
++    if (line.startsWith('## ') && !SHIPPED_SECTION_RE.test(line) && !FROM_SPEC_SECTION_RE.test(line)) {
++      inGhostTableSection = false;
++      defaultStatus = null;
++      isSpecTable = false;
++      inTable = false;
++      tableHasSep = false;
++      continue;
++    }
++    if (!inGhostTableSection) continue;
++    if (isSpecTable) {
++      if (FROM_SPEC_TABLE_HEADER_RE.test(line)) { inTable = true; tableHasSep = false; continue; }
++    } else {
++      if (TABLE_HEADER_RE.test(line)) { inTable = true; tableHasSep = false; continue; }
++    }
 +    if (inTable && !tableHasSep && TABLE_SEP_RE.test(line)) { tableHasSep = true; continue; }
 +    if (inTable && tableHasSep) {
 +      if (line.trim() === '') continue;
-+      const m = line.match(TABLE_ROW_RE);
-+      if (!m) { inTable = false; continue; }
-+      const [, num, rawTitle, rawLinks] = m;
-+      const title = stripBold(rawTitle).trim();
-+      ghosts.push({
-+        id: `${num}-${slugify(title)}`,
-+        tier: null,
-+        title,
-+        description: '',
-+        status: 'materialized',
-+        expectedLinks: extractExpectedLinks(rawLinks),
-+        dependsOn: [],
-+      });
++      if (isSpecTable) {
++        const m = line.match(FROM_SPEC_ROW_RE);
++        if (!m) { inTable = false; continue; }
++        const [, specLabel, , rawTier, rawTitle, rawLinks] = m;
++        const title = stripBold(rawTitle).trim();
++        const tier = rawTier.trim();
++        ghosts.push({
++          id: `spec-${specLabel.trim()}`,
++          tier: tier === '—' || tier === '' ? null : tier,
++          title,
++          description: '',
++          status: defaultStatus,
++          expectedLinks: extractExpectedLinks(rawLinks),
++          dependsOn: [],
++        });
++      } else {
++        const m = line.match(TABLE_ROW_RE);
++        if (!m) { inTable = false; continue; }
++        const [, num, rawTitle, rawLinks] = m;
++        const title = stripBold(rawTitle).trim();
++        ghosts.push({
++          id: `${num}-${slugify(title)}`,
++          tier: null,
++          title,
++          description: '',
++          status: defaultStatus,
++          expectedLinks: extractExpectedLinks(rawLinks),
++          dependsOn: [],
++        });
++      }
 +    }
 +  }
 +
