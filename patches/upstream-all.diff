@@ -19087,10 +19087,32 @@ index 25c5776..52d2c64 100644
  
    return <AppStateContext.Provider value={value}>{children}</AppStateContext.Provider>;
 diff --git a/gitnexus-web/src/hooks/useSigma.ts b/gitnexus-web/src/hooks/useSigma.ts
-index 461de0f..5a38eae 100644
+index 461de0f..b0c8f09 100644
 --- a/gitnexus-web/src/hooks/useSigma.ts
 +++ b/gitnexus-web/src/hooks/useSigma.ts
-@@ -62,6 +62,46 @@ interface UseSigmaOptions {
+@@ -8,6 +8,21 @@ import EdgeCurveProgram from '@sigma/edge-curve';
+ import { SigmaNodeAttributes, SigmaEdgeAttributes } from '../lib/graph-adapter';
+ import type { NodeAnimation } from './useAppState';
+ import type { EdgeType } from '../lib/constants';
++import {
++  GhostNodeProgram,
++  drawGhostNode,
++  GHOST_DEFAULT_OUTLINE,
++  GHOST_FILL_ALPHA,
++} from '../lib/ghost-node-program';
++import {
++  computeGhostLayout,
++  tierColor,
++  computeGhostVisualState,
++  passesFilter,
++  derivedStatus,
++  type GhostFilters,
++} from '../lib/ghost-layout';
++import type { GhostRuntime } from '../services/ghosts-client';
+ // Helper: Parse hex color to RGB
+ const hexToRgb = (hex: string): { r: number; g: number; b: number } => {
+   const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+@@ -62,6 +77,46 @@ interface UseSigmaOptions {
    blastRadiusNodeIds?: Set<string>;
    animatedNodes?: Map<string, NodeAnimation>;
    visibleEdgeTypes?: EdgeType[];
@@ -19137,17 +19159,39 @@ index 461de0f..5a38eae 100644
  }
  
  interface UseSigmaReturn {
-@@ -138,6 +178,9 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
+@@ -78,6 +133,16 @@ interface UseSigmaReturn {
+   selectedNode: string | null;
+   setSelectedNode: (nodeId: string | null) => void;
+   refreshHighlights: () => void;
++  /**
++   * Apply (or re-apply) the predictive ghost layer on top of the
++   * current graph. Idempotent — calling it twice replaces the previous
++   * ghosts. Pass `null` to clear (see also `removeGhostLayer`).
++   *
++   * `now` is injected so tests can pin time when validating decay.
++   */
++  applyGhostLayer: (ghosts: GhostRuntime[] | null, filters: GhostFilters, now?: Date) => void;
++  /** Drop all ghost nodes/edges previously added by `applyGhostLayer`. */
++  removeGhostLayer: () => void;
+ }
+ 
+ // Noverlap for final cleanup - minimal since it starts with good positions
+@@ -138,6 +203,14 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
    const blastRadiusRef = useRef<Set<string>>(new Set());
    const animatedNodesRef = useRef<Map<string, NodeAnimation>>(new Map());
    const visibleEdgeTypesRef = useRef<EdgeType[] | null>(null);
 +  const diffNodeStatusRef = useRef<Map<string, 'onlyInA' | 'onlyInB' | 'inBoth'> | null>(null);
 +  const diffEdgeStatusRef = useRef<Map<string, 'onlyInA' | 'onlyInB' | 'inBoth'> | null>(null);
 +  const churnScoresRef = useRef<Map<string, number> | null>(null);
++  // Tracks the ids of ghost nodes/edges currently injected into the
++  // graph so `removeGhostLayer` (and the idempotent re-apply path in
++  // `applyGhostLayer`) can drop them cleanly without scanning all nodes.
++  const ghostNodeIdsRef = useRef<Set<string>>(new Set());
++  const ghostEdgeIdsRef = useRef<Set<string>>(new Set());
    const layoutTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
    const animationFrameRef = useRef<number | null>(null);
    const [isLayoutRunning, setIsLayoutRunning] = useState(false);
-@@ -148,12 +191,18 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
+@@ -148,12 +221,18 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
      blastRadiusRef.current = options.blastRadiusNodeIds || new Set();
      animatedNodesRef.current = options.animatedNodes || new Map();
      visibleEdgeTypesRef.current = options.visibleEdgeTypes || null;
@@ -19166,10 +19210,41 @@ index 461de0f..5a38eae 100644
    ]);
  
    // Animation loop for node effects
-@@ -283,6 +332,29 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
+@@ -222,6 +301,13 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
+         curved: EdgeCurveProgram,
+       },
+ 
++      // Register the ghost node program. Ghost nodes added by
++      // `applyGhostLayer` carry `type: 'ghost'` so Sigma routes them
++      // through `GhostNodeProgram` instead of the default circle.
++      nodeProgramClasses: {
++        ghost: GhostNodeProgram,
++      },
++
+       // Custom hover renderer - dark background instead of white
+       defaultDrawNodeHover: (context, data, settings) => {
+         const label = data.label;
+@@ -283,6 +369,46 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
            return res;
          }
  
++        // Ghost layer: ghost nodes have their own time-decaying opacity
++        // and dashed outline that should NOT be perturbed by the
++        // diff / churn / blast-radius / selection logic below — they
++        // are an orthogonal overlay. We carry `kind: 'ghost'` plus the
++        // `ghostOutline` / `ghostOpacity` attributes set by
++        // `applyGhostLayer` and let `drawGhostNode` on the canvas
++        // overlay paint the dashed look on top.
++        const isGhost = (data as { kind?: string }).kind === 'ghost';
++        if (isGhost) {
++          // Preserve the visual state — Sigma will pick `type: 'ghost'`
++          // and route through `GhostNodeProgram`. We expose
++          // `ghostOpacity` as `alpha` so the program can read it.
++          (res as { color: string }).color = data.color;
++          (res as { size: number }).size = data.size ?? 6;
++          return res;
++        }
++
 +        // Diff mode: replace the base color so all subsequent dimming /
 +        // brightening operations work off the diff palette. We mutate `data`
 +        // (locally — `data` is a fresh copy here) so the existing logic
@@ -19196,7 +19271,25 @@ index 461de0f..5a38eae 100644
          const currentSelected = selectedNodeRef.current;
          const highlighted = highlightedRef.current;
          const blastRadius = blastRadiusRef.current;
-@@ -402,6 +474,23 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
+@@ -393,6 +519,17 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
+       edgeReducer: (edge, data) => {
+         const res = { ...data };
+ 
++        // Ghost-layer edges (connecting a ghost to its anchor real
++        // nodes) bypass the visibility / diff / selection logic — they
++        // are an overlay with their own dim/dashed styling encoded in
++        // the attributes set by `applyGhostLayer`.
++        const isGhostEdge = (data as { kind?: string }).kind === 'ghost-edge';
++        if (isGhostEdge) {
++          (res as { color: string }).color = data.color;
++          (res as { size: number }).size = data.size ?? 0.5;
++          return res;
++        }
++
+         // Check edge type visibility first
+         const visibleTypes = visibleEdgeTypesRef.current;
+         if (visibleTypes && data.relationType) {
+@@ -402,6 +539,23 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
            }
          }
  
@@ -19220,6 +19313,160 @@ index 461de0f..5a38eae 100644
          const currentSelected = selectedNodeRef.current;
          const highlighted = highlightedRef.current;
          const blastRadius = blastRadiusRef.current;
+@@ -629,6 +783,141 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
+     sigmaRef.current?.refresh();
+   }, []);
+ 
++  /**
++   * Drop every ghost node + edge previously injected by
++   * `applyGhostLayer`. Idempotent — safe to call when there is no
++   * ghost layer active.
++   */
++  const removeGhostLayer = useCallback(() => {
++    const graph = graphRef.current;
++    if (!graph) return;
++    for (const edgeKey of ghostEdgeIdsRef.current) {
++      if (graph.hasEdge(edgeKey)) {
++        try {
++          graph.dropEdge(edgeKey);
++        } catch {
++          /* ignore — edge may have been removed by a sub-graph swap */
++        }
++      }
++    }
++    for (const nodeId of ghostNodeIdsRef.current) {
++      if (graph.hasNode(nodeId)) {
++        try {
++          graph.dropNode(nodeId);
++        } catch {
++          /* ignore */
++        }
++      }
++    }
++    ghostEdgeIdsRef.current = new Set();
++    ghostNodeIdsRef.current = new Set();
++    sigmaRef.current?.refresh();
++  }, []);
++
++  /**
++   * Apply the predictive ghost overlay. Pure side-effect on the
++   * underlying graphology graph — Sigma picks up the new nodes via
++   * its next refresh.
++   *
++   * - `null` ghosts clears the layer.
++   * - Filters are applied before any layout / placement.
++   * - Each ghost gets its `opacity` + `outlineColor` from
++   *   `computeGhostVisualState` so the time-decay defined in
++   *   `ghost-layout.ts` (Update 1) actually reaches the renderer.
++   */
++  const applyGhostLayer = useCallback(
++    (ghosts: GhostRuntime[] | null, filters: GhostFilters, now: Date = new Date()) => {
++      removeGhostLayer();
++      const graph = graphRef.current;
++      if (!graph || !ghosts || ghosts.length === 0) {
++        return;
++      }
++
++      // Build GhostInput[] for the layout module.
++      const ghostInputs = ghosts
++        .map((g) => ({
++          id: g.id,
++          title: g.declared.title,
++          tier: g.declared.tier,
++          status: derivedStatus(g),
++          expectedLinks: g.declared.expectedLinks,
++          // Carried through for time-decay (consumed via the
++          // `ghosts.find` lookup below, not by computeGhostLayout).
++        }))
++        .filter((g) => passesFilter(g, filters));
++
++      if (ghostInputs.length === 0) return;
++
++      // Snapshot existing (non-ghost) node positions for the layout.
++      const existing: { id: string; x: number; y: number }[] = [];
++      graph.forEachNode((id, attrs) => {
++        if ((attrs as { kind?: string }).kind === 'ghost') return;
++        const x = (attrs as { x?: number }).x;
++        const y = (attrs as { y?: number }).y;
++        if (typeof x === 'number' && typeof y === 'number') {
++          existing.push({ id, x, y });
++        }
++      });
++
++      const { ghostNodes, ghostEdges } = computeGhostLayout(ghostInputs, existing);
++
++      // Insert ghost nodes.
++      const newNodeIds = new Set<string>();
++      const newEdgeIds = new Set<string>();
++      const ghostsById = new Map(ghosts.map((g) => [g.id, g]));
++
++      for (const n of ghostNodes) {
++        const fullGhost = ghostsById.get(n.ghostId);
++        const visualState = fullGhost
++          ? computeGhostVisualState(fullGhost, now)
++          : {
++              opacity: GHOST_FILL_ALPHA,
++              outlineColor: GHOST_DEFAULT_OUTLINE,
++              alertLevel: 'fresh' as const,
++            };
++        if (graph.hasNode(n.id)) continue; // defensive — should not happen
++        graph.addNode(n.id, {
++          x: n.x,
++          y: n.y,
++          label: n.title,
++          size: 6,
++          color: tierColor(n.tier),
++          type: 'ghost',
++          kind: 'ghost',
++          ghostId: n.ghostId,
++          ghostStatus: n.status,
++          ghostTier: n.tier,
++          ghostOpacity: visualState.opacity,
++          ghostOutline: visualState.outlineColor,
++          ghostAlertLevel: visualState.alertLevel,
++          zIndex: 5,
++        } as unknown as SigmaNodeAttributes);
++        newNodeIds.add(n.id);
++      }
++
++      // Insert ghost edges (anchor links). Use a deterministic key so
++      // `removeGhostLayer` can drop them by key.
++      for (const e of ghostEdges) {
++        const key = `ghost-edge:${e.source}->${e.target}`;
++        if (graph.hasEdge(key)) continue;
++        if (!graph.hasNode(e.source) || !graph.hasNode(e.target)) continue;
++        graph.addEdgeWithKey(key, e.source, e.target, {
++          // alpha-50% halo of the tier color
++          color: tierColor(e.tier) + '80',
++          size: 0.5,
++          type: 'line',
++          kind: 'ghost-edge',
++        } as unknown as SigmaEdgeAttributes);
++        newEdgeIds.add(key);
++      }
++
++      ghostNodeIdsRef.current = newNodeIds;
++      ghostEdgeIdsRef.current = newEdgeIds;
++      sigmaRef.current?.refresh();
++    },
++    [removeGhostLayer],
++  );
++
+   return {
+     containerRef,
+     sigmaRef,
+@@ -643,5 +932,11 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
+     selectedNode,
+     setSelectedNode,
+     refreshHighlights,
++    applyGhostLayer,
++    removeGhostLayer,
+   };
+ };
++
++// Re-export the canvas overlay helper so consumers that mount a custom
++// canvas (e.g. for hover decoration) can render the dashed look.
++export { drawGhostNode };
 diff --git a/gitnexus-web/src/index.css b/gitnexus-web/src/index.css
 index 6c660b0..937fd90 100644
 --- a/gitnexus-web/src/index.css
