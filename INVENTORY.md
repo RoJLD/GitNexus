@@ -142,6 +142,7 @@ Fichiers à la racine du repo, qui rendent le setup reproductible sur poste Wind
 | `POST /ghosts/sync` | Parse `<repo>/ROADMAP.md` via le builtin source + tous les ghost-sources enregistrés via `registerGhostSource()`, merge par id (builtin gagne), écrit `<repo>/roadmap.yml` (versionné) + `<repo>/.gitnexus/ghosts.json` (runtime latest). Réponse `{ synced: true, syncedAt, syncedCommit, ghosts: [...] }`. Idempotent — un second appel sans changement produit le même JSON. Tier 3.x foundation. |
 | `GET /ghosts` | Renvoie le `ghosts.json` latest (404 si jamais sync). Chaque ghost porte `{ id, declared, plannedAt, materializedAt, cancelledAt, links, source }`. |
 | `GET /ghosts/at` | Renvoie le `ghosts.json` historique d'un snapshot. Params: `?repo=&commit=<shortHash>` (key directory = `safeSnapshotKey(commit.shortHash)`). 404 si snapshot inconnu. Auto-écrit par chaque `createSnapshot` (4 entry points : `/snapshot`, `/snapshot/bulk`, `/snapshot/auto`, `/snapshot/from-pr`). |
+| `GET /ghost-audit` | Audit roadmap (Tier roadmap-predictive Audit view, 2026-05-27). Agrège 6 métriques sur la base du `ghosts.json` latest : `summary` (totals + cancellationRate), `leadTime` (médian/p25/p75/max + distribution buckets), `slippage` (early/onTime/late/noTarget vs `expectedBy`), `planChurn` (top churners cross-snapshot), `velocity` (rolling 28j), `expired` (Update 1, alertLevel). 404 si `/ghosts/sync` jamais lancé. Cache disque mtime-invalidé sur `ghosts.json`. MCP tool `gitnexus_ghost_audit` (19ème). |
 | `GET /listdir` | Folder browser server-side |
 | `GET /export` + `POST /import` | Bundle ou index-only, register-only mode |
 | `?format=csv` partout | Serializer partagé `docker-server-csv.mjs` |
@@ -175,6 +176,20 @@ Fichiers à la racine du repo, qui rendent le setup reproductible sur poste Wind
 - `scripts/sync-ghosts.mjs` — CLI wrapper qui POST `/ghosts/sync` avec un message utile (rappelle de committer `roadmap.yml`).
 - **Storage par repo** : `<repo>/roadmap.yml` (versionné), `<repo>/.gitnexus/ghosts.json` (runtime latest), `<snapshotDir>/ghosts.json` (state historique par snapshot, sealed au sha).
 - **Update 4 du spec (manifest path)** : v0 = `roadmap.yml` distinct ; v1 cible = section `roadmap:` dans `.gitnexus.json` quand Tier 2bis.4 sera stable. Migration future : `npm run gitnexus:migrate-config`.
+
+#### Roadmap-predictive Audit view (Tier roadmap-predictive Audit, 2026-05-27)
+- `upstream/docker-server-ghost-audit-core.mjs` — pure fns : `computeSummary`, `computeLeadTime` (p25/médian/p75/max + buckets), `computeSlippage` (early/onTime/late vs `expectedBy` ; `parseTargetDate` dupliqué ici plutôt que ré-importé du CORE — module self-contained par choix), `computePlanChurn` (cross-snapshot deltas), `computeVelocity` (rolling window 28j), `computeExpired` (Update 1, alertLevel green/yellow/red).
+- `upstream/docker-server-ghost-audit.mjs` — I/O wrapper + route handler `GET /ghost-audit`, cache disque mtime-invalidé (`isCacheValid` lit `mtime` de `ghosts.json` et compare au `computedAt` cached). 404 si `/ghosts/sync` jamais joué.
+- `upstream/gitnexus-web/src/components/AuditPanel.tsx` + sous-composants dans `upstream/gitnexus-web/src/components/audit/` :
+  - `AuditSummary.tsx` — cards totaux + expired counts (Update 1)
+  - `LeadTimeHistogram.tsx` — SVG histogram + percentile lines
+  - `SlippageBar.tsx` — stacked bar early/onTime/late/noTarget
+  - `VelocitySparkline.tsx` — SVG rolling 28j
+  - `PlanChurnList.tsx` — top N churners, callback `onSelectChurner` → highlight cross-component
+  - `GhostTable.tsx` — sortable table avec `highlightedId` synchro PlanChurnList
+- Wiring : `App.tsx` importe `AuditPanel`, ajoute un state local `auditPanelOpen`, render l'overlay top-right + bouton flottant bottom-right (data-testid `audit-panel-toggle`).
+- MCP : tool `gitnexus_ghost_audit` ajouté dans `mcp-server/server.mjs` (19ème).
+- **Update 2 deferred** : `placementAccuracy` (ghosts placés vs vrais ghosts shipping) requiert accès Leiden communities côté backend → reporté quand cette API existera.
 
 #### Dépendances ajoutées
 - `react-force-graph-3d`, `three` (pour le mode 3D) — déclarées dans `gitnexus-web/package.json`

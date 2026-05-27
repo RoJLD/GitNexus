@@ -36,6 +36,13 @@ Pré-requis local : Rancher Desktop running, **Node ≥ 22 LTS**. CI : `.github/
 | Ghost matching | `unit/ghosts-matching.test.mjs` | `matchExpectedLinks` suffix + glob |
 | Ghost lifecycle | `unit/ghosts-lifecycle.test.mjs` | `computeStatus` + `parseTargetDate` + expired |
 | Ghost registry | `unit/ghosts-registry.test.mjs` | `registerGhostSource` (Update 2 plugin registry) |
+| Ghost audit — summary | `unit/ghost-audit-summary.test.mjs` | `computeSummary` |
+| Ghost audit — slippage | `unit/ghost-audit-slippage.test.mjs` | `parseTargetDate` + `computeSlippage` |
+| Ghost audit — lead time | `unit/ghost-audit-lead-time.test.mjs` | `computeLeadTime` percentiles |
+| Ghost audit — churn | `unit/ghost-audit-churn.test.mjs` | `computePlanChurn` cross-snapshot |
+| Ghost audit — velocity | `unit/ghost-audit-velocity.test.mjs` | `computeVelocity` rolling window |
+| Ghost audit — expired | `unit/ghost-audit-expired.test.mjs` | `computeExpired` (Update 1) |
+| Ghost audit — cache | `unit/ghost-audit-cache.test.mjs` | `isCacheValid` |
 
 ### Components React (unit)
 | Test | Fichier | Couvre |
@@ -50,6 +57,13 @@ Pré-requis local : Rancher Desktop running, **Node ≥ 22 LTS**. CI : `.github/
 | Timeline | `unit/components/Timeline.test.tsx` | Slider + play advances |
 | SnapshotsPanel | `unit/components/SnapshotsPanel.test.tsx` | List + delete |
 | BulkSnapshotModal | `unit/components/BulkSnapshotModal.test.tsx` | Inputs + confirm |
+| Ghost audit — AuditPanel | `unit/components/audit/AuditPanel.test.tsx` | Container render + loading/error/success states |
+| Ghost audit — AuditSummary | `unit/components/audit/AuditSummary.test.tsx` | Summary cards + expired counts |
+| Ghost audit — GhostTable | `unit/components/audit/GhostTable.test.tsx` | Sortable table + highlightedId sync |
+| Ghost audit — LeadTimeHistogram | `unit/components/audit/LeadTimeHistogram.test.tsx` | SVG histogram + percentile lines |
+| Ghost audit — PlanChurnList | `unit/components/audit/PlanChurnList.test.tsx` | Top churners + onSelectChurner callback |
+| Ghost audit — SlippageBar | `unit/components/audit/SlippageBar.test.tsx` | Stacked bar early/onTime/late/noTarget |
+| Ghost audit — VelocitySparkline | `unit/components/audit/VelocitySparkline.test.tsx` | SVG sparkline rolling 28j |
 
 ### Stack health
 | Test | Fichier | Couvre |
@@ -78,6 +92,9 @@ Pré-requis local : Rancher Desktop running, **Node ≥ 22 LTS**. CI : `.github/
 | Ghosts read | `integration/endpoints/ghosts.test.mjs` | `GET /ghosts` 404/200 |
 | Ghosts at commit | `integration/endpoints/ghosts-at.test.mjs` | `GET /ghosts/at` historical snapshot |
 | Ghosts in snapshot | `integration/endpoints/ghosts-snapshot.test.mjs` | snapshot auto-sync writes ghosts.json per dir |
+| Ghost audit endpoint | `integration/endpoints/ghost-audit.test.mjs` | `GET /ghost-audit` shape |
+| Ghost audit cache | `integration/endpoints/ghost-audit-cache.test.mjs` | mtime invalidation flow |
+| MCP ghost_audit | `integration/mcp/ghost_audit.test.mjs` | stdio JSON-RPC tool call |
 
 ### UI flows e2e
 | Test | Fichier | Couvre |
@@ -87,6 +104,7 @@ Pré-requis local : Rancher Desktop running, **Node ≥ 22 LTS**. CI : `.github/
 | Panels render | `e2e/specs/03-analytics-panels.spec.ts` | 5 panels open, render content |
 | CSV download | `e2e/specs/04-csv-download.spec.ts` | Download icon → .csv file |
 | Diff view | `e2e/specs/05-diff-view.spec.ts` | Diff banner appears |
+| E2E audit panel | `e2e/specs/03-ghost-audit-panel.spec.ts` | panel renders + churner highlight |
 
 ## Tests désactivés / connus fragiles
 
