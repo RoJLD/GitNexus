@@ -49,6 +49,8 @@ Pré-requis local : Rancher Desktop running, **Node ≥ 22 LTS**. CI : `.github/
 | Ghost cleanup prompt | `unit/ghost-cleanup-prompt.test.mjs` | `buildCleanupPrompt` + `parseCleanupResponse` (pure fns) |
 | Connectors fuzzy match | `unit/connectors-fuzzy-match.test.mjs` | `tokenize` + `jaccardSimilarity` + `fuzzyMatchTicketToGhost` |
 | Connectors Plane | `unit/connectors-plane.test.mjs` | Plane connector — fetchOpenWorkItems / fetchClosedWorkItems (mocked fetch) |
+| Gantt layout | `unit/gantt-layout.test.mjs` | computeTimeWindow + dateScale + computeGanttRows |
+| Gantt layout — decay | `unit/gantt-layout-decay.test.mjs` | pickBarColor (Update 1) |
 
 ### Components React (unit)
 | Test | Fichier | Couvre |
@@ -73,6 +75,10 @@ Pré-requis local : Rancher Desktop running, **Node ≥ 22 LTS**. CI : `.github/
 | Augmented graph — GhostTooltip | `unit/components/GhostTooltip.test.tsx` | render + matched/unmatched + Open ROADMAP button |
 | Augmented graph — Filters | `unit/components/Filters.test.tsx` | master "Show ghosts" + per-Tier + cancelled toggles |
 | Ghost cleanup — CleanupModal | `unit/components/audit/CleanupModal.test.tsx` | closed / empty / populated list with LLM prompts |
+| GanttPanel | `unit/components/GanttPanel.test.tsx` | render + filter + swimlanes + sort + CSV |
+| GanttAxis | `unit/components/gantt/GanttAxis.test.tsx` | monthly ticks + today line |
+| GanttBar | `unit/components/gantt/GanttBar.test.tsx` | 4 kinds rendered |
+| GanttRow | `unit/components/gantt/GanttRow.test.tsx` | label + bars area + click |
 
 ### Stack health
 | Test | Fichier | Couvre |
@@ -117,6 +123,7 @@ Pré-requis local : Rancher Desktop running, **Node ≥ 22 LTS**. CI : `.github/
 | Diff view | `e2e/specs/05-diff-view.spec.ts` | Diff banner appears |
 | E2E audit panel | `e2e/specs/03-ghost-audit-panel.spec.ts` | panel renders + churner highlight |
 | Augmented graph | `e2e/specs/04-augmented-graph.spec.ts` | "Show ghosts" master toggle → per-Tier + cancelled sub-toggles visibles |
+| Gantt panel | `e2e/specs/05-gantt-panel.spec.ts` | toggle button + swimlanes |
 
 ## Tests désactivés / connus fragiles
 

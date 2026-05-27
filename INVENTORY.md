@@ -205,6 +205,14 @@ Pure frontend overlay — aucune route serveur, consomme `/ghosts?repo=` du CORE
 - Update 2 (Augmented Timeline — scrubber Timeline + ghosts par instant T) explicitement **out-of-scope** : la mécanique Timeline existe, la mécanique d'overlay ghosts existe, mais la fusion est une sub-spec dédiée à brainstormer si demandé.
 - Tests écrits (5 unit + 1 e2e) mais Vitest local bloqué par Node 21 → débloquera après upgrade Node 22 LTS (cf `docs/superpowers/decisions/2026-05-26-defer-node22-upgrade.md`).
 
+#### Roadmap-predictive Gantt opérationnel (Tier 3.x, 2026-05-27)
+- `upstream/gitnexus-web/src/lib/gantt-layout.ts` — pure fns : `computeTimeWindow` (now ± 30j fallback, pad 7j gauche, étend à now + 90j minimum), `dateScale` (linear), `computeGanttRows` (4 bar kinds), `pickBarColor` (Update 1 time-decaying via `computeGhostVisualState`).
+- `upstream/gitnexus-web/src/components/GanttPanel.tsx` — container, fetch via `ghosts-client`, applique `passesFilter`, toggle swimlanes, sort dropdown (plannedAsc/tierAsc/status), CSV export client-side via Blob.
+- `upstream/gitnexus-web/src/components/gantt/GanttAxis.tsx` — ticks mensuels + year labels + today line orange.
+- `upstream/gitnexus-web/src/components/gantt/GanttBar.tsx` — `<rect>` ou `<circle>` selon kind, `stroke-dasharray` pour dashed.
+- `upstream/gitnexus-web/src/components/gantt/GanttRow.tsx` — label tronqué + bars area, click propagation.
+- **Storage** : aucun — entièrement dérivé de `/ghosts` en mémoire.
+
 #### Roadmap-predictive Cleanup + Connectors (Tier 3.x, 2026-05-27)
 - `upstream/docker-server-ghost-cleanup-core.mjs` — `buildCleanupPrompt` + `parseCleanupResponse` (pure fns).
 - `upstream/docker-server-ghost-cleanup.mjs` — `POST /ghosts/cleanup-prompt` handler. Reuses `computeExpired` from Audit + `matchExpectedLinks` from CORE.
