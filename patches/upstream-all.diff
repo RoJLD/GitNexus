@@ -1,4 +1,4 @@
-diff --git a/Dockerfile.web b/Dockerfile.web
+﻿diff --git a/Dockerfile.web b/Dockerfile.web
 index b102a70..219e3b9 100644
 --- a/Dockerfile.web
 +++ b/Dockerfile.web
@@ -5074,10 +5074,10 @@ index 0000000..f05ff52
 +}
 diff --git a/docker-server-nodes-alive-between.mjs b/docker-server-nodes-alive-between.mjs
 new file mode 100644
-index 0000000..b461a12
+index 0000000..67c2bef
 --- /dev/null
 +++ b/docker-server-nodes-alive-between.mjs
-@@ -0,0 +1,153 @@
+@@ -0,0 +1,161 @@
 +/**
 + * Backend endpoint /nodes/alive-between?repo=&from=&to= for the Timeline
 + * Temporal Filter Phase 2 Item #1 (permissive mode).
@@ -5185,15 +5185,23 @@ index 0000000..b461a12
 +      .slice()
 +      .sort((a, b) => (a.commit?.date || '').localeCompare(b.commit?.date || ''));
 +
-+    const windowed = filterSnapshotsInWindow(snapshots, from, to);
++    // Resolve aliases : "oldest" → first snapshot's shortHash, "live"/"newest" → last
++    let resolvedFrom = from;
++    let resolvedTo = to;
++    if (snapshots.length > 0) {
++      if (from === 'oldest') resolvedFrom = snapshots[0].shortHash;
++      if (to === 'live' || to === 'newest') resolvedTo = snapshots[snapshots.length - 1].shortHash;
++    }
++
++    const windowed = filterSnapshotsInWindow(snapshots, resolvedFrom, resolvedTo);
 +    if (windowed.length === 0) {
 +      res.writeHead(400, { 'Content-Type': 'application/json' });
-+      res.end(JSON.stringify({ error: `invalid window : from=${from} to=${to} not in repo snapshots` }));
++      res.end(JSON.stringify({ error: `invalid window : from=${resolvedFrom} to=${resolvedTo} not in repo snapshots (original: from=${from} to=${to})` }));
 +      return true;
 +    }
 +
 +    // Check cache
-+    const cacheKey = `${from}__${to}__${windowed.length}`;
++    const cacheKey = `${resolvedFrom}__${resolvedTo}__${windowed.length}`;
 +    const cache = await readCache(repo.path || repo.repoPath || '/tmp');
 +    if (cache[cacheKey]) {
 +      res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -5213,8 +5221,8 @@ index 0000000..b461a12
 +    const result = {
 +      nodeIds: [...nodeIdsSet].sort(),
 +      snapshotCount: windowed.length,
-+      fromSnapshot: from,
-+      toSnapshot: to,
++      fromSnapshot: resolvedFrom,
++      toSnapshot: resolvedTo,
 +      computedAt: new Date().toISOString(),
 +    };
 +
@@ -21842,7 +21850,7 @@ index 49862a9..5c552dd 100644
   * Create a Graph RAG agent
   */
 diff --git a/gitnexus-web/src/hooks/useAppState.tsx b/gitnexus-web/src/hooks/useAppState.tsx
-index 25c5776..ac75680 100644
+index 25c5776..c8df445 100644
 --- a/gitnexus-web/src/hooks/useAppState.tsx
 +++ b/gitnexus-web/src/hooks/useAppState.tsx
 @@ -8,7 +8,12 @@ import {
@@ -21908,7 +21916,7 @@ index 25c5776..ac75680 100644
  
    // Graph data
    graph: KnowledgeGraph | null;
-@@ -192,6 +219,448 @@ interface AppState {
+@@ -192,6 +219,456 @@ interface AppState {
    clearAICodeReferences: () => void;
    clearCodeReferences: () => void;
    codeReferenceFocus: CodeReferenceFocus | null;
@@ -22050,6 +22058,14 @@ index 25c5776..ac75680 100644
 +  preloadAllSnapshots: () => Promise<void>;
 +  cancelPreload: () => void;
 +  clearSnapshotCache: () => void;
++
++  // Layout cache (lib/layout-cache.ts). recomputeLayout wipes the
++  // persisted FA2 positions for `cacheKey` and re-runs the layout —
++  // bound to the Header "Recompute layout" button. registerRecompute
++  // -Layout is the bridge used by GraphCanvas to hook the actual
++  // useSigma.recomputeLayout into the global action.
++  recomputeLayout: (cacheKey?: string) => void;
++  registerRecomputeLayout: (fn: ((cacheKey?: string) => void) | null) => void;
 +
 +  // Commit footprint overlay (Tier 2bis.2 follow-up). When set, the
 +  // file paths of the active commit are highlighted on the currently
@@ -22357,7 +22373,7 @@ index 25c5776..ac75680 100644
  }
  
  const AppStateContext = createContext<AppState | null>(null);
-@@ -205,6 +674,10 @@ export const AppStateProvider = ({ children }: { children: ReactNode }) => (
+@@ -205,6 +682,10 @@ export const AppStateProvider = ({ children }: { children: ReactNode }) => (
  const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
    // View state
    const [viewMode, setViewMode] = useState<ViewMode>('onboarding');
@@ -22368,7 +22384,7 @@ index 25c5776..ac75680 100644
  
    const {
      graph,
-@@ -343,6 +816,165 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
+@@ -343,6 +824,165 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
    const [isCodePanelOpen, setCodePanelOpen] = useState(false);
    const [codeReferenceFocus, setCodeReferenceFocus] = useState<CodeReferenceFocus | null>(null);
  
@@ -22534,7 +22550,7 @@ index 25c5776..ac75680 100644
    // Map of normalized file path → node ID for graph-based lookups
    const fileNodeByPath = useMemo(() => {
      if (!graph) return new Map<string, string>();
-@@ -1029,6 +1661,66 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
+@@ -1029,6 +1669,66 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
      async (repoName: string) => {
        if (!serverBaseUrl) return;
  
@@ -22601,7 +22617,7 @@ index 25c5776..ac75680 100644
        setProgress({
          phase: 'extracting',
          percent: 0,
-@@ -1105,6 +1797,13 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
+@@ -1105,6 +1805,13 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
          for (const node of result.nodes) newGraph.addNode(node);
          for (const rel of result.relationships) newGraph.addRelationship(rel);
          setGraph(newGraph);
@@ -22615,7 +22631,7 @@ index 25c5776..ac75680 100644
        } catch (err: unknown) {
          console.error('Repo switch failed:', err);
          setProgress({
-@@ -1207,9 +1906,1089 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
+@@ -1207,9 +1914,1089 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
      setCodeReferenceFocus(null);
    }, []);
  
@@ -23705,7 +23721,7 @@ index 25c5776..ac75680 100644
      graph,
      setGraph,
      selectedNode,
-@@ -1293,6 +3072,153 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
+@@ -1293,6 +3080,153 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
      clearAICodeReferences,
      clearCodeReferences,
      codeReferenceFocus,
