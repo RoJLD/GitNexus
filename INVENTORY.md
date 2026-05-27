@@ -174,6 +174,7 @@ Fichiers à la racine du repo, qui rendent le setup reproductible sur poste Wind
 - `DropZone.LoadingCard` + `RepoAnalyzer` (loading bars + path picker + folder browser)
 - Edits sur composants existants : `App.tsx`, `hooks/useAppState.tsx`, `Header.tsx`, `GraphCanvas.tsx`, `DropZone.tsx`
 - `services/backend-client.ts` — `cache: 'no-store'` sur `fetchRepos`
+- **Layout persistence (2026-05-27)** — `upstream/gitnexus-web/src/lib/layout-cache.ts` persiste positions FA2 par snapshot dans localStorage (`gitnexus:layout:v1:<repoName>`, version-gated). `useSigma.setGraph(graph, { cacheKey })` restore positions si hit ≥80%, save sur convergence FA2. `useSigma.recomputeLayout(cacheKey)` wipe + re-run (bouton Header "Recompute layout", icône Network). `upstream/gitnexus-web/src/lib/layout-worker.ts` + `layout-worker-pool.ts` — Web Worker FA2 (pool 2) lancé pendant Preload all snapshots → premier Play roadmap = instant. Bridge `useAppState.recomputeLayout` ↔ `useSigma.recomputeLayout` via `registerRecomputeLayout` ref (GraphCanvas register on mount).
 
 #### Roadmap-predictive CORE (Tier 3.x foundation, 2026-05-26)
 - `upstream/docker-server-ghosts-core.mjs` — pure fns : `parseRoadmap` (tables + Tier sections + `warnMissingExpectedBy`), `renderRoadmapYml` (sérializer déterministe, expectedBy émis), `matchExpectedLinks` (suffix + glob), `computeStatus` (lifecycle : declared wins, auto-match upgrade, `expired` après `expectedBy + 30d`), `parseTargetDate` (ISO / `YYYY-MM` / `YYYY-QX`).

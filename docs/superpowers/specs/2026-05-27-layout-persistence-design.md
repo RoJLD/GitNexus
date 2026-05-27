@@ -200,3 +200,19 @@ In `Header.tsx`, near the graph controls (zoom, etc.) :
 ## 7. Suite
 
 Plan d'implémentation via `superpowers:writing-plans`. Spec rédigé hors-cadre IDEAS-PARKING (bug-fix UX).
+
+---
+
+## Update 2026-05-27 — Shipped
+
+Layout persistence + worker livré. Notes :
+
+- `lib/layout-cache.ts` (localStorage `gitnexus:layout:v1:<cacheKey>` + version field + `applyLayoutToGraph` coverage threshold 80%). 5 pure fns exportées : `saveLayoutPositions`, `saveLayoutFromGraph`, `loadLayout`, `applyLayoutToGraph`, `clearLayout`, `clearAllLayouts`.
+- `useSigma.setGraph(g, { cacheKey })` restore positions si hit AND ≥80% coverage, else fallback to FA2 (qui sauvegarde sur convergence dans le `setTimeout` callback existant). `useSigma.recomputeLayout(cacheKey)` exposé pour le bouton manuel.
+- `lib/layout-worker.ts` Vite Worker (Graph.from + FA2 + noverlap) + `lib/layout-worker-pool.ts` (pool size 2) spawned during `preloadAllSnapshots`. Pool terminé sur switch de base repo (`switchRepo`) et sur `clearSnapshotCache`.
+- Header `Recompute layout` button (icône Network) → `useAppState.recomputeLayout` → bridge ref `recomputeLayoutRef` ↔ `useSigma.recomputeLayout` (registered par GraphCanvas via `registerRecomputeLayout` useEffect).
+- `GraphCanvas.tsx` useEffect : `setSigmaGraph(graph, { cacheKey: projectName })` — `projectName` contient déjà `@<sha>` pour les snapshots (cache key naturel).
+- 1 test unitaire `tests/unit/layout-cache.test.mjs` (5 cas : round-trip, version guard, apply coverage, clear single, clear all). Tests worker différés (jsdom + worker mock).
+- Open question 1 du spec (localStorage cap, ~5 MB) : LRU eviction non implémenté MVP — sera ajouté si user observe quota errors (le `try/catch` autour de `setItem` empêche déjà le crash).
+
+Déviation mineure vs plan : Task 4 modifie `GraphCanvas.tsx` (point d'appel réel de `useSigma.setGraph`) plutôt que `useAppState.switchRepo` (qui n'invoque que le React state setter `setGraph: KnowledgeGraph → void`). Le cacheKey transite via `projectName` lu sur appState, ce qui couvre les deux call-sites de switchRepo (fast path cache + slow path fetch) automatiquement.
