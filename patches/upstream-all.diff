@@ -13544,7 +13544,7 @@ index 0000000..c564e39
 +  );
 +};
 diff --git a/gitnexus-web/src/components/FileTreePanel.tsx b/gitnexus-web/src/components/FileTreePanel.tsx
-index 98c20c6..42a62a7 100644
+index 98c20c6..50a414e 100644
 --- a/gitnexus-web/src/components/FileTreePanel.tsx
 +++ b/gitnexus-web/src/components/FileTreePanel.tsx
 @@ -21,6 +21,7 @@ import {
@@ -13555,7 +13555,7 @@ index 98c20c6..42a62a7 100644
  
  // Tree node structure
  interface TreeNode {
-@@ -222,6 +223,14 @@ export const FileTreePanel = ({ onFocusNode }: FileTreePanelProps) => {
+@@ -222,6 +223,16 @@ export const FileTreePanel = ({ onFocusNode }: FileTreePanelProps) => {
      openCodePanel,
      depthFilter,
      setDepthFilter,
@@ -13567,10 +13567,12 @@ index 98c20c6..42a62a7 100644
 +    setIncludeAutoClusters,
 +    clusterSourceFilter,
 +    setClusterSourceFilter,
++    lockGhostsToHead,
++    setLockGhostsToHead,
    } = useAppState();
  
    const [isCollapsed, setIsCollapsed] = useState(false);
-@@ -521,6 +530,18 @@ export const FileTreePanel = ({ onFocusNode }: FileTreePanelProps) => {
+@@ -521,6 +532,20 @@ export const FileTreePanel = ({ onFocusNode }: FileTreePanelProps) => {
              )}
            </div>
  
@@ -13584,6 +13586,8 @@ index 98c20c6..42a62a7 100644
 +            setIncludeAutoClusters={setIncludeAutoClusters}
 +            clusterSourceFilter={clusterSourceFilter}
 +            setClusterSourceFilter={setClusterSourceFilter}
++            lockGhostsToHead={lockGhostsToHead}
++            setLockGhostsToHead={setLockGhostsToHead}
 +          />
 +
            {/* Legend */}
@@ -14058,10 +14062,10 @@ index 0000000..614d86c
 +}
 diff --git a/gitnexus-web/src/components/GhostFiltersSection.tsx b/gitnexus-web/src/components/GhostFiltersSection.tsx
 new file mode 100644
-index 0000000..2f269c3
+index 0000000..303835f
 --- /dev/null
 +++ b/gitnexus-web/src/components/GhostFiltersSection.tsx
-@@ -0,0 +1,166 @@
+@@ -0,0 +1,194 @@
 +/**
 + * GhostFiltersSection — the "Roadmap predictive" filter block embedded
 + * in the FileTreePanel's Filters tab. Lives as its own component so
@@ -14099,6 +14103,12 @@ index 0000000..2f269c3
 +  setIncludeAutoClusters?: (next: boolean) => void;
 +  clusterSourceFilter?: ClusterSourceFilter;
 +  setClusterSourceFilter?: (next: ClusterSourceFilter) => void;
++  /** Augmented Timeline (Tier 3.x). When set, renders the "Lock ghosts
++   *  to today's view" sub-toggle below the per-Tier filters. Hidden
++   *  whenever the master "Show ghosts" toggle is off — locking
++   *  something invisible makes no sense. */
++  lockGhostsToHead?: boolean;
++  setLockGhostsToHead?: (next: boolean) => void;
 +};
 +
 +const TIERS = ['1', '2', '3'] as const;
@@ -14113,7 +14123,10 @@ index 0000000..2f269c3
 +  setIncludeAutoClusters,
 +  clusterSourceFilter,
 +  setClusterSourceFilter,
++  lockGhostsToHead,
++  setLockGhostsToHead,
 +}: Props) {
++  const lockToggleEnabled = typeof setLockGhostsToHead === 'function';
 +  // Sub-block is rendered when the parent wires the cluster props
 +  // through — otherwise we degrade gracefully (e.g. early callers that
 +  // only pre-date Task 14).
@@ -14168,6 +14181,25 @@ index 0000000..2f269c3
 +            />
 +            Show cancelled ghosts
 +          </label>
++
++          {/* Augmented Timeline — lock ghost layer to today's view.
++              When ON, the predictive layer ignores the cursor and
++              renders the live ghost set even when the user scrubs
++              into the past. Off by default; auto-detect takes over. */}
++          {lockToggleEnabled && (
++            <label
++              className="mt-2 flex items-center gap-2 text-xs text-text-secondary"
++              data-testid="lock-ghosts-to-head-label"
++            >
++              <input
++                type="checkbox"
++                checked={!!lockGhostsToHead}
++                onChange={(e) => setLockGhostsToHead?.(e.target.checked)}
++                data-testid="toggle-lock-ghosts-to-head"
++              />
++              Lock ghosts to today's view
++            </label>
++          )}
 +        </div>
 +      )}
 +
@@ -21494,7 +21526,7 @@ index 49862a9..5c552dd 100644
   * Create a Graph RAG agent
   */
 diff --git a/gitnexus-web/src/hooks/useAppState.tsx b/gitnexus-web/src/hooks/useAppState.tsx
-index 25c5776..02e7650 100644
+index 25c5776..cee70a2 100644
 --- a/gitnexus-web/src/hooks/useAppState.tsx
 +++ b/gitnexus-web/src/hooks/useAppState.tsx
 @@ -8,7 +8,12 @@ import {
@@ -21553,7 +21585,7 @@ index 25c5776..02e7650 100644
  
    // Graph data
    graph: KnowledgeGraph | null;
-@@ -192,6 +212,427 @@ interface AppState {
+@@ -192,6 +212,439 @@ interface AppState {
    clearAICodeReferences: () => void;
    clearCodeReferences: () => void;
    codeReferenceFocus: CodeReferenceFocus | null;
@@ -21751,6 +21783,18 @@ index 25c5776..02e7650 100644
 +  setIncludeAutoClusters: (next: boolean) => void;
 +  clusterSourceFilter: 'both' | 'declared' | 'auto';
 +  setClusterSourceFilter: (next: 'both' | 'declared' | 'auto') => void;
++
++  // Augmented Timeline (Roadmap-predictive Tier 3.x, 2026-05-27).
++  // `lockGhostsToHead` pins the ghost layer to the live "today" set
++  // even when the cursor is in the past (otherwise the auto-detect in
++  // `resolveAugmentedTimelineMode` switches to time-aware once the
++  // cursor drifts > 60s from HEAD). `animationActive` is set by the
++  // "Animate roadmap" button so GraphCanvas knows to trigger cross-
++  // fade transitions on materializing / cancelling ghosts.
++  lockGhostsToHead: boolean;
++  setLockGhostsToHead: (v: boolean) => void;
++  animationActive: boolean;
++  setAnimationActive: (v: boolean) => void;
 +
 +  // What-if simulator (ROADMAP Tier 2.3). Holds a user-built list of
 +  // structural mutations and, on demand, computes the predicted graph
@@ -21981,7 +22025,7 @@ index 25c5776..02e7650 100644
  }
  
  const AppStateContext = createContext<AppState | null>(null);
-@@ -205,6 +646,10 @@ export const AppStateProvider = ({ children }: { children: ReactNode }) => (
+@@ -205,6 +658,10 @@ export const AppStateProvider = ({ children }: { children: ReactNode }) => (
  const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
    // View state
    const [viewMode, setViewMode] = useState<ViewMode>('onboarding');
@@ -21992,7 +22036,7 @@ index 25c5776..02e7650 100644
  
    const {
      graph,
-@@ -343,6 +788,142 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
+@@ -343,6 +800,146 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
    const [isCodePanelOpen, setCodePanelOpen] = useState(false);
    const [codeReferenceFocus, setCodeReferenceFocus] = useState<CodeReferenceFocus | null>(null);
  
@@ -22119,6 +22163,10 @@ index 25c5776..02e7650 100644
 +    'both' | 'declared' | 'auto'
 +  >('both');
 +
++  // Augmented Timeline state (Tier 3.x, 2026-05-27).
++  const [lockGhostsToHead, setLockGhostsToHead] = useState<boolean>(false);
++  const [animationActive, setAnimationActive] = useState<boolean>(false);
++
 +  // What-if simulator state.
 +  const [whatIfPanelOpen, setWhatIfPanelOpen] = useState(false);
 +  const [whatIfActive, setWhatIfActive] = useState(false);
@@ -22135,7 +22183,7 @@ index 25c5776..02e7650 100644
    // Map of normalized file path → node ID for graph-based lookups
    const fileNodeByPath = useMemo(() => {
      if (!graph) return new Map<string, string>();
-@@ -1029,6 +1610,62 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
+@@ -1029,6 +1626,62 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
      async (repoName: string) => {
        if (!serverBaseUrl) return;
  
@@ -22198,7 +22246,7 @@ index 25c5776..02e7650 100644
        setProgress({
          phase: 'extracting',
          percent: 0,
-@@ -1105,6 +1742,13 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
+@@ -1105,6 +1758,13 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
          for (const node of result.nodes) newGraph.addNode(node);
          for (const rel of result.relationships) newGraph.addRelationship(rel);
          setGraph(newGraph);
@@ -22212,7 +22260,7 @@ index 25c5776..02e7650 100644
        } catch (err: unknown) {
          console.error('Repo switch failed:', err);
          setProgress({
-@@ -1207,9 +1851,981 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
+@@ -1207,9 +1867,981 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
      setCodeReferenceFocus(null);
    }, []);
  
@@ -23194,7 +23242,7 @@ index 25c5776..02e7650 100644
      graph,
      setGraph,
      selectedNode,
-@@ -1293,6 +2909,142 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
+@@ -1293,6 +2925,147 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
      clearAICodeReferences,
      clearCodeReferences,
      codeReferenceFocus,
@@ -23334,6 +23382,11 @@ index 25c5776..02e7650 100644
 +    setIncludeAutoClusters,
 +    clusterSourceFilter,
 +    setClusterSourceFilter,
++    // Augmented Timeline (Tier 3.x, 2026-05-27)
++    lockGhostsToHead,
++    setLockGhostsToHead,
++    animationActive,
++    setAnimationActive,
    };
  
    return <AppStateContext.Provider value={value}>{children}</AppStateContext.Provider>;

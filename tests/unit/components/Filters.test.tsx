@@ -178,4 +178,32 @@ describe('GhostFiltersSection', () => {
     fireEvent.click(screen.getByTestId('cluster-source-declared'));
     expect(setClusterSourceFilter).toHaveBeenCalledWith('declared');
   });
+
+  // ── Augmented Timeline (Tier 3.x, 2026-05-27) — Lock toggle ─────────
+
+  it('Lock toggle is hidden when showGhosts is OFF', () => {
+    render(
+      <GhostFiltersSection
+        ghostFilters={DEFAULT_GHOST_FILTERS}
+        setGhostFilters={vi.fn()}
+        lockGhostsToHead={false}
+        setLockGhostsToHead={vi.fn()}
+      />,
+    );
+    expect(screen.queryByTestId('toggle-lock-ghosts-to-head')).not.toBeInTheDocument();
+  });
+
+  it('Lock toggle click calls setLockGhostsToHead(true) when showGhosts is ON', () => {
+    const setLockGhostsToHead = vi.fn();
+    render(
+      <GhostFiltersSection
+        ghostFilters={{ ...DEFAULT_GHOST_FILTERS, showGhosts: true }}
+        setGhostFilters={vi.fn()}
+        lockGhostsToHead={false}
+        setLockGhostsToHead={setLockGhostsToHead}
+      />,
+    );
+    fireEvent.click(screen.getByTestId('toggle-lock-ghosts-to-head'));
+    expect(setLockGhostsToHead).toHaveBeenCalledWith(true);
+  });
 });
