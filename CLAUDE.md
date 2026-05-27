@@ -152,7 +152,7 @@ When you add a backend endpoint or a new docker-server module:
 
 ```bash
 # Curl every backend module so we catch regressions in routing wiring.
-for ep in snapshots churn coupling growth lifespan entropy ownership semantic-labels; do
+for ep in snapshots churn coupling growth lifespan entropy ownership semantic-labels ghost-audit; do
   curl -s -o /dev/null -w "$ep: HTTP %{http_code}\n" \
     "http://localhost:4173/$ep?repo=hmm_studio"
 done
@@ -162,6 +162,9 @@ curl -s -o /dev/null -w "ghosts/sync: HTTP %{http_code}\n" \
   -X POST "http://localhost:4173/ghosts/sync?repo=hmm_studio"
 curl -s -o /dev/null -w "ghosts: HTTP %{http_code}\n" \
   "http://localhost:4173/ghosts?repo=hmm_studio"
+# /ghost-audit requires a prior /ghosts/sync — its 200 path returns cached audit metrics.
+curl -s -o /dev/null -w "ghost-audit: HTTP %{http_code}\n" \
+  "http://localhost:4173/ghost-audit?repo=hmm_studio"
 # Cross-repo endpoints — need ≥2 indexed repos.
 curl -s -o /dev/null -w "coupling/cross: HTTP %{http_code}\n" \
   "http://localhost:4173/coupling/cross?repos=hmm_studio,Experiment.Crypto.2026S1.RobinDenis"
