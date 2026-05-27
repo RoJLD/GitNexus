@@ -170,11 +170,19 @@ export function snapToNearestSnapshot(
 [Play] [Pause] [Zoom to window] [Compare A↔B]
 ```
 
-- **Curseur A** : triangle bleu (▼ pointe vers le bas), positionné au-dessus de la rangée de dots
-- **Curseur B** : triangle orange, idem côté droit
+- **Curseur A** : triangle bleu (▼ pointe vers le bas), positionné au-dessus de la rangée de dots. Bleu = "passé / borne gauche" (chronologie cool→warm).
+- **Curseur B** : triangle orange, idem côté droit. Orange = "présent / borne droite". Couple WCAG AA compliant, sans clash avec le rouge/vert du diff visuel.
 - **Drag** : mousedown sur le triangle, mousemove pour faire glisser, mouseup pour snap au snapshot le plus proche
-- **Mini-map** : barre fine SVG au-dessus, snapshots à pleine résolution chronologique, fenêtre zoomée en highlight (overlay semi-transparent)
+- **Mini-map** : barre fine SVG au-dessus, snapshots à pleine résolution chronologique, fenêtre zoomée en highlight (overlay semi-transparent). **Visible uniquement quand `zoomWindow !== null`** (en vue complète, la timeline elle-même est la mini-map — pas besoin de la dupliquer). Collapsible via chevron, état persisté en localStorage (`timelineMiniMapCollapsed`).
+- **Indicateur de durée** : petit label texte sous la timeline (toujours visible quand les 2 curseurs sont actifs) :
+  `2026-01-15 → 2026-03-22 · Δ 67 days · 14 snapshots`
+  Format adaptatif : si < 24h on affiche les heures, si > 1 an on omet les jours. Aide à juger la fenêtre d'un coup d'œil.
 - **Boutons** : à côté des contrôles play/pause existants. "Zoom to window" devient "Zoom out" quand zoom actif. "Compare A↔B" devient "Exit compare" quand mode diff actif.
+- **Raccourcis clavier** :
+  - `Z` : toggle Zoom to window / Zoom out
+  - `Shift+D` : toggle Compare A↔B / Exit compare
+  - `Cmd+D` reste réservé au browser (bookmark), évité.
+  - Tooltip sur les boutons mentionne le raccourci ("Compare A↔B (Shift+D)").
 
 ### 4.3 Edge cases
 
@@ -269,11 +277,15 @@ Ces extensions ne demandent **pas** de refacto rétrograde de la Phase 1 si la s
 
 ---
 
-## 10. Open questions for review
+## 10. UX decisions résolues (2026-05-27)
 
-Aucune — toutes les décisions cadres ont été validées en brainstorm. Si quelque chose mérite challenge :
-- Positionnement des couleurs des curseurs (bleu/orange) — UX preference
-- Faut-il un raccourci clavier pour "Compare A↔B" (e.g., `Shift+D`) ?
-- Faut-il afficher la durée de la fenêtre [A, B] sous la timeline ("2 weeks, 14 snapshots") ?
+Les 3 questions UX laissées ouvertes lors de la rédaction initiale ont été tranchées par l'auteur :
 
-Ces 3 questions peuvent être tranchées au moment de l'implem ou différées à v1.1.
+| Question | Décision | Rationale |
+|---|---|---|
+| Couleurs des curseurs | Curseur A = bleu, Curseur B = orange | Couple WCAG AA contrast-compliant. Sémantique chronologique standard (cool → warm = past → present). Ne clash pas avec le rouge/vert du diff visuel quand `graphMode='diff'` est actif. |
+| Raccourcis clavier | `Z` → toggle Zoom ; `Shift+D` → toggle Compare A↔B | Power users veulent ces raccourcis pour navigation rapide. `Cmd+D` est réservé browser (bookmarks) donc `Shift+D` choisi. Tooltips sur les boutons mentionnent le raccourci. |
+| Indicateur de durée | Oui, visible en permanence quand 2 curseurs actifs | Feedback immédiat sur la fenêtre. Format : `2026-01-15 → 2026-03-22 · Δ 67 days · 14 snapshots` avec adaptation (heures si <24h, omission jours si >1 an). |
+| Mini-map default | Visible uniquement quand `zoomWindow !== null` | En vue complète la timeline EST la mini-map. Collapsible via chevron, état persisté en localStorage pour les power users qui préfèrent + d'espace vertical. |
+
+Aucune autre question ouverte.
