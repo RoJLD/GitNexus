@@ -12580,6 +12580,191 @@ index 98c20c6..162ab80 100644
            {/* Legend */}
            <div className="mt-6 border-t border-border-subtle pt-4">
              <h3 className="mb-3 text-xs font-medium tracking-wide text-text-secondary uppercase">
+diff --git a/gitnexus-web/src/components/GanttPanel.tsx b/gitnexus-web/src/components/GanttPanel.tsx
+new file mode 100644
+index 0000000..29f0d2a
+--- /dev/null
++++ b/gitnexus-web/src/components/GanttPanel.tsx
+@@ -0,0 +1,179 @@
++/**
++ * GanttPanel — fetch /ghosts, compute Gantt layout, render SVG + CSV export.
++ *
++ * Container component. Wraps :
++ *   - data fetch via ghosts-client.fetchGhosts(repo) (30s cache)
++ *   - layout via computeTimeWindow + computeGanttRows + dateScale
++ *   - render via GanttAxis + GanttRow (one <g> per row)
++ *   - CSV export button (download "ghosts-{repo}.csv")
++ *
++ * See docs/superpowers/specs/2026-05-26-roadmap-predictive-gantt-design.md
++ */
++
++import { useEffect, useMemo, useState } from 'react';
++import {
++  computeTimeWindow,
++  computeGanttRows,
++  dateScale,
++  type GanttRow as GanttRowData,
++  type GhostInput,
++} from '../lib/gantt-layout';
++import { fetchGhosts, type GhostRuntime } from '../services/ghosts-client';
++import GanttAxis from './gantt/GanttAxis';
++import GanttRow from './gantt/GanttRow';
++
++type Props = {
++  repo: string;
++  onGhostSelect?: (id: string) => void;
++};
++
++const LABEL_WIDTH = 200;
++const ROW_HEIGHT = 24;
++const AXIS_HEIGHT = 30;
++const BAR_AREA_WIDTH = 900;
++
++function ghostsToInputs(ghosts: GhostRuntime[]): GhostInput[] {
++  return ghosts.map((g) => ({
++    id: g.id,
++    plannedAt: g.plannedAt ? { date: g.plannedAt.date } : null,
++    materializedAt: g.materializedAt ? { date: g.materializedAt.date } : null,
++    cancelledAt: g.cancelledAt ? { date: g.cancelledAt.date } : null,
++    declared: {
++      plannedFor: (g.declared as { plannedFor?: string | null })?.plannedFor ?? null,
++      tier: g.declared?.tier ?? null,
++      title: g.declared?.title,
++      expectedBy: g.declared?.expectedBy ?? null,
++    },
++  }));
++}
++
++function rowsToCsv(rows: GanttRowData[]): string {
++  const header = 'ghostId,title,tier,status,bar_kind,bar_start,bar_end';
++  const lines: string[] = [header];
++  for (const r of rows) {
++    for (const b of r.bars) {
++      const safe = (s: string) => `"${s.replace(/"/g, '""')}"`;
++      lines.push(
++        [
++          safe(r.ghostId),
++          safe(r.title),
++          safe(r.tier ?? ''),
++          safe(r.status),
++          safe(b.kind),
++          safe(b.startDate ?? ''),
++          safe(b.endDate ?? ''),
++        ].join(','),
++      );
++    }
++  }
++  return lines.join('\n');
++}
++
++function triggerCsvDownload(csv: string, filename: string) {
++  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
++  const url = URL.createObjectURL(blob);
++  const a = document.createElement('a');
++  a.href = url;
++  a.download = filename;
++  document.body.appendChild(a);
++  a.click();
++  document.body.removeChild(a);
++  URL.revokeObjectURL(url);
++}
++
++export default function GanttPanel({ repo, onGhostSelect }: Props) {
++  const [ghosts, setGhosts] = useState<GhostRuntime[] | null>(null);
++  const [error, setError] = useState<string | null>(null);
++
++  useEffect(() => {
++    let cancelled = false;
++    setError(null);
++    setGhosts(null);
++    fetchGhosts(repo)
++      .then((data) => {
++        if (cancelled) return;
++        if (data === null) {
++          setError('not-synced');
++          return;
++        }
++        setGhosts(data.ghosts ?? []);
++      })
++      .catch((err: Error) => {
++        if (!cancelled) setError(err.message);
++      });
++    return () => {
++      cancelled = true;
++    };
++  }, [repo]);
++
++  const inputs = useMemo<GhostInput[]>(
++    () => (ghosts ? ghostsToInputs(ghosts) : []),
++    [ghosts],
++  );
++
++  if (error === 'not-synced') {
++    return <div className="gantt-panel">Roadmap not synced. Run sync first.</div>;
++  }
++  if (error) {
++    return <div className="gantt-panel">Error: {error}</div>;
++  }
++  if (!ghosts) {
++    return <div className="gantt-panel">Loading gantt…</div>;
++  }
++  if (inputs.length === 0) {
++    return <div className="gantt-panel">No ghosts found.</div>;
++  }
++
++  const now = new Date();
++  const timeWindow = computeTimeWindow(inputs, { now });
++  const rows = computeGanttRows(inputs, { now });
++  const scale = dateScale(timeWindow, BAR_AREA_WIDTH);
++
++  if (rows.length === 0) {
++    return <div className="gantt-panel">No ghosts found.</div>;
++  }
++
++  const onExportCsv = () => {
++    const csv = rowsToCsv(rows);
++    triggerCsvDownload(csv, `ghosts-${repo}.csv`);
++  };
++
++  return (
++    <div className="gantt-panel" data-testid="gantt-panel">
++      <header style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
++        <h3 style={{ margin: 0 }}>Gantt roadmap</h3>
++        <button
++          type="button"
++          onClick={onExportCsv}
++          data-testid="gantt-export-csv"
++        >
++          Export CSV
++        </button>
++      </header>
++      <svg
++        width={LABEL_WIDTH + BAR_AREA_WIDTH}
++        height={AXIS_HEIGHT + rows.length * ROW_HEIGHT}
++      >
++        <g transform={`translate(${LABEL_WIDTH}, 0)`}>
++          <GanttAxis
++            window={timeWindow}
++            width={BAR_AREA_WIDTH}
++            height={AXIS_HEIGHT}
++            now={now}
++          />
++        </g>
++        {rows.map((row, i) => (
++          <GanttRow
++            key={row.ghostId}
++            row={row}
++            scale={scale}
++            y={AXIS_HEIGHT + i * ROW_HEIGHT}
++            height={ROW_HEIGHT}
++            labelWidth={LABEL_WIDTH}
++            onClick={(id) => onGhostSelect?.(id)}
++          />
++        ))}
++      </svg>
++    </div>
++  );
++}
 diff --git a/gitnexus-web/src/components/GhostFiltersSection.tsx b/gitnexus-web/src/components/GhostFiltersSection.tsx
 new file mode 100644
 index 0000000..1d0d34a
