@@ -83,18 +83,18 @@ try {
 
   notify('notifications/initialized');
 
-  // 2. tools/list — should list 18 tools (17 + snapshot_from_pr)
+  // 2. tools/list — should list 19 tools (18 + ghost_audit)
   const list = await send('tools/list');
   if (list.error) fail(`tools/list: ${list.error.message}`);
   const tools = list.result?.tools || [];
-  if (tools.length !== 18) fail(`tools/list: expected 18 tools, got ${tools.length}`);
+  if (tools.length !== 19) fail(`tools/list: expected 19 tools, got ${tools.length}`);
   for (const expected of [
     'gitnexus_list_repos', 'gitnexus_entropy', 'gitnexus_churn', 'gitnexus_coupling',
     'gitnexus_growth', 'gitnexus_lifespan', 'gitnexus_ownership', 'gitnexus_dissonance',
     'gitnexus_semantic_labels', 'gitnexus_coupling_cross', 'gitnexus_growth_cross',
     'gitnexus_similarity', 'gitnexus_entropy_commits', 'gitnexus_watches',
     'gitnexus_repo_by_id', 'gitnexus_commit_footprint', 'gitnexus_snapshot_auto',
-    'gitnexus_snapshot_from_pr',
+    'gitnexus_snapshot_from_pr', 'gitnexus_ghost_audit',
   ]) {
     if (!tools.find((t) => t.name === expected)) fail(`tools/list: missing ${expected}`);
   }
@@ -120,6 +120,21 @@ try {
       } else {
         const data = JSON.parse(ent.result.content[0].text);
         pass(`gitnexus_entropy(${repo}) → totalPoints=${data.totalPoints}`);
+      }
+      // 4b. tools/call gitnexus_ghost_audit — hits gitnexus-web at :4173
+      // Tolerant: a repo with no ghosts synced yet is expected to error;
+      // we only care that the handler wires through.
+      const audit = await send('tools/call', {
+        name: 'gitnexus_ghost_audit',
+        arguments: { repo },
+      });
+      if (audit.result?.isError) {
+        console.warn(`SKIP: gitnexus_ghost_audit(${repo}) returned error (no ghosts synced yet?): ${audit.result.content[0]?.text}`);
+      } else if (Array.isArray(audit.result?.content) && audit.result.content[0]?.type === 'text') {
+        const payload = JSON.parse(audit.result.content[0].text);
+        pass(`gitnexus_ghost_audit(${repo}) → ${payload.audit?.summary?.total ?? '?'} ghosts (cached=${payload.audit?.cached ?? '?'})`);
+      } else {
+        fail(`gitnexus_ghost_audit(${repo}): unexpected response shape`);
       }
     }
   } else {

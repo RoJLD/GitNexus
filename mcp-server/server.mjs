@@ -353,7 +353,51 @@ const TOOLS = [
     handler: ({ repos, ...opts }) =>
       callWeb('/similarity', { repos: repos.join(','), ...opts }),
   },
+  {
+    name: 'gitnexus_ghost_audit',
+    description: 'Roadmap audit metrics (lead time, slippage vs plannedFor, cancellation rate, plan churn, 28-day velocity, expired ghosts past their expectedBy + grace_period). Reads CORE sidecars (.gitnexus/ghosts.json + .gitnexus/snapshots/*/ghosts.json) and caches the result on disk (mtime-invalidated). Use after gitnexus_ghosts_sync; returns 404-equivalent text if no ghosts have been synced yet.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        repo: { type: 'string', description: 'Base repo name as known by gitnexus.' },
+        windowDays: { type: 'number', minimum: 7, maximum: 365, default: 28, description: 'Velocity window in days. Default 28.' },
+      },
+      required: ['repo'],
+      additionalProperties: false,
+    },
+    handler: async ({ repo, windowDays }) => {
+      const params = { repo };
+      if (windowDays !== undefined) params.windowDays = windowDays;
+      const audit = await callWeb('/ghost-audit', params);
+      // Surface a human-readable summary plus the raw JSON for drill-down.
+      // Keep the summary tight so Claude can quote it verbatim without
+      // burning tokens.
+      const s = formatGhostAuditSummary(audit);
+      return { ok: true, summary: s, audit };
+    },
+  },
 ];
+
+function formatGhostAuditSummary(audit) {
+  if (!audit || audit.error) return audit?.error || 'no audit available';
+  const s = audit.summary || {};
+  const lt = audit.leadTime || {};
+  const sl = audit.slippage || {};
+  const pc = audit.planChurn || {};
+  const v = audit.velocity || {};
+  const x = audit.expired || { total: 0 };
+  const pct = (n) => (typeof n === 'number' ? `${(n * 100).toFixed(1)}%` : '—');
+  const day = (n) => (typeof n === 'number' ? `${n.toFixed(1)}d` : '—');
+  return [
+    `Roadmap audit (${audit.cached ? 'cached' : 'fresh'}, computed ${audit.computedAt}):`,
+    `  Summary: ${s.total ?? '?'} ghosts → ${s.materialized ?? '?'} shipped, ${s.planned ?? '?'} pending, ${s.cancelled ?? '?'} cancelled (cancellation rate ${pct(s.cancellationRate)}).`,
+    `  Lead time: median ${day(lt.medianDays)} (p25=${day(lt.p25Days)}, p75=${day(lt.p75Days)}).`,
+    `  Slippage: ${sl.onTimePct !== null && sl.onTimePct !== undefined ? `${pct(sl.onTimePct)} on time` : 'no targets'} (${sl.early ?? 0} early / ${sl.onTime ?? 0} on time / ${sl.late ?? 0} late / ${sl.noTarget ?? 0} untargeted).`,
+    `  Plan churn: ${pc.totalGhostsWithChurn ?? 0} ghosts revisited (avg ${(pc.avgChurnPerGhost ?? 0).toFixed(1)}/ghost).`,
+    `  Velocity (${v.windowDays ?? 28}d): ${v.currentCount ?? 0} materializations.`,
+    `  Expired: ${x.total ?? 0}${x.critical ? ` (${x.critical} critical)` : ''}.`,
+  ].join('\n');
+}
 
 // ── HTTP helpers ─────────────────────────────────────────────────────
 
