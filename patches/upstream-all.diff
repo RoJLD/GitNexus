@@ -1,5 +1,5 @@
 diff --git a/Dockerfile.web b/Dockerfile.web
-index b102a70..989e116 100644
+index b102a70..308cf09 100644
 --- a/Dockerfile.web
 +++ b/Dockerfile.web
 @@ -21,7 +21,10 @@ RUN npm run build --prefix gitnexus-shared
@@ -14,7 +14,7 @@ index b102a70..989e116 100644
  
  COPY gitnexus-web ./gitnexus-web
  RUN npm run build --prefix gitnexus-web
-@@ -29,15 +32,51 @@ RUN npm run build --prefix gitnexus-web
+@@ -29,15 +32,61 @@ RUN npm run build --prefix gitnexus-web
  # node:22-bookworm-slim
  FROM node:22-bookworm-slim@sha256:9f6d5975c7dca860947d3915877f85607946403fc55349f39b4bc3688448bb6e AS runtime
  
@@ -63,6 +63,16 @@ index b102a70..989e116 100644
 +COPY docker-server-snapshot-auto.mjs ./docker-server-snapshot-auto.mjs
 +COPY docker-server-snapshot-from-pr.mjs ./docker-server-snapshot-from-pr.mjs
 +COPY docker-server-snapshot-incremental.mjs ./docker-server-snapshot-incremental.mjs
++# Roadmap-predictive ghosts (parallel session — docker-server.mjs imports
++# these; the COPY lines were missing, crash-looping the container on a
++# fresh build. Added here to unblock. 6 files: 3 route modules + their
++# 3 -core siblings.)
++COPY docker-server-ghosts.mjs ./docker-server-ghosts.mjs
++COPY docker-server-ghosts-core.mjs ./docker-server-ghosts-core.mjs
++COPY docker-server-ghost-audit.mjs ./docker-server-ghost-audit.mjs
++COPY docker-server-ghost-audit-core.mjs ./docker-server-ghost-audit-core.mjs
++COPY docker-server-ghost-cleanup.mjs ./docker-server-ghost-cleanup.mjs
++COPY docker-server-ghost-cleanup-core.mjs ./docker-server-ghost-cleanup-core.mjs
 +COPY docker-server-csv.mjs ./docker-server-csv.mjs
  
  RUN chown -R node:node /app
@@ -764,6 +774,56 @@ index 0000000..7d5ef75
 +  legacyDomains: LEGACY_DOMAINS_FILENAME,
 +  legacyPolicy: LEGACY_POLICY_FILENAME,
 +};
+diff --git a/docker-server-connectors-core.mjs b/docker-server-connectors-core.mjs
+new file mode 100644
+index 0000000..d616ecc
+--- /dev/null
++++ b/docker-server-connectors-core.mjs
+@@ -0,0 +1,44 @@
++// upstream/docker-server-connectors-core.mjs
++//
++// Pure helpers for connector framework (Section B of the
++// roadmap-predictive Cleanup + Connectors plan, 2026-05-26).
++//
++// Exposes:
++//   - tokenize(s)           : string → token array (lowercase, alphanum)
++//   - jaccardSimilarity(a,b): array, array → number in [0, 1]
++//   - fuzzyMatchTicketToGhost(ticket, ghosts, threshold) :
++//       returns { ghost, score } | null
++
++export function tokenize(s) {
++  if (!s || typeof s !== 'string') return [];
++  return s.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
++}
++
++export function jaccardSimilarity(a, b) {
++  const sa = new Set(a);
++  const sb = new Set(b);
++  if (sa.size === 0 && sb.size === 0) return 1;
++  let intersect = 0;
++  for (const x of sa) if (sb.has(x)) intersect++;
++  const union = sa.size + sb.size - intersect;
++  return union === 0 ? 0 : intersect / union;
++}
++
++export function fuzzyMatchTicketToGhost(ticket, ghosts, threshold = 0.7) {
++  const ticketTokens = [
++    ...tokenize(ticket.title || ''),
++    ...tokenize(ticket.description || ''),
++  ];
++  let best = null;
++  for (const g of ghosts || []) {
++    const ghostTokens = [
++      ...tokenize(g.title || ''),
++      ...tokenize(g.declared?.description || ''),
++    ];
++    const score = jaccardSimilarity(ticketTokens, ghostTokens);
++    if (score >= threshold && (!best || score > best.score)) {
++      best = { ghost: g, score };
++    }
++  }
++  return best;
++}
 diff --git a/docker-server-coupling-cross.mjs b/docker-server-coupling-cross.mjs
 new file mode 100644
 index 0000000..0f8e30e
