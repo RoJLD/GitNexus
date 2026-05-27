@@ -17005,6 +17005,70 @@ index 0000000..b564d0a
 +    </div>
 +  );
 +}
+diff --git a/gitnexus-web/src/components/audit/PlanChurnList.tsx b/gitnexus-web/src/components/audit/PlanChurnList.tsx
+new file mode 100644
+index 0000000..bb2da01
+--- /dev/null
++++ b/gitnexus-web/src/components/audit/PlanChurnList.tsx
+@@ -0,0 +1,58 @@
++/**
++ * PlanChurnList — top 10 ghosts whose declared plan changed the most
++ * across snapshots (i.e. churn-heavy items where the team kept moving
++ * the goal-posts). Clicking a row invokes `onSelectChurner(id)` which
++ * the AuditPanel propagates to the GhostTable as a highlightedId.
++ *
++ * Spec : docs/superpowers/specs/2026-05-26-roadmap-predictive-audit-design.md
++ */
++
++type Churner = {
++  id: string;
++  churn: number;
++  deltas: string[];
++};
++
++type Props = {
++  topChurners: Churner[];
++  onSelectChurner: (id: string) => void;
++};
++
++export default function PlanChurnList({ topChurners, onSelectChurner }: Props) {
++  if (!topChurners || topChurners.length === 0) {
++    return (
++      <div className="plan-churn-list" data-testid="plan-churn-list">
++        <header>
++          <strong>Plan churn</strong>
++        </header>
++        <p className="empty">No churn — no ghost plan has changed.</p>
++      </div>
++    );
++  }
++  return (
++    <div className="plan-churn-list" data-testid="plan-churn-list">
++      <header>
++        <strong>Plan churn</strong>
++        <span className="hint">top {Math.min(10, topChurners.length)} churners — click to highlight in the table</span>
++      </header>
++      <ul>
++        {topChurners.slice(0, 10).map((c) => (
++          <li
++            key={c.id}
++            className="churner-row"
++            data-testid={`churner-${c.id}`}
++            onClick={() => onSelectChurner(c.id)}
++            role="button"
++            tabIndex={0}
++            onKeyDown={(e) => {
++              if (e.key === 'Enter' || e.key === ' ') onSelectChurner(c.id);
++            }}
++          >
++            <span className="ghost-id">{c.id}</span>
++            <span className="churn-count">{c.churn}</span>
++          </li>
++        ))}
++      </ul>
++    </div>
++  );
++}
 diff --git a/gitnexus-web/src/components/audit/SlippageBar.tsx b/gitnexus-web/src/components/audit/SlippageBar.tsx
 new file mode 100644
 index 0000000..a6b20db
