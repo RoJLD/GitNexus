@@ -1,5 +1,5 @@
 diff --git a/Dockerfile.web b/Dockerfile.web
-index b102a70..d3066a3 100644
+index b102a70..bc0a7d5 100644
 --- a/Dockerfile.web
 +++ b/Dockerfile.web
 @@ -21,7 +21,10 @@ RUN npm run build --prefix gitnexus-shared
@@ -14,7 +14,7 @@ index b102a70..d3066a3 100644
  
  COPY gitnexus-web ./gitnexus-web
  RUN npm run build --prefix gitnexus-web
-@@ -29,15 +32,66 @@ RUN npm run build --prefix gitnexus-web
+@@ -29,15 +32,71 @@ RUN npm run build --prefix gitnexus-web
  # node:22-bookworm-slim
  FROM node:22-bookworm-slim@sha256:9f6d5975c7dca860947d3915877f85607946403fc55349f39b4bc3688448bb6e AS runtime
  
@@ -79,6 +79,11 @@ index b102a70..d3066a3 100644
 +COPY docker-server-connectors-core.mjs ./docker-server-connectors-core.mjs
 +COPY connectors ./connectors
 +COPY docker-server-csv.mjs ./docker-server-csv.mjs
++# SysML export (parallel session — same missing-COPY class of bug as the
++# ghosts/connectors above; docker-server.mjs imports docker-server-sysml-export.mjs
++# which in turn imports its -core sibling. Crash-loops without both.)
++COPY docker-server-sysml-export.mjs ./docker-server-sysml-export.mjs
++COPY docker-server-sysml-export-core.mjs ./docker-server-sysml-export-core.mjs
  
  RUN chown -R node:node /app
  
@@ -12434,10 +12439,10 @@ index 0000000..07a59b5
 +};
 diff --git a/gitnexus-web/src/components/EntropyCommitTimeline.tsx b/gitnexus-web/src/components/EntropyCommitTimeline.tsx
 new file mode 100644
-index 0000000..01e2d63
+index 0000000..c564e39
 --- /dev/null
 +++ b/gitnexus-web/src/components/EntropyCommitTimeline.tsx
-@@ -0,0 +1,427 @@
+@@ -0,0 +1,533 @@
 +import { useMemo, useState } from 'react';
 +import {
 +  X,
@@ -12449,6 +12454,7 @@ index 0000000..01e2d63
 +  Info,
 +  Eye,
 +  EyeOff,
++  History,
 +} from '@/lib/lucide-icons';
 +import { useAppState } from '../hooks/useAppState';
 +import type { EntropyCommit } from '../hooks/useAppState';
@@ -12510,6 +12516,14 @@ index 0000000..01e2d63
 +    commitFootprintError,
 +    loadCommitFootprint,
 +    clearCommitFootprint,
++    atCommitActive,
++    atCommitSha,
++    atCommitLoading,
++    atCommitError,
++    atCommitMissingDiffs,
++    atCommitMeta,
++    loadGraphAtCommit,
++    exitGraphAtCommit,
 +  } = useAppState();
 +  const [metric, setMetric] = useState<Metric>('density');
 +  const [selected, setSelected] = useState<EntropyCommit | null>(null);
@@ -12842,6 +12856,41 @@ index 0000000..01e2d63
 +              ? `${commitFootprint.resolvedNodeIds.length}/${commitFootprint.filesTouched.length} on graph`
 +              : 'Show on graph'}
 +          </button>
++
++          {/* Graph reconstruction action (Phase C) — rebuilds the WHOLE
++              graph as it was at this commit (baseline snapshot + replayed
++              diffs) and swaps it onto the canvas, vs the footprint button
++              which only highlights touched nodes on the live graph. Toggles
++              back to live when already active for this commit. */}
++          <button
++            type="button"
++            onClick={() => {
++              if (atCommitActive && atCommitSha === selected.sha) {
++                exitGraphAtCommit();
++              } else {
++                void loadGraphAtCommit(selected.sha);
++              }
++            }}
++            disabled={atCommitLoading}
++            className={`flex shrink-0 cursor-pointer items-center gap-1 rounded border px-1.5 py-0.5 text-[9px] font-medium transition-all disabled:cursor-not-allowed disabled:opacity-40 ${
++              atCommitActive && atCommitSha === selected.sha
++                ? 'border-violet-500/40 bg-violet-500/15 text-violet-300'
++                : 'border-border-subtle bg-elevated text-text-secondary hover:bg-hover hover:text-text-primary'
++            }`}
++            title={
++              atCommitActive && atCommitSha === selected.sha
++                ? 'Showing the graph reconstructed at this commit — click to return to the live graph'
++                : 'Reconstruct the entire graph as it was at this commit (baseline snapshot + replayed diffs) and load it onto the canvas'
++            }
++          >
++            {atCommitLoading ? (
++              <Loader2 className="h-2.5 w-2.5 animate-spin" />
++            ) : (
++              <History className="h-2.5 w-2.5" />
++            )}
++            {atCommitActive && atCommitSha === selected.sha ? 'Back to live' : 'Rebuild @ commit'}
++          </button>
++
 +          <code className="shrink-0 rounded bg-void px-1 font-mono text-[9px] text-text-muted">
 +            git show {selected.shortSha}
 +          </code>
@@ -12860,6 +12909,68 @@ index 0000000..01e2d63
 +        <div className="mt-1 flex items-start gap-1.5 px-1 py-1 text-[10px] text-red-400">
 +          <AlertCircle className="mt-0.5 h-3 w-3 shrink-0" />
 +          <span className="break-all font-mono">{commitFootprintError}</span>
++        </div>
++      )}
++
++      {/* Reconstructed-graph banner (Phase C). The canvas is showing the
++          graph rebuilt at atCommitSha — make that unmissable and offer a
++          one-click return to the live graph. */}
++      {atCommitActive && atCommitSha && (
++        <div className="mt-1 flex items-center gap-2 rounded border border-violet-500/40 bg-violet-500/10 px-2 py-1 text-[10px] text-violet-200">
++          <History className="h-3 w-3 shrink-0" />
++          <span className="min-w-0 flex-1 break-all">
++            <span className="font-semibold">Reconstructed graph @ {atCommitSha.slice(0, 7)}</span>
++            {atCommitMeta && (
++              <>
++                {' '}— {atCommitMeta.reconstructedCounts.nodes.toLocaleString()} nodes ·{' '}
++                {atCommitMeta.reconstructedCounts.relationships.toLocaleString()} rels · baseline{' '}
++                {atCommitMeta.baselineShortSha}
++                {atCommitMeta.distance > 0 ? ` +${atCommitMeta.distance} diffs` : ' (exact)'}
++                {atCommitMeta.filterConsistency !== 'consistent' && (
++                  <span className="ml-1 text-amber-300" title="The replayed diffs were captured under different filter chains; structural fidelity holds but counts may vary.">
++                    · mixed filters
++                  </span>
++                )}
++              </>
++            )}
++          </span>
++          <button
++            type="button"
++            onClick={() => exitGraphAtCommit()}
++            className="shrink-0 cursor-pointer rounded border border-violet-500/40 bg-violet-500/15 px-1.5 py-0.5 font-medium text-violet-200 transition-all hover:bg-violet-500/25"
++            title="Restore the live graph"
++          >
++            Back to live
++          </button>
++        </div>
++      )}
++
++      {/* Missing diffs in the replay chain → offer lazy generation. */}
++      {atCommitMissingDiffs > 0 && (selected || atCommitSha) && (
++        <div className="mt-1 flex items-center gap-2 rounded border border-amber-500/30 bg-amber-500/5 px-2 py-1 text-[9px] text-amber-200">
++          <span className="min-w-0 flex-1">
++            <span className="font-semibold">{atCommitMissingDiffs} diff(s) missing</span> from the
++            replay chain — generate them on demand to reconstruct this commit (slower; runs analyze
++            per missing step).
++          </span>
++          <button
++            type="button"
++            disabled={atCommitLoading}
++            onClick={() => {
++              const sha = atCommitSha || selected?.sha;
++              if (sha) void loadGraphAtCommit(sha, { lazy: true });
++            }}
++            className="shrink-0 cursor-pointer rounded border border-amber-500/40 bg-amber-500/15 px-1.5 py-0.5 font-medium text-amber-100 transition-all hover:bg-amber-500/25 disabled:cursor-not-allowed disabled:opacity-40"
++          >
++            {atCommitLoading ? 'Generating…' : 'Generate & retry'}
++          </button>
++        </div>
++      )}
++
++      {atCommitError && atCommitMissingDiffs === 0 && (
++        <div className="mt-1 flex items-start gap-1.5 px-1 py-1 text-[10px] text-red-400">
++          <AlertCircle className="mt-0.5 h-3 w-3 shrink-0" />
++          <span className="break-all font-mono">{atCommitError}</span>
 +        </div>
 +      )}
 +    </div>
@@ -19688,7 +19799,7 @@ index 49862a9..5c552dd 100644
   * Create a Graph RAG agent
   */
 diff --git a/gitnexus-web/src/hooks/useAppState.tsx b/gitnexus-web/src/hooks/useAppState.tsx
-index 25c5776..aa19274 100644
+index 25c5776..d47b4ca 100644
 --- a/gitnexus-web/src/hooks/useAppState.tsx
 +++ b/gitnexus-web/src/hooks/useAppState.tsx
 @@ -8,7 +8,12 @@ import {
@@ -19747,7 +19858,7 @@ index 25c5776..aa19274 100644
  
    // Graph data
    graph: KnowledgeGraph | null;
-@@ -192,6 +212,385 @@ interface AppState {
+@@ -192,6 +212,403 @@ interface AppState {
    clearAICodeReferences: () => void;
    clearCodeReferences: () => void;
    codeReferenceFocus: CodeReferenceFocus | null;
@@ -19878,6 +19989,24 @@ index 25c5776..aa19274 100644
 +  commitFootprintError: string | null;
 +  loadCommitFootprint: (sha: string) => Promise<void>;
 +  clearCommitFootprint: () => void;
++
++  // Reconstructed graph at a commit (Phase C — /graph/at-commit). When
++  // active, the canvas shows the graph rebuilt at `atCommitSha` (baseline
++  // snapshot + replayed diffs) instead of the live graph. loadGraphAtCommit
++  // swaps the graph; exitGraphAtCommit restores the live one.
++  atCommitActive: boolean;
++  atCommitSha: string | null;
++  atCommitLoading: boolean;
++  atCommitError: string | null;
++  atCommitMissingDiffs: number;
++  atCommitMeta: {
++    baselineShortSha: string;
++    distance: number;
++    reconstructedCounts: { nodes: number; relationships: number };
++    filterConsistency: string;
++  } | null;
++  loadGraphAtCommit: (sha: string, opts?: { lazy?: boolean }) => Promise<void>;
++  exitGraphAtCommit: () => void;
 +
 +  // Semantic labels (ROADMAP Tier 2.1). LLM-generated human-readable
 +  // labels for each detected Community. Auto-loaded from server cache
@@ -20133,7 +20262,7 @@ index 25c5776..aa19274 100644
  }
  
  const AppStateContext = createContext<AppState | null>(null);
-@@ -205,6 +604,10 @@ export const AppStateProvider = ({ children }: { children: ReactNode }) => (
+@@ -205,6 +622,10 @@ export const AppStateProvider = ({ children }: { children: ReactNode }) => (
  const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
    // View state
    const [viewMode, setViewMode] = useState<ViewMode>('onboarding');
@@ -20144,7 +20273,7 @@ index 25c5776..aa19274 100644
  
    const {
      graph,
-@@ -343,6 +746,119 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
+@@ -343,6 +764,129 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
    const [isCodePanelOpen, setCodePanelOpen] = useState(false);
    const [codeReferenceFocus, setCodeReferenceFocus] = useState<CodeReferenceFocus | null>(null);
  
@@ -20231,6 +20360,16 @@ index 25c5776..aa19274 100644
 +  const [commitFootprintLoading, setCommitFootprintLoading] = useState(false);
 +  const [commitFootprintError, setCommitFootprintError] = useState<string | null>(null);
 +
++  // Phase C: reconstructed graph at a commit.
++  const [atCommitActive, setAtCommitActive] = useState(false);
++  const [atCommitSha, setAtCommitSha] = useState<string | null>(null);
++  const [atCommitLoading, setAtCommitLoading] = useState(false);
++  const [atCommitError, setAtCommitError] = useState<string | null>(null);
++  const [atCommitMissingDiffs, setAtCommitMissingDiffs] = useState(0);
++  const [atCommitMeta, setAtCommitMeta] = useState<AppState['atCommitMeta']>(null);
++  // Snapshot of the live graph so exit restores it without a refetch.
++  const preAtCommitGraphRef = useRef<KnowledgeGraph | null>(null);
++
 +  // Semantic labels state.
 +  const [semanticLabels, setSemanticLabels] = useState<Map<string, SemanticLabel>>(new Map());
 +  const [semanticLabelsLoading, setSemanticLabelsLoading] = useState(false);
@@ -20264,7 +20403,7 @@ index 25c5776..aa19274 100644
    // Map of normalized file path → node ID for graph-based lookups
    const fileNodeByPath = useMemo(() => {
      if (!graph) return new Map<string, string>();
-@@ -1029,6 +1545,62 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
+@@ -1029,6 +1573,62 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
      async (repoName: string) => {
        if (!serverBaseUrl) return;
  
@@ -20327,7 +20466,7 @@ index 25c5776..aa19274 100644
        setProgress({
          phase: 'extracting',
          percent: 0,
-@@ -1105,6 +1677,13 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
+@@ -1105,6 +1705,13 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
          for (const node of result.nodes) newGraph.addNode(node);
          for (const rel of result.relationships) newGraph.addRelationship(rel);
          setGraph(newGraph);
@@ -20341,7 +20480,7 @@ index 25c5776..aa19274 100644
        } catch (err: unknown) {
          console.error('Repo switch failed:', err);
          setProgress({
-@@ -1207,9 +1786,732 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
+@@ -1207,9 +1814,802 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
      setCodeReferenceFocus(null);
    }, []);
  
@@ -20939,6 +21078,76 @@ index 25c5776..aa19274 100644
 +    [projectName, graph, setHighlightedNodeIds],
 +  );
 +
++  /**
++   * Reconstruct + load the graph at an arbitrary commit (Phase C).
++   * Calls /graph/at-commit, which returns the graph rebuilt from the
++   * nearest baseline snapshot + replayed per-commit diffs. The first
++   * time we enter this mode we snapshot the live graph so exit can
++   * restore it. A 409 (missing diffs) surfaces `atCommitMissingDiffs`
++   * + error; the caller can retry with { lazy: true } to generate them.
++   */
++  const loadGraphAtCommit = useCallback(
++    async (sha: string, opts?: { lazy?: boolean }) => {
++      if (!projectName) {
++        setAtCommitError('No active repo.');
++        return;
++      }
++      const baseRepo = projectName.split('@')[0];
++      // Preserve the live graph the first time we enter at-commit mode.
++      if (!atCommitActive) preAtCommitGraphRef.current = graph;
++      setAtCommitLoading(true);
++      setAtCommitError(null);
++      setAtCommitMissingDiffs(0);
++      try {
++        const url =
++          `/graph/at-commit?repo=${encodeURIComponent(baseRepo)}&commit=${encodeURIComponent(sha)}` +
++          (opts?.lazy ? '&lazy=true' : '');
++        const resp = await fetch(url, { cache: 'no-store' });
++        const body = await resp.json().catch(() => ({}));
++        if (resp.status === 409) {
++          // Missing diffs — surface the count so the UI can offer lazy.
++          setAtCommitMissingDiffs(Array.isArray(body.missingDiffs) ? body.missingDiffs.length : 0);
++          throw new Error(body.error || 'missing diffs in the replay chain');
++        }
++        if (!resp.ok) throw new Error(body?.error || `HTTP ${resp.status}`);
++
++        const newGraph = createKnowledgeGraph();
++        for (const node of body.nodes || []) newGraph.addNode(node);
++        for (const rel of body.relationships || []) newGraph.addRelationship(rel);
++        setGraph(newGraph);
++        // Clear any per-repo highlight/selection from the previous view.
++        setHighlightedNodeIds(new Set());
++        setSelectedNode(null);
++
++        setAtCommitActive(true);
++        setAtCommitSha(body.commit || sha);
++        setAtCommitMeta({
++          baselineShortSha: body.baseline?.shortSha || '?',
++          distance: body.baseline?.distance ?? 0,
++          reconstructedCounts: body.reconstructedCounts || { nodes: 0, relationships: 0 },
++          filterConsistency: body.replay?.filterConsistency || 'consistent',
++        });
++      } catch (err) {
++        setAtCommitError(err instanceof Error ? err.message : 'Failed to reconstruct graph at commit');
++      } finally {
++        setAtCommitLoading(false);
++      }
++    },
++    [projectName, graph, atCommitActive, setGraph, setHighlightedNodeIds, setSelectedNode],
++  );
++
++  const exitGraphAtCommit = useCallback(() => {
++    if (preAtCommitGraphRef.current) {
++      setGraph(preAtCommitGraphRef.current);
++      preAtCommitGraphRef.current = null;
++    }
++    setAtCommitActive(false);
++    setAtCommitSha(null);
++    setAtCommitError(null);
++    setAtCommitMissingDiffs(0);
++    setAtCommitMeta(null);
++  }, [setGraph]);
++
 +  // Semantic labels: read-only fetch (cheap, idempotent). Called
 +  // automatically when the active repo changes, and manually after a
 +  // generation pass completes.
@@ -21074,7 +21283,7 @@ index 25c5776..aa19274 100644
      graph,
      setGraph,
      selectedNode,
-@@ -1293,6 +2595,116 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
+@@ -1293,6 +2693,125 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
      clearAICodeReferences,
      clearCodeReferences,
      codeReferenceFocus,
@@ -21166,6 +21375,15 @@ index 25c5776..aa19274 100644
 +    commitFootprintError,
 +    loadCommitFootprint,
 +    clearCommitFootprint,
++    // Graph reconstruction at a commit (Phase C)
++    atCommitActive,
++    atCommitSha,
++    atCommitLoading,
++    atCommitError,
++    atCommitMissingDiffs,
++    atCommitMeta,
++    loadGraphAtCommit,
++    exitGraphAtCommit,
 +    // Semantic labels
 +    semanticLabels,
 +    semanticLabelsLoading,
@@ -22313,6 +22531,94 @@ index 05676e5..8844aab 100644
    Variable,
    X,
    Zap,
+diff --git a/gitnexus-web/src/lib/timeline-zoom.ts b/gitnexus-web/src/lib/timeline-zoom.ts
+new file mode 100644
+index 0000000..04050cb
+--- /dev/null
++++ b/gitnexus-web/src/lib/timeline-zoom.ts
+@@ -0,0 +1,82 @@
++/**
++ * Pure date/position math for the Timeline zoom + 2-cursor feature.
++ * No React, no DOM — testable in isolation.
++ *
++ * See docs/superpowers/specs/2026-05-27-timeline-zoom-cursors-design.md
++ */
++
++export type DateRange = { startISO: string; endISO: string };
++
++export type SnapshotWithDate = { date: string };
++
++/**
++ * Returns the window [min(a,b), max(a,b)] — auto-swap so callers don't
++ * have to enforce A ≤ B at every site.
++ */
++export function computeZoomWindow(aISO: string, bISO: string): DateRange {
++  const aMs = Date.parse(aISO);
++  const bMs = Date.parse(bISO);
++  if (aMs <= bMs) return { startISO: aISO, endISO: bISO };
++  return { startISO: bISO, endISO: aISO };
++}
++
++/**
++ * Maps an ISO date to a pixel position in [0, pixelWidth] linearly within
++ * the window. Saturates at boundaries when the date is outside.
++ * Returns 0 for zero-width windows to avoid div-by-zero.
++ */
++export function mapDateToPosition(
++  isoDate: string,
++  window: DateRange,
++  pixelWidth: number,
++): number {
++  const startMs = Date.parse(window.startISO);
++  const endMs = Date.parse(window.endISO);
++  const targetMs = Date.parse(isoDate);
++  const span = endMs - startMs;
++  if (span <= 0) return 0;
++  if (targetMs <= startMs) return 0;
++  if (targetMs >= endMs) return pixelWidth;
++  return ((targetMs - startMs) / span) * pixelWidth;
++}
++
++/**
++ * Inverse of mapDateToPosition. Saturates at window bounds for positions
++ * outside [0, pixelWidth].
++ */
++export function mapPositionToDate(
++  position: number,
++  window: DateRange,
++  pixelWidth: number,
++): string {
++  const startMs = Date.parse(window.startISO);
++  const endMs = Date.parse(window.endISO);
++  if (position <= 0) return new Date(startMs).toISOString();
++  if (position >= pixelWidth) return new Date(endMs).toISOString();
++  const span = endMs - startMs;
++  const offsetMs = (position / pixelWidth) * span;
++  return new Date(startMs + offsetMs).toISOString();
++}
++
++/**
++ * Returns the date of the snapshot closest to the given date. On a tie
++ * (equidistant), returns the earlier one. Returns null if the snapshot
++ * list is empty.
++ */
++export function snapToNearestSnapshot(
++  isoDate: string,
++  snapshots: SnapshotWithDate[],
++): string | null {
++  if (snapshots.length === 0) return null;
++  const targetMs = Date.parse(isoDate);
++  let bestDate = snapshots[0].date;
++  let bestDelta = Math.abs(Date.parse(bestDate) - targetMs);
++  for (let i = 1; i < snapshots.length; i++) {
++    const delta = Math.abs(Date.parse(snapshots[i].date) - targetMs);
++    if (delta < bestDelta) {
++      bestDate = snapshots[i].date;
++      bestDelta = delta;
++    }
++  }
++  return bestDate;
++}
 diff --git a/gitnexus-web/src/services/backend-client.ts b/gitnexus-web/src/services/backend-client.ts
 index e887e39..63ef61f 100644
 --- a/gitnexus-web/src/services/backend-client.ts
