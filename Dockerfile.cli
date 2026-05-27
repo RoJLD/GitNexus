@@ -36,4 +36,17 @@ RUN mkdir -p /data/hf-cache && chown -R node:node /data
 COPY --chown=node:node scripts/patch-lbug-staleness.mjs /app/gitnexus/scripts/patch-lbug-staleness.mjs
 RUN node /app/gitnexus/scripts/patch-lbug-staleness.mjs
 
+# Apply the incremental-dump patch (Phase C of incremental-snapshots
+# design, see docs/superpowers/specs/2026-05-26-incremental-snapshots-
+# phase-c-design.md). Adds ~25 lines to run-analyze.js that serialise the
+# in-memory `subgraph` + `hashDiff` to <repoPath>/.gitnexus/_last-
+# incremental-subgraph.json right before LBugDB write-back. Always-on, no
+# env gate — the dump is cheap (~1-3 MB write, ephemeral, gitignored) and
+# gives the /snapshot/incremental endpoint everything it needs without
+# orchestrating env vars between containers. Same self-validation pattern
+# as patch-lbug-staleness.mjs: build fails loudly if the marker line moves
+# in a future upstream bump.
+COPY --chown=node:node scripts/patch-incremental-dump.mjs /app/gitnexus/scripts/patch-incremental-dump.mjs
+RUN node /app/gitnexus/scripts/patch-incremental-dump.mjs
+
 USER node
