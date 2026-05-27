@@ -2333,10 +2333,10 @@ index 0000000..c57e279
 +}
 diff --git a/docker-server-ghost-audit-core.mjs b/docker-server-ghost-audit-core.mjs
 new file mode 100644
-index 0000000..c01b807
+index 0000000..9b97661
 --- /dev/null
 +++ b/docker-server-ghost-audit-core.mjs
-@@ -0,0 +1,80 @@
+@@ -0,0 +1,125 @@
 +/**
 + * Pure functions for the roadmap-predictive Audit view.
 + * No I/O. Imports from docker-server-ghosts-core.mjs only if needed.
@@ -2416,6 +2416,51 @@ index 0000000..c01b807
 +  const denom = out.early + out.onTime + out.late;
 +  out.onTimePct = denom === 0 ? null : out.onTime / denom;
 +  return out;
++}
++
++// --- Lead time ---
++
++const DAY = 86_400_000;
++
++function percentile(sortedAsc, p) {
++  if (sortedAsc.length === 0) return null;
++  const idx = (sortedAsc.length - 1) * p;
++  const lo = Math.floor(idx);
++  const hi = Math.ceil(idx);
++  if (lo === hi) return sortedAsc[lo];
++  return sortedAsc[lo] + (sortedAsc[hi] - sortedAsc[lo]) * (idx - lo);
++}
++
++export function computeLeadTime(ghosts) {
++  const leadTimes = [];
++  for (const g of ghosts) {
++    if (!g.materializedAt || !g.plannedAt) continue;
++    const dt = (new Date(g.materializedAt.date) - new Date(g.plannedAt.date)) / DAY;
++    if (dt >= 0) leadTimes.push(dt);
++  }
++  if (leadTimes.length === 0) {
++    return { medianDays: null, p25Days: null, p75Days: null, maxDays: null, distribution: [] };
++  }
++  leadTimes.sort((a, b) => a - b);
++  const dist = [
++    { bucket: '0-7d',   count: 0 },
++    { bucket: '7-14d',  count: 0 },
++    { bucket: '14-30d', count: 0 },
++    { bucket: '30d+',   count: 0 },
++  ];
++  for (const lt of leadTimes) {
++    if (lt < 7) dist[0].count += 1;
++    else if (lt < 14) dist[1].count += 1;
++    else if (lt < 30) dist[2].count += 1;
++    else dist[3].count += 1;
++  }
++  return {
++    medianDays: percentile(leadTimes, 0.5),
++    p25Days: percentile(leadTimes, 0.25),
++    p75Days: percentile(leadTimes, 0.75),
++    maxDays: leadTimes[leadTimes.length - 1],
++    distribution: dist,
++  };
 +}
 diff --git a/docker-server-ghosts-core.mjs b/docker-server-ghosts-core.mjs
 new file mode 100644
