@@ -19251,10 +19251,10 @@ index 6c660b0..937fd90 100644
  ═══════════════════════════════════════════════════════════════ */
 diff --git a/gitnexus-web/src/lib/ghost-layout.ts b/gitnexus-web/src/lib/ghost-layout.ts
 new file mode 100644
-index 0000000..186b369
+index 0000000..bcbdc3d
 --- /dev/null
 +++ b/gitnexus-web/src/lib/ghost-layout.ts
-@@ -0,0 +1,65 @@
+@@ -0,0 +1,113 @@
 +/**
 + * Pure functions for placing ghost nodes on the Sigma canvas.
 + * Reused from frontend only — no I/O, no Sigma deps.
@@ -19319,6 +19319,54 @@ index 0000000..186b369
 +    }
 +  }
 +  return [...out];
++}
++
++export function computeGhostLayout(
++  ghosts: GhostInput[],
++  existing: ExistingNode[],
++  options: { canvasBounds?: { xMax: number; yMin: number }; satelliteCols?: number } = {},
++): { ghostNodes: GhostLayoutNode[]; ghostEdges: GhostLayoutEdge[] } {
++  const xMax = options.canvasBounds?.xMax ?? 100;
++  const yMin = options.canvasBounds?.yMin ?? -50;
++  const cols = options.satelliteCols ?? 5;
++  const colWidth = 5;
++  const rowHeight = 5;
++
++  const ghostNodes: GhostLayoutNode[] = [];
++  const ghostEdges: GhostLayoutEdge[] = [];
++  const nodeById = new Map(existing.map(n => [n.id, n]));
++  let satelliteIndex = 0;
++
++  for (const g of ghosts) {
++    if (g.status === 'materialized') continue; // doublon avec real node
++    const matched = matchExistingNodes(g.expectedLinks, existing.map(n => n.id));
++    const ghostNodeId = `ghost:${g.id}`;
++    if (matched.length > 0) {
++      const xs = matched.map(id => nodeById.get(id)!.x);
++      const ys = matched.map(id => nodeById.get(id)!.y);
++      const x = xs.reduce((a, b) => a + b, 0) / xs.length;
++      const y = ys.reduce((a, b) => a + b, 0) / ys.length;
++      ghostNodes.push({ id: ghostNodeId, ghostId: g.id, x, y, tier: g.tier, status: g.status, title: g.title, anchored: true });
++      for (const matchedId of matched) {
++        ghostEdges.push({ source: ghostNodeId, target: matchedId, tier: g.tier });
++      }
++    } else {
++      const col = satelliteIndex % cols;
++      const row = Math.floor(satelliteIndex / cols);
++      ghostNodes.push({
++        id: ghostNodeId,
++        ghostId: g.id,
++        x: xMax - (cols - col) * colWidth,
++        y: yMin + row * rowHeight,
++        tier: g.tier,
++        status: g.status,
++        title: g.title,
++        anchored: false,
++      });
++      satelliteIndex += 1;
++    }
++  }
++  return { ghostNodes, ghostEdges };
 +}
 diff --git a/gitnexus-web/src/lib/graph-diff.ts b/gitnexus-web/src/lib/graph-diff.ts
 new file mode 100644
