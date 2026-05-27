@@ -221,6 +221,10 @@ curl -s -o /dev/null -w "clusters: HTTP %{http_code}\n" \
 curl -s -o /dev/null -w "nodes/alive-between: HTTP %{http_code}\n" \
   "http://localhost:4173/nodes/alive-between?repo=hmm_studio&from=oldest&to=live"
 
+# Lifespan windowed (Phase 2 Item #3) — requires from/to params, separate check:
+curl -s -o /dev/null -w "lifespan windowed: HTTP %{http_code}\n" \
+  "http://localhost:4173/lifespan?repo=hmm_studio&from=oldest&to=live"
+
 # MCP sidecar — stdio JSON-RPC against the live stack. Exercises the
 # wrapper layer that exposes our analytics to Claude Code / Cursor.
 node mcp-server/smoke.mjs

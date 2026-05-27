@@ -69,6 +69,7 @@ Pré-requis local : Rancher Desktop running, **Node ≥ 22 LTS**. CI : `.github/
 | Cluster status | `unit/ghosts-clusters-status.test.mjs` | aggregate + synthesis + expired + override |
 | Cluster layout | `unit/cluster-layout.test.mjs` | convex hull + swimlanes + `pointInPolygon` |
 | Layout cache | `unit/layout-cache.test.mjs` | `saveLayoutPositions` + `loadLayout` round-trip + version guard + `applyLayoutToGraph` coverage + `clearLayout` + `clearAllLayouts` (5 cases) |
+| Lifespan windowed — pure fn | `unit/lifespan-windowed-core.test.mjs` | computeWindowedBuckets (4 buckets + ephemeral filter, 5 cases) |
 
 ### Components React (unit)
 | Test | Fichier | Couvre |
@@ -78,6 +79,7 @@ Pré-requis local : Rancher Desktop running, **Node ≥ 22 LTS**. CI : `.github/
 | CouplingPanel | `unit/components/CouplingPanel.test.tsx` | Render + default sort |
 | GrowthChart | `unit/components/GrowthChart.test.tsx` | SVG + legend |
 | LifespanPanel | `unit/components/LifespanPanel.test.tsx` | Non-empty buckets only |
+| LifespanPanel windowed | `unit/components/LifespanPanel.windowed.test.tsx` | Header "(window)" + badge daterange when windowed data present |
 | DissonancePanel | `unit/components/DissonancePanel.test.tsx` | Global score + misplaced list |
 | DiffBanner | `unit/components/DiffBanner.test.tsx` | Counts + repo names |
 | Timeline | `unit/components/Timeline.test.tsx` | Slider + play advances |
@@ -119,6 +121,7 @@ Pré-requis local : Rancher Desktop running, **Node ≥ 22 LTS**. CI : `.github/
 | Growth | `integration/endpoints/growth.test.mjs` | `/growth` schema + golden |
 | Growth cross | `integration/endpoints/growth-cross.test.mjs` | `/growth/cross?repos=` |
 | Lifespan | `integration/endpoints/lifespan.test.mjs` | `/lifespan` buckets + golden |
+| Lifespan windowed | `integration/endpoints/lifespan-windowed.test.mjs` | GET 200 global + 200 windowed + 400 partial params + 400 invalid range + alias resolution (5 cases) |
 | Entropy | `integration/endpoints/entropy.test.mjs` | `/entropy` schema + range + golden |
 | Ownership | `integration/endpoints/ownership.test.mjs` | `/ownership` bus factor + golden |
 | Dissonance | `integration/endpoints/dissonance.test.mjs` | `/dissonance` schema + range + golden |
@@ -153,6 +156,7 @@ Pré-requis local : Rancher Desktop running, **Node ≥ 22 LTS**. CI : `.github/
 | Timeline Temporal Filter | `e2e/specs/timeline-temporal-filter.spec.ts` | 4 modes dropdown + localStorage + backend call (permissive) + composition with Compare A↔B (8 cases) |
 | E2E cluster halos | `e2e/specs/06-cluster-halos.spec.ts` | toggle + halo + tooltip |
 | E2E Augmented Timeline | `e2e/specs/07-augmented-timeline.spec.ts` | Scrub cursorB with ghosts ON (skip if no snapshots) + Animate roadmap button shows banner |
+| Lifespan windowed | `e2e/specs/lifespan-windowed.spec.ts` | Header + badge toggle on filter mode change (3 cases) |
 
 ## Tests désactivés / connus fragiles
 

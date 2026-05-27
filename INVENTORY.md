@@ -127,7 +127,7 @@ Fichiers à la racine du repo, qui rendent le setup reproductible sur poste Wind
 | `GET /churn` | Heatmap de volatilité des nodes sur la timeline |
 | `GET /coupling` | Paires de fichiers qui changent ensemble (couplage temporel) |
 | `GET /growth` | Counts par catégorie dans le temps |
-| `GET /lifespan` | Buckets foundational / recent / discontinued / ephemeral |
+| `GET /lifespan` | Buckets foundational / recent / discontinued / ephemeral. **Mode global (default)** : computed sur toute l'histoire (1er snapshot → live). **Mode windowed (Phase 2 Item #3)** : `?from=<shortHash\|oldest>&to=<shortHash\|live\|newest>` redéfinit "1er snapshot" → cursorA, "live" → cursorB. Backward-compat — sans params, comportement inchangé. Réponse en mode windowed inclut un champ `windowed: { from, to, snapshotCount }`. Ephemeral fenêtré nécessite snapshots intermédiaires (réutilise `/nodes/alive-between` machinery). |
 | `GET /entropy` | Densité × modularité du graphe par snapshot |
 | `GET /ownership` | Bus factor par fichier (`git log --name-only`) |
 | `GET /dissonance` | Compare domaines déclarés (`.gitnexus-domains.json`) vs communities détectées, purity + misplaced |
@@ -157,6 +157,7 @@ Fichiers à la racine du repo, qui rendent le setup reproductible sur poste Wind
 - `EntropyBadge.tsx` — densité × trend, inline dans Timeline (auto-hide si <2 points)
 - `OwnershipPanel.tsx` — header repo-level, filtre path/auteur, slider bus-factor, click-to-highlight
 - `CouplingPanel.tsx`, `GrowthChart.tsx` (SVG natif), `LifespanPanel.tsx`
+  **Lifespan Windowed Phase 2 Item #3** (Tier 52) : header text "(window)" + badge daterange "from → to · N snapshots" affichés quand `data.windowed` présent (i.e. quand temporalFilterMode actif).
 - `CouplingPanel` + `GrowthChart` ont un toggle interne **cross-repo** (Layers icon) → fetch `/coupling/cross` ou `/growth/cross`
 - `DissonancePanel.tsx` — purity score + misplaced files + bouton ✨ pour générer les labels LLM
 - `WhatIfPanel.tsx` — form rename/move/delete, file queue de mutations, preview qui réutilise le diff coloring
