@@ -52,4 +52,48 @@ describe('renderRoadmapYml', () => {
     const out2 = renderRoadmapYml([withDate]);
     expect(out2).toContain("expectedBy: 2026-Q3");
   });
+
+  it('renders clusters section when opts.clusters provided', () => {
+    const cluster = {
+      id: 'observability-cluster',
+      source: 'declared',
+      title: 'Observability cluster',
+      expectedBy: '2026-Q3',
+      memberIds: ['ghost-a', 'ghost-b'],
+      declaredStatus: null,
+    };
+    const out = renderRoadmapYml([sampleGhost], { clusters: [cluster] });
+    expect(out).toContain('\nclusters:\n');
+    expect(out).toContain('  - id: observability-cluster');
+    expect(out).toContain('    title: Observability cluster');
+    expect(out).toContain('    expectedBy: 2026-Q3');
+    expect(out).toContain('    members:');
+    expect(out).toContain('      - ghost-a');
+    expect(out).toContain('      - ghost-b');
+    // declaredStatus null → no status line
+    expect(out).not.toContain('    status: null');
+  });
+
+  it('omits clusters section when opts.clusters is empty or absent', () => {
+    expect(renderRoadmapYml([sampleGhost])).not.toContain('clusters:');
+    expect(renderRoadmapYml([sampleGhost], { clusters: [] })).not.toContain('clusters:');
+  });
+
+  it('emits clusters sorted by id (deterministic order)', () => {
+    const c1 = { id: 'b-cluster', title: 'B', memberIds: ['x'] };
+    const c2 = { id: 'a-cluster', title: 'A', memberIds: ['y'] };
+    const out = renderRoadmapYml([], { clusters: [c1, c2] });
+    expect(out.indexOf('a-cluster')).toBeLessThan(out.indexOf('b-cluster'));
+  });
+
+  it('emits declaredStatus when present', () => {
+    const c = {
+      id: 'shipped-cluster',
+      title: 'Shipped',
+      memberIds: ['a'],
+      declaredStatus: 'shipped',
+    };
+    const out = renderRoadmapYml([], { clusters: [c] });
+    expect(out).toContain('    status: shipped');
+  });
 });

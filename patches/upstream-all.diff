@@ -3188,10 +3188,10 @@ index 0000000..24517f0
 +}
 diff --git a/docker-server-ghosts-core.mjs b/docker-server-ghosts-core.mjs
 new file mode 100644
-index 0000000..1cc3eea
+index 0000000..ff876f3
 --- /dev/null
 +++ b/docker-server-ghosts-core.mjs
-@@ -0,0 +1,544 @@
+@@ -0,0 +1,570 @@
 +/**
 + * Pure functions for the roadmap-predictive CORE.
 + * No I/O, no fs, no fetch — testable in isolation.
@@ -3431,35 +3431,61 @@ index 0000000..1cc3eea
 +  return '[' + arr.map(yamlScalar).join(', ') + ']';
 +}
 +
-+export function renderRoadmapYml(ghosts) {
++export function renderRoadmapYml(ghosts, opts = {}) {
++  const lines = [];
 +  if (!Array.isArray(ghosts) || ghosts.length === 0) {
-+    return 'ghosts: []\n';
-+  }
-+  const sorted = [...ghosts].sort((a, b) => (a.id || '').localeCompare(b.id || ''));
-+  const lines = ['ghosts:'];
-+  for (const g of sorted) {
-+    lines.push(`  - id: ${yamlScalar(g.id)}`);
-+    if (g.tier !== null && g.tier !== undefined) {
-+      lines.push(`    tier: ${yamlScalar(g.tier)}`);
-+    } else {
-+      lines.push(`    tier: null`);
-+    }
-+    lines.push(`    title: ${yamlScalar(g.title)}`);
-+    lines.push(`    description: ${yamlScalar(g.description || '')}`);
-+    lines.push(`    status: ${yamlScalar(g.status)}`);
-+    // expectedBy (Update 1b from external review — emit even if null/absent)
-+    lines.push(`    expectedBy: ${yamlScalar(g.expectedBy ?? null)}`);
-+    if (!g.expectedLinks || g.expectedLinks.length === 0) {
-+      lines.push(`    expectedLinks: []`);
-+    } else {
-+      lines.push(`    expectedLinks:`);
-+      for (const link of g.expectedLinks) {
-+        lines.push(`      - kind: ${yamlScalar(link.kind)}`);
-+        lines.push(`        value: ${yamlScalar(link.value)}`);
++    lines.push('ghosts: []');
++  } else {
++    const sorted = [...ghosts].sort((a, b) => (a.id || '').localeCompare(b.id || ''));
++    lines.push('ghosts:');
++    for (const g of sorted) {
++      lines.push(`  - id: ${yamlScalar(g.id)}`);
++      if (g.tier !== null && g.tier !== undefined) {
++        lines.push(`    tier: ${yamlScalar(g.tier)}`);
++      } else {
++        lines.push(`    tier: null`);
 +      }
++      lines.push(`    title: ${yamlScalar(g.title)}`);
++      lines.push(`    description: ${yamlScalar(g.description || '')}`);
++      lines.push(`    status: ${yamlScalar(g.status)}`);
++      // expectedBy (Update 1b from external review — emit even if null/absent)
++      lines.push(`    expectedBy: ${yamlScalar(g.expectedBy ?? null)}`);
++      if (!g.expectedLinks || g.expectedLinks.length === 0) {
++        lines.push(`    expectedLinks: []`);
++      } else {
++        lines.push(`    expectedLinks:`);
++        for (const link of g.expectedLinks) {
++          lines.push(`      - kind: ${yamlScalar(link.kind)}`);
++          lines.push(`        value: ${yamlScalar(link.value)}`);
++        }
++      }
++      lines.push(`    dependsOn: ${yamlInlineList(g.dependsOn || [])}`);
 +    }
-+    lines.push(`    dependsOn: ${yamlInlineList(g.dependsOn || [])}`);
 +  }
++
++  // Section B Task 5 of the Ghost Cluster plan: emit declared clusters in
++  // roadmap.yml so downstream readers see them alongside ghosts. Auto-derived
++  // clusters are NOT emitted here — they only exist in the runtime
++  // clusters.json sidecar (they would mutate roadmap.yml on every dependsOn
++  // edit, which is noise).
++  const clusters = Array.isArray(opts?.clusters) ? opts.clusters : [];
++  if (clusters.length > 0) {
++    const sortedClusters = [...clusters].sort((a, b) => (a.id || '').localeCompare(b.id || ''));
++    lines.push('clusters:');
++    for (const c of sortedClusters) {
++      lines.push(`  - id: ${yamlScalar(c.id)}`);
++      lines.push(`    title: ${yamlScalar(c.title)}`);
++      if (c.expectedBy) lines.push(`    expectedBy: ${yamlScalar(c.expectedBy)}`);
++      if (!c.memberIds || c.memberIds.length === 0) {
++        lines.push(`    members: []`);
++      } else {
++        lines.push(`    members:`);
++        for (const m of c.memberIds) lines.push(`      - ${yamlScalar(m)}`);
++      }
++      if (c.declaredStatus) lines.push(`    status: ${yamlScalar(c.declaredStatus)}`);
++    }
++  }
++
 +  return lines.join('\n') + '\n';
 +}
 +
