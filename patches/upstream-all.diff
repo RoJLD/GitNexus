@@ -2588,10 +2588,10 @@ index 0000000..325cefe
 +}
 diff --git a/docker-server-ghost-audit.mjs b/docker-server-ghost-audit.mjs
 new file mode 100644
-index 0000000..1ba9912
+index 0000000..3ac0909
 --- /dev/null
 +++ b/docker-server-ghost-audit.mjs
-@@ -0,0 +1,53 @@
+@@ -0,0 +1,86 @@
 +/**
 + * I/O wrapper for the roadmap-predictive Audit view.
 + * Reads CORE sidecars (.gitnexus/ghosts.json and snapshots/*\/ghosts.json),
@@ -2644,6 +2644,39 @@ index 0000000..1ba9912
 +    planChurn: computePlanChurn(snapshots),
 +    velocity: computeVelocity(ghosts, { windowDays: opts.windowDays ?? 28 }),
 +  };
++}
++
++// --- Cache invalidation ---
++
++export async function isCacheValid(cachePath, repoPath) {
++  const cs = await stat(cachePath).catch(() => null);
++  if (!cs) return false;
++  const cacheMtime = cs.mtime.getTime();
++  const latest = await stat(join(repoPath, '.gitnexus', 'ghosts.json')).catch(() => null);
++  if (latest && latest.mtime.getTime() > cacheMtime) return false;
++  const snapshotsDir = join(repoPath, '.gitnexus', 'snapshots');
++  if (await fileExists(snapshotsDir)) {
++    const entries = await readdir(snapshotsDir);
++    for (const sha of entries) {
++      const p = join(snapshotsDir, sha, 'ghosts.json');
++      const s = await stat(p).catch(() => null);
++      if (s && s.mtime.getTime() > cacheMtime) return false;
++    }
++  }
++  return true;
++}
++
++export async function computeAudit(repoPath, opts = {}) {
++  const cachePath = join(repoPath, '.gitnexus', 'ghost-audit-cache.json');
++  if (await isCacheValid(cachePath, repoPath)) {
++    const cached = await readJsonOrNull(cachePath);
++    if (cached) return { ...cached, cached: true };
++  }
++  const fresh = await buildAudit(repoPath, opts);
++  if (fresh === null) return null;
++  await mkdir(join(repoPath, '.gitnexus'), { recursive: true });
++  await writeFile(cachePath, JSON.stringify(fresh, null, 2) + '\n');
++  return { ...fresh, cached: false };
 +}
 diff --git a/docker-server-ghosts-core.mjs b/docker-server-ghosts-core.mjs
 new file mode 100644
