@@ -2333,10 +2333,10 @@ index 0000000..c57e279
 +}
 diff --git a/docker-server-ghost-audit-core.mjs b/docker-server-ghost-audit-core.mjs
 new file mode 100644
-index 0000000..648f8c0
+index 0000000..ee817b1
 --- /dev/null
 +++ b/docker-server-ghost-audit-core.mjs
-@@ -0,0 +1,170 @@
+@@ -0,0 +1,203 @@
 +/**
 + * Pure functions for the roadmap-predictive Audit view.
 + * No I/O. Imports from docker-server-ghosts-core.mjs only if needed.
@@ -2506,6 +2506,39 @@ index 0000000..648f8c0
 +    avgChurnPerGhost: all.length === 0 ? 0 : totalChurn / all.length,
 +    topChurners,
 +  };
++}
++
++// --- Velocity ---
++
++function isoWeekStart(date) {
++  const d = new Date(date);
++  const day = d.getUTCDay() || 7; // Monday=1, Sunday=7
++  d.setUTCDate(d.getUTCDate() - day + 1);
++  d.setUTCHours(0, 0, 0, 0);
++  return d.toISOString().slice(0, 10);
++}
++
++export function computeVelocity(ghosts, opts = {}) {
++  const windowDays = opts.windowDays ?? 28;
++  const now = opts.now ?? new Date();
++  const cutoff = new Date(now.getTime() - windowDays * DAY);
++
++  let currentCount = 0;
++  const weekly = new Map();
++
++  for (const g of ghosts) {
++    if (!g.materializedAt) continue;
++    const matDate = new Date(g.materializedAt.date);
++    if (isNaN(matDate.getTime())) continue;
++    if (matDate >= cutoff && matDate <= now) currentCount += 1;
++    const wk = isoWeekStart(matDate);
++    weekly.set(wk, (weekly.get(wk) ?? 0) + 1);
++  }
++
++  const allWeeks = [...weekly.entries()].sort((a, b) => a[0].localeCompare(b[0]));
++  const history = allWeeks.slice(-26).map(([weekStarting, count]) => ({ weekStarting, count }));
++
++  return { windowDays, currentCount, history };
 +}
 diff --git a/docker-server-ghosts-core.mjs b/docker-server-ghosts-core.mjs
 new file mode 100644
