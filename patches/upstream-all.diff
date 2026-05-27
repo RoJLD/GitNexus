@@ -23770,7 +23770,7 @@ index 25c5776..421605d 100644
  
    return <AppStateContext.Provider value={value}>{children}</AppStateContext.Provider>;
 diff --git a/gitnexus-web/src/hooks/useSigma.ts b/gitnexus-web/src/hooks/useSigma.ts
-index 461de0f..6fec239 100644
+index 461de0f..a506273 100644
 --- a/gitnexus-web/src/hooks/useSigma.ts
 +++ b/gitnexus-web/src/hooks/useSigma.ts
 @@ -8,6 +8,28 @@ import EdgeCurveProgram from '@sigma/edge-curve';
@@ -23802,7 +23802,7 @@ index 461de0f..6fec239 100644
  // Helper: Parse hex color to RGB
  const hexToRgb = (hex: string): { r: number; g: number; b: number } => {
    const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
-@@ -62,6 +84,46 @@ interface UseSigmaOptions {
+@@ -62,6 +84,51 @@ interface UseSigmaOptions {
    blastRadiusNodeIds?: Set<string>;
    animatedNodes?: Map<string, NodeAnimation>;
    visibleEdgeTypes?: EdgeType[];
@@ -23817,6 +23817,11 @@ index 461de0f..6fec239 100644
 +   *  diff mode in practice — the AppState's enter*Mode calls already make
 +   *  sure of that, but we defensively let diff win if both are set. */
 +  churnScores?: Map<string, number> | null;
++  /** Temporal filter mask (Phase 2 Item #1). When non-null, only the
++   *  node ids in this set are visible — all others are hidden. When null,
++   *  the filter is inactive and every node is shown. This is additive: it
++   *  never colors nodes, only potentially sets hidden: true. */
++  temporalFilteredNodeIds?: Set<string> | null;
 +}
 +
 +// Diff palette. Tuned to be readable on the dark background and to coexist
@@ -23849,7 +23854,7 @@ index 461de0f..6fec239 100644
  }
  
  interface UseSigmaReturn {
-@@ -78,8 +140,91 @@ interface UseSigmaReturn {
+@@ -78,8 +145,91 @@ interface UseSigmaReturn {
    selectedNode: string | null;
    setSelectedNode: (nodeId: string | null) => void;
    refreshHighlights: () => void;
@@ -23941,13 +23946,14 @@ index 461de0f..6fec239 100644
  // Noverlap for final cleanup - minimal since it starts with good positions
  const NOVERLAP_SETTINGS = {
    maxIterations: 20, // Reduced - less cleanup needed
-@@ -138,6 +283,38 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
+@@ -138,6 +288,39 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
    const blastRadiusRef = useRef<Set<string>>(new Set());
    const animatedNodesRef = useRef<Map<string, NodeAnimation>>(new Map());
    const visibleEdgeTypesRef = useRef<EdgeType[] | null>(null);
 +  const diffNodeStatusRef = useRef<Map<string, 'onlyInA' | 'onlyInB' | 'inBoth'> | null>(null);
 +  const diffEdgeStatusRef = useRef<Map<string, 'onlyInA' | 'onlyInB' | 'inBoth'> | null>(null);
 +  const churnScoresRef = useRef<Map<string, number> | null>(null);
++  const temporalFilteredNodeIdsRef = useRef<Set<string> | null>(null);
 +  // Tracks the ids of ghost nodes/edges currently injected into the
 +  // graph so `removeGhostLayer` (and the idempotent re-apply path in
 +  // `applyGhostLayer`) can drop them cleanly without scanning all nodes.
@@ -23980,13 +23986,14 @@ index 461de0f..6fec239 100644
    const layoutTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
    const animationFrameRef = useRef<number | null>(null);
    const [isLayoutRunning, setIsLayoutRunning] = useState(false);
-@@ -148,12 +325,18 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
+@@ -148,12 +331,20 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
      blastRadiusRef.current = options.blastRadiusNodeIds || new Set();
      animatedNodesRef.current = options.animatedNodes || new Map();
      visibleEdgeTypesRef.current = options.visibleEdgeTypes || null;
 +    diffNodeStatusRef.current = options.diffNodeStatus || null;
 +    diffEdgeStatusRef.current = options.diffEdgeStatus || null;
 +    churnScoresRef.current = options.churnScores || null;
++    temporalFilteredNodeIdsRef.current = options.temporalFilteredNodeIds ?? null;
      sigmaRef.current?.refresh();
    }, [
      options.highlightedNodeIds,
@@ -23996,10 +24003,11 @@ index 461de0f..6fec239 100644
 +    options.diffNodeStatus,
 +    options.diffEdgeStatus,
 +    options.churnScores,
++    options.temporalFilteredNodeIds,
    ]);
  
    // Animation loop for node effects
-@@ -222,6 +405,13 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
+@@ -222,6 +413,13 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
          curved: EdgeCurveProgram,
        },
  
@@ -24013,7 +24021,7 @@ index 461de0f..6fec239 100644
        // Custom hover renderer - dark background instead of white
        defaultDrawNodeHover: (context, data, settings) => {
          const label = data.label;
-@@ -283,6 +473,76 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
+@@ -283,6 +481,76 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
            return res;
          }
  
@@ -24090,7 +24098,23 @@ index 461de0f..6fec239 100644
          const currentSelected = selectedNodeRef.current;
          const highlighted = highlightedRef.current;
          const blastRadius = blastRadiusRef.current;
-@@ -393,6 +653,17 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
+@@ -387,12 +655,33 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
+           }
+         }
+ 
++        // Temporal filter mask (Phase 2 Item #1) — wins over all other
++        // reducers. When the filter set is non-null, nodes outside the
++        // set are hidden. This is additive: it never colors a node, only
++        // potentially sets hidden: true. Diff coloring + filter compose
++        // because diff sets `color`, filter sets `hidden`.
++        const temporalFilter = temporalFilteredNodeIdsRef.current;
++        if (temporalFilter !== null && !temporalFilter.has(node)) {
++          res.hidden = true;
++        }
++
+         return res;
+       },
+ 
        edgeReducer: (edge, data) => {
          const res = { ...data };
  
@@ -24108,7 +24132,7 @@ index 461de0f..6fec239 100644
          // Check edge type visibility first
          const visibleTypes = visibleEdgeTypesRef.current;
          if (visibleTypes && data.relationType) {
-@@ -402,6 +673,23 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
+@@ -402,6 +691,23 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
            }
          }
  
@@ -24132,7 +24156,7 @@ index 461de0f..6fec239 100644
          const currentSelected = selectedNodeRef.current;
          const highlighted = highlightedRef.current;
          const blastRadius = blastRadiusRef.current;
-@@ -629,6 +917,308 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
+@@ -629,6 +935,308 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
      sigmaRef.current?.refresh();
    }, []);
  
@@ -24441,7 +24465,7 @@ index 461de0f..6fec239 100644
    return {
      containerRef,
      sigmaRef,
-@@ -643,5 +1233,18 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
+@@ -643,5 +1251,18 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
      selectedNode,
      setSelectedNode,
      refreshHighlights,
