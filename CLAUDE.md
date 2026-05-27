@@ -217,6 +217,9 @@ gitnexus/
 │   ├── Dockerfile.web          We modify this (zip/unzip/git deps, COPY blocks)
 │   ├── docker-server.mjs       We add routes here
 │   ├── docker-server-*.mjs     One file per analytics endpoint (we own all of these)
+│   ├── gitnexus-web/src/lib/ghost-layout.ts        Augmented graph pure fns (match, layout, decay)
+│   ├── gitnexus-web/src/lib/ghost-node-program.ts  Sigma 3 NodeCircleProgram + dashed outline
+│   ├── gitnexus-web/src/services/ghosts-client.ts  /ghosts fetch + 30s cache + invalidate
 │   └── gitnexus-web/src/...    Frontend patches (state, panels, services)
 ├── vscode-extension/           Standalone VSCode extension (Tier 2.4) — survives upstream bumps
 ├── mcp-server/                 Standalone MCP stdio sidecar (Tier 2bis.1) — survives upstream bumps
