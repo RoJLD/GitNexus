@@ -17,19 +17,27 @@
 # NativeCommandError (e.g. `docker info` emits "WARNING: No swap limit
 # support" on Linux daemons → script aborts). Each step below checks
 # $LASTEXITCODE explicitly instead.
+param([switch]$Elysium)
+
+function Step([int]$k, [string]$label) {
+    if ($Elysium) { Write-Host "[ELYSIUM] $k/7: $label" } else { Write-Host $label -ForegroundColor Cyan }
+}
+
 Set-Location -Path $PSScriptRoot
 
 # --- 1. .env present? ---
+Step 1 "Checking configuration"
 if (-not (Test-Path ".env")) {
     Write-Host ""
     Write-Host "  .env is missing. Copy .env.example to .env and set PROJECTS_ROOT" -ForegroundColor Red
     Write-Host "  to your absolute host path before launching." -ForegroundColor Red
     Write-Host ""
-    Read-Host "Press Enter to exit"
+    if (-not $Elysium) { Read-Host "Press Enter to exit" }
     exit 1
 }
 
 # --- 2. Docker daemon reachable? Try to auto-start Rancher / Docker Desktop. ---
+Step 2 "Checking Docker daemon"
 function Test-Docker {
     docker info *>$null
     return ($LASTEXITCODE -eq 0)
@@ -48,7 +56,7 @@ if (-not (Test-Docker)) {
         Write-Host "  Docker is not reachable and no Rancher / Docker Desktop install was found." -ForegroundColor Red
         Write-Host "  Start it manually then relaunch." -ForegroundColor Red
         Write-Host ""
-        Read-Host "Press Enter to exit"
+        if (-not $Elysium) { Read-Host "Press Enter to exit" }
         exit 1
     }
 
@@ -65,13 +73,14 @@ if (-not (Test-Docker)) {
 
     if (-not $ready) {
         Write-Host "  Docker did not become reachable within ${timeoutSec}s. Open Rancher / Docker Desktop and retry." -ForegroundColor Red
-        Read-Host "Press Enter to exit"
+        if (-not $Elysium) { Read-Host "Press Enter to exit" }
         exit 1
     }
     Write-Host "Docker is up." -ForegroundColor Green
 }
 
 # --- 3. Release container names from a previous compose project, if any ---
+Step 3 "Releasing stale containers"
 # Old setup may have left "gitnexus" / "gitnexus-web" containers labeled with
 # a different compose-project (e.g. the experiment repo). Names are unique on
 # the daemon, so we must release them before our compose can recreate them.
@@ -132,7 +141,7 @@ function Get-RebuildReason([string]$service) {
     return $null
 }
 
-Write-Host "Checking image freshness..." -ForegroundColor Cyan
+Step 4 "Building images (cached if unchanged)"
 $beforeIds = @{
     "gitnexus" = Get-ImageId "gitnexus-derived:1.6.5-patched"
     "gitnexus-web" = Get-ImageId "gitnexus-web-derived:1.6.5-patched"
@@ -150,7 +159,7 @@ foreach ($svc in @("gitnexus", "gitnexus-web")) {
 docker compose build *>$null
 if ($LASTEXITCODE -ne 0) {
     Write-Host "  docker compose build failed. Run 'docker compose build' for details." -ForegroundColor Red
-    Read-Host "Press Enter to exit"
+    if (-not $Elysium) { Read-Host "Press Enter to exit" }
     exit 1
 }
 
@@ -174,6 +183,7 @@ foreach ($svc in @("gitnexus", "gitnexus-web")) {
 }
 
 # --- 5. Already running with the current images? Just open the browser. ---
+Step 5 "Checking running state"
 $runningCount = (docker ps -q --filter "name=^gitnexus$" --filter "status=running" 2>$null |
     Measure-Object).Count
 $runningWebCount = (docker ps -q --filter "name=^gitnexus-web$" --filter "status=running" 2>$null |
@@ -182,7 +192,7 @@ $bothRunning = ($runningCount -gt 0 -and $runningWebCount -gt 0)
 
 if ($bothRunning -and -not $anyImageChanged) {
     Write-Host "GitNexus is already running on the current images. Opening UI..." -ForegroundColor Green
-    Start-Process "http://localhost:4173"
+    if (-not $Elysium) { Start-Process "http://localhost:4173" }
     exit 0
 }
 
@@ -192,16 +202,16 @@ if ($bothRunning -and $anyImageChanged) {
 }
 
 # --- 6. Start services ---
-Write-Host "Starting services..." -ForegroundColor Cyan
+Step 6 "Starting services"
 docker compose up -d *>$null
 if ($LASTEXITCODE -ne 0) {
     Write-Host "  docker compose up failed. Check 'docker compose logs' for details." -ForegroundColor Red
-    Read-Host "Press Enter to exit"
+    if (-not $Elysium) { Read-Host "Press Enter to exit" }
     exit 1
 }
 
 # --- 7. Wait for API health ---
-Write-Host "Waiting for GitNexus API on http://localhost:4747 ..." -ForegroundColor Cyan
+Step 7 "Waiting for the API"
 $timeoutSec = 60
 $start = Get-Date
 $ready = $false
@@ -216,7 +226,7 @@ while (((Get-Date) - $start).TotalSeconds -lt $timeoutSec) {
 
 if (-not $ready) {
     Write-Host "  API did not respond within ${timeoutSec}s. Check 'docker compose logs gitnexus'." -ForegroundColor Red
-    Read-Host "Press Enter to exit"
+    if (-not $Elysium) { Read-Host "Press Enter to exit" }
     exit 1
 }
 
@@ -226,4 +236,4 @@ Write-Host "  GitNexus is up." -ForegroundColor Green
 Write-Host "  API:  http://localhost:4747" -ForegroundColor Green
 Write-Host "  UI:   http://localhost:4173" -ForegroundColor Green
 Write-Host ""
-Start-Process "http://localhost:4173"
+if (-not $Elysium) { Start-Process "http://localhost:4173" }
