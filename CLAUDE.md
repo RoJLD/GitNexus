@@ -165,6 +165,11 @@ curl -s -o /dev/null -w "ghosts: HTTP %{http_code}\n" \
 # /ghost-audit requires a prior /ghosts/sync — its 200 path returns cached audit metrics.
 curl -s -o /dev/null -w "ghost-audit: HTTP %{http_code}\n" \
   "http://localhost:4173/ghost-audit?repo=hmm_studio"
+# Cleanup + connectors (Tier 3.x — both endpoints respond even with no config / no expired ghosts)
+curl -s -o /dev/null -w "ghosts/cleanup-prompt: HTTP %{http_code}\n" \
+  -X POST "http://localhost:4173/ghosts/cleanup-prompt?repo=hmm_studio"
+curl -s -o /dev/null -w "ghosts/connector-suggestions: HTTP %{http_code}\n" \
+  "http://localhost:4173/ghosts/connector-suggestions?repo=hmm_studio"
 # Cross-repo endpoints — need ≥2 indexed repos.
 curl -s -o /dev/null -w "coupling/cross: HTTP %{http_code}\n" \
   "http://localhost:4173/coupling/cross?repos=hmm_studio,Experiment.Crypto.2026S1.RobinDenis"
