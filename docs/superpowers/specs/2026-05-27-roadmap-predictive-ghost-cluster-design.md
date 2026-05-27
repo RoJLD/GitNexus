@@ -305,3 +305,17 @@ Le sidecar machine-readable gagne une section `clusters: [...]` rendue par `rend
 ## 7. Suite
 
 Plan d'implémentation via `superpowers:writing-plans`. Dernière sub-spec parking de la série Roadmap Predictive (avant Augmented Timeline qui reste à brainstormer).
+
+---
+
+## Update 2026-05-27 — Shipped
+
+Ghost Cluster livré. Notes :
+- Hybride convention markdown `## 🔗 Clusters` + auto-derivation Union-Find sur dependsOn[].
+- 4 surfaces UI : Augmented halo (SVG overlay, convex hull) + Gantt swimlanes mode (3-state radio + showOnlyClusterBars) + Audit ClustersCard 7ème + Filters 3 toggles hiérarchiques.
+- Sidecar `.gitnexus/clusters.json` + roadmap.yml clusters: section reflection.
+- `GET /clusters?repo=&source=` + MCP tool `gitnexus_clusters` (20ème).
+- Status synthétisé (shipped/planned/cancelled/expired) avec declaredStatus override. expectedBy + grace logic réutilise `parseTargetDate` du CORE.
+- 9 tests (4 unit pure + 2 component + 1 integration + 1 e2e + tests yaml extension).
+- Open question 4 (auto-cluster id stability) : limitation acceptée, user promote en declared pour stabilité.
+- Local Node 21 bloque vitest 4.x ; CI Node 22 exerce le suite.
