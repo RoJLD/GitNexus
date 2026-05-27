@@ -10082,10 +10082,10 @@ index 2ee3569..2673914 100644
        {serverDisconnected && (
 diff --git a/gitnexus-web/src/components/AuditPanel.tsx b/gitnexus-web/src/components/AuditPanel.tsx
 new file mode 100644
-index 0000000..1cc09e0
+index 0000000..b570e15
 --- /dev/null
 +++ b/gitnexus-web/src/components/AuditPanel.tsx
-@@ -0,0 +1,154 @@
+@@ -0,0 +1,161 @@
 +import { useEffect, useState } from 'react';
 +import AuditSummary from './audit/AuditSummary';
 +import LeadTimeHistogram from './audit/LeadTimeHistogram';
@@ -10093,6 +10093,7 @@ index 0000000..1cc09e0
 +import VelocitySparkline from './audit/VelocitySparkline';
 +import PlanChurnList from './audit/PlanChurnList';
 +import GhostTable from './audit/GhostTable';
++import CleanupModal from './audit/CleanupModal';
 +
 +/**
 + * Roadmap-predictive Audit container.
@@ -10162,6 +10163,7 @@ index 0000000..1cc09e0
 +  const [ghosts, setGhosts] = useState<any[] | null>(null);
 +  const [error, setError] = useState<string | null>(null);
 +  const [highlightedId, setHighlightedId] = useState<string | null>(null);
++  const [cleanupOpen, setCleanupOpen] = useState(false);
 +
 +  async function loadAll() {
 +    setError(null);
@@ -10221,7 +10223,11 @@ index 0000000..1cc09e0
 +          </span>
 +        )}
 +      </header>
-+      <AuditSummary data={audit.summary} expired={audit.expired} />
++      <AuditSummary
++        data={audit.summary}
++        expired={audit.expired}
++        onExpiredClick={() => setCleanupOpen(true)}
++      />
 +      <SlippageBar data={audit.slippage} />
 +      <LeadTimeHistogram data={audit.leadTime} />
 +      <VelocitySparkline data={audit.velocity} />
@@ -10237,6 +10243,7 @@ index 0000000..1cc09e0
 +          onGhostSelect?.(id);
 +        }}
 +      />
++      <CleanupModal repo={repo} open={cleanupOpen} onClose={() => setCleanupOpen(false)} />
 +    </div>
 +  );
 +}
@@ -17742,10 +17749,10 @@ index 0000000..a370295
 +};
 diff --git a/gitnexus-web/src/components/audit/AuditSummary.tsx b/gitnexus-web/src/components/audit/AuditSummary.tsx
 new file mode 100644
-index 0000000..2b136a3
+index 0000000..dd96877
 --- /dev/null
 +++ b/gitnexus-web/src/components/audit/AuditSummary.tsx
-@@ -0,0 +1,66 @@
+@@ -0,0 +1,74 @@
 +/**
 + * AuditSummary — 5 always-on cards + a 6th "Expired" card that only
 + * appears when the audit response carries an `expired` block with
@@ -17773,9 +17780,10 @@ index 0000000..2b136a3
 +type Props = {
 +  data: Summary;
 +  expired?: Expired;
++  onExpiredClick?: () => void;
 +};
 +
-+export default function AuditSummary({ data, expired }: Props) {
++export default function AuditSummary({ data, expired, onExpiredClick }: Props) {
 +  return (
 +    <div className="audit-summary" data-testid="audit-summary">
 +      <div className="stat">
@@ -17799,7 +17807,14 @@ index 0000000..2b136a3
 +        <div className="label">Cancel rate</div>
 +      </div>
 +      {expired && expired.total > 0 && (
-+        <div className="stat status-expired" data-testid="stat-expired">
++        <div
++          className="stat status-expired"
++          data-testid="stat-expired"
++          onClick={onExpiredClick}
++          role={onExpiredClick ? 'button' : undefined}
++          tabIndex={onExpiredClick ? 0 : undefined}
++          style={onExpiredClick ? { cursor: 'pointer' } : undefined}
++        >
 +          <div className="value">{expired.total}</div>
 +          <div className="label">Expired</div>
 +          {expired.critical > 0 && (

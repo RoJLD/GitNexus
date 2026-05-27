@@ -1,5 +1,5 @@
-import { describe, it, expect } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { describe, it, expect, vi } from 'vitest';
+import { fireEvent, render, screen } from '@testing-library/react';
 import AuditSummary from '../../../../upstream/gitnexus-web/src/components/audit/AuditSummary';
 
 describe('AuditSummary', () => {
@@ -39,5 +39,18 @@ describe('AuditSummary', () => {
     );
     expect(container.querySelectorAll('.stat')).toHaveLength(5);
     expect(screen.queryByText('Expired')).not.toBeInTheDocument();
+  });
+
+  it('fires onExpiredClick when the Expired card is clicked', () => {
+    const onExpiredClick = vi.fn();
+    render(
+      <AuditSummary
+        data={{ total: 27, materialized: 24, planned: 2, cancelled: 1, cancellationRate: 0.037 }}
+        expired={{ total: 3, critical: 1, expiredButRecent: 2, list: [] }}
+        onExpiredClick={onExpiredClick}
+      />,
+    );
+    fireEvent.click(screen.getByTestId('stat-expired'));
+    expect(onExpiredClick).toHaveBeenCalledTimes(1);
   });
 });
