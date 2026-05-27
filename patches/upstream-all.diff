@@ -9551,6 +9551,166 @@ index 2ee3569..37d3705 100644
        <StatusBar />
  
        {serverDisconnected && (
+diff --git a/gitnexus-web/src/components/AuditPanel.tsx b/gitnexus-web/src/components/AuditPanel.tsx
+new file mode 100644
+index 0000000..1cc09e0
+--- /dev/null
++++ b/gitnexus-web/src/components/AuditPanel.tsx
+@@ -0,0 +1,154 @@
++import { useEffect, useState } from 'react';
++import AuditSummary from './audit/AuditSummary';
++import LeadTimeHistogram from './audit/LeadTimeHistogram';
++import SlippageBar from './audit/SlippageBar';
++import VelocitySparkline from './audit/VelocitySparkline';
++import PlanChurnList from './audit/PlanChurnList';
++import GhostTable from './audit/GhostTable';
++
++/**
++ * Roadmap-predictive Audit container.
++ *
++ * Fetches `/ghost-audit` (analytics) and `/ghosts` (raw list for the
++ * sortable table) in parallel. Renders one of three states:
++ *   - loading (spinner-ish placeholder)
++ *   - error (either 404 → "Run sync now" banner, or generic error)
++ *   - success (header + summary + 4 visualizations + churners list + table)
++ *
++ * Spec : docs/superpowers/specs/2026-05-26-roadmap-predictive-audit-design.md
++ */
++
++export interface AuditData {
++  computedAt: string;
++  cached: boolean;
++  summary: {
++    total: number;
++    materialized: number;
++    planned: number;
++    cancelled: number;
++    cancellationRate: number;
++  };
++  leadTime: {
++    medianDays: number | null;
++    p25Days: number | null;
++    p75Days: number | null;
++    maxDays: number | null;
++    distribution: { bucket: string; count: number }[];
++  };
++  slippage: {
++    early: number;
++    onTime: number;
++    late: number;
++    noTarget: number;
++    onTimePct: number | null;
++  };
++  planChurn: {
++    totalGhostsWithChurn: number;
++    avgChurnPerGhost: number;
++    topChurners: { id: string; churn: number; deltas: string[] }[];
++  };
++  velocity: {
++    windowDays: number;
++    currentCount: number;
++    history: { weekStarting: string; count: number }[];
++  };
++  // Update 1 (computeExpired, shipped earlier) — the audit response now
++  // carries an `expired` block too. Optional in the type for backwards
++  // compatibility with older snapshots cached before the field landed.
++  expired?: {
++    total: number;
++    critical: number;
++    expiredButRecent: number;
++    list: { id: string; expectedBy: string; daysPastExpiry: number; alertLevel: string }[];
++  };
++}
++
++export default function AuditPanel({
++  repo,
++  onGhostSelect,
++}: {
++  repo: string;
++  onGhostSelect?: (id: string) => void;
++}) {
++  const [audit, setAudit] = useState<AuditData | null>(null);
++  const [ghosts, setGhosts] = useState<any[] | null>(null);
++  const [error, setError] = useState<string | null>(null);
++  const [highlightedId, setHighlightedId] = useState<string | null>(null);
++
++  async function loadAll() {
++    setError(null);
++    const [auditRes, ghostsRes] = await Promise.all([
++      fetch(`/ghost-audit?repo=${encodeURIComponent(repo)}`),
++      fetch(`/ghosts?repo=${encodeURIComponent(repo)}`),
++    ]);
++    if (auditRes.status === 404 || ghostsRes.status === 404) {
++      setError('not-synced');
++      return;
++    }
++    if (!auditRes.ok || !ghostsRes.ok) {
++      setError('Failed to load audit data');
++      return;
++    }
++    setAudit(await auditRes.json());
++    setGhosts((await ghostsRes.json()).ghosts ?? []);
++  }
++
++  useEffect(() => {
++    loadAll();
++    // eslint-disable-next-line react-hooks/exhaustive-deps
++  }, [repo]);
++
++  async function handleSync() {
++    await fetch(`/ghosts/sync?repo=${encodeURIComponent(repo)}`, { method: 'POST' });
++    await loadAll();
++  }
++
++  if (error === 'not-synced') {
++    return (
++      <div className="audit-panel" data-testid="audit-panel">
++        <p>Roadmap not synced yet.</p>
++        <button onClick={handleSync}>Run sync now</button>
++      </div>
++    );
++  }
++  if (error) {
++    return (
++      <div className="audit-panel">
++        <p>Error: {error}</p>
++      </div>
++    );
++  }
++  if (!audit || !ghosts) {
++    return <div className="audit-panel">Loading audit…</div>;
++  }
++
++  return (
++    <div className="audit-panel" data-testid="audit-panel">
++      <header>
++        <h3>Audit roadmap</h3>
++        <span className="ghost-count">{audit.summary.total} ghosts</span>
++        {audit.cached && (
++          <span className="badge" title={`Computed at ${audit.computedAt}`}>
++            cached
++          </span>
++        )}
++      </header>
++      <AuditSummary data={audit.summary} expired={audit.expired} />
++      <SlippageBar data={audit.slippage} />
++      <LeadTimeHistogram data={audit.leadTime} />
++      <VelocitySparkline data={audit.velocity} />
++      <PlanChurnList
++        topChurners={audit.planChurn.topChurners}
++        onSelectChurner={(id) => setHighlightedId(id)}
++      />
++      <GhostTable
++        ghosts={ghosts}
++        highlightedId={highlightedId}
++        onGhostSelect={(id) => {
++          setHighlightedId(id);
++          onGhostSelect?.(id);
++        }}
++      />
++    </div>
++  );
++}
 diff --git a/gitnexus-web/src/components/BulkSnapshotModal.tsx b/gitnexus-web/src/components/BulkSnapshotModal.tsx
 new file mode 100644
 index 0000000..487fd21
