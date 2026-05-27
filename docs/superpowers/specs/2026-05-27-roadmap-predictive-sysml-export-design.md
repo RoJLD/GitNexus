@@ -196,3 +196,23 @@ curl -s -o /dev/null -w "sysml-export: HTTP %{http_code}\n" \
 ## 7. Suite
 
 Plan d'implémentation via `superpowers:writing-plans`. Bonus de la série Roadmap Predictive ; dernier item de l'IDEAS-PARKING avec une spec rédigée.
+
+---
+
+## Update 2026-05-27 — Shipped
+
+SysML export livré. Notes :
+
+- 2 renderers livrés : PlantUML SysML 1.7 (default) + Mermaid (fallback).
+- v1 ne consomme PAS le graph gitnexus complet (CALLS/IMPORTS) — juste les fichiers référencés par `ghost.links[]`. Évite l'explosion combinatoire sur les gros repos.
+- Mapping appliqué tel que spec : File→block, planned/expired ghost→requirement, links→<<satisfy>>, dependsOn→<<deriveReqt>>, Tier major→package.
+- Cancelled + materialized ghosts omis (v1 focus sur le futur planifié).
+- Tests : 2 unit + 1 integration. Runtime local Node 21 bloqué (vitest 4.x), CI Node 22.
+- 5 open questions du spec toutes résolues comme prévu.
+
+### Limitations connues
+
+1. Pas de graph CALLS/IMPORTS. Future option `?includeEdges=imports,calls`.
+2. Pas de skin/style PlantUML par défaut. User customise.
+3. > 200 ghosts peut produire un diagramme illisible — filtrer via `?tier=`.
+4. Pas de rendering PNG/SVG serveur — user passe par PlantUML chez lui.
