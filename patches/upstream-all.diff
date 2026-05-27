@@ -19665,6 +19665,76 @@ index e887e39..63ef61f 100644
    await assertOk(response);
    return response.json() as Promise<BackendRepo[]>;
  };
+diff --git a/gitnexus-web/src/services/ghosts-client.ts b/gitnexus-web/src/services/ghosts-client.ts
+new file mode 100644
+index 0000000..607b24c
+--- /dev/null
++++ b/gitnexus-web/src/services/ghosts-client.ts
+@@ -0,0 +1,64 @@
++/**
++ * Frontend client for the /ghosts endpoint of the CORE.
++ * 30-second in-memory cache keyed by repo basename.
++ *
++ * See spec : docs/superpowers/specs/2026-05-26-roadmap-predictive-augmented-graph-design.md
++ * (Section B — ghosts-client service).
++ */
++
++export type GhostRuntime = {
++  id: string;
++  declared: {
++    id: string;
++    tier: string | null;
++    title: string;
++    description: string;
++    status: 'planned' | 'materialized' | 'cancelled';
++    expectedLinks: { kind: 'path' | 'label'; value: string }[];
++    dependsOn: string[];
++    /** Optional ISO date / YYYY-MM / YYYY-Qx — drives time-decay opacity. */
++    expectedBy?: string | null;
++  };
++  plannedAt: { commit: string; date: string };
++  materializedAt: { commit: string; date: string; confirmedBy: 'manual' | 'auto' } | null;
++  cancelledAt: { commit: string; date: string } | null;
++  links: { file: string; matchedPattern?: string }[];
++};
++
++export type GhostsResponse = {
++  syncedAt: string;
++  syncedCommit: string;
++  ghosts: GhostRuntime[];
++};
++
++const CACHE = new Map<string, { at: number; data: GhostsResponse }>();
++const TTL_MS = 30_000;
++
++export async function fetchGhosts(
++  repo: string,
++  opts: { refresh?: boolean } = {},
++): Promise<GhostsResponse | null> {
++  const now = Date.now();
++  const cached = CACHE.get(repo);
++  if (!opts.refresh && cached && now - cached.at < TTL_MS) return cached.data;
++
++  const res = await fetch(`/ghosts?repo=${encodeURIComponent(repo)}`);
++  if (res.status === 404) return null;
++  if (!res.ok) throw new Error(`Failed to fetch /ghosts: ${res.status}`);
++  const data = (await res.json()) as GhostsResponse;
++  CACHE.set(repo, { at: now, data });
++  return data;
++}
++
++export function invalidateGhostsCache(repo?: string) {
++  if (repo) CACHE.delete(repo);
++  else CACHE.clear();
++}
++
++/**
++ * Test seam — exported for unit tests only. Not used in production.
++ * Lets a test inject a synthetic cache entry without monkey-patching `fetch`.
++ */
++export function _seedCacheForTests(repo: string, data: GhostsResponse, atMs: number = Date.now()) {
++  CACHE.set(repo, { at: atMs, data });
++}
 diff --git a/gitnexus-web/src/services/mutation-engine.ts b/gitnexus-web/src/services/mutation-engine.ts
 new file mode 100644
 index 0000000..02e6bf4
