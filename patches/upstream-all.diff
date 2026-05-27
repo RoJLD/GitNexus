@@ -2790,6 +2790,99 @@ index 0000000..0c5c0fd
 +  if (!Number.isFinite(confidence) || confidence < 0 || confidence > 1) return null;
 +  return { action: obj.action, rationale: obj.rationale, confidence };
 +}
+diff --git a/docker-server-ghost-cleanup.mjs b/docker-server-ghost-cleanup.mjs
+new file mode 100644
+index 0000000..24517f0
+--- /dev/null
++++ b/docker-server-ghost-cleanup.mjs
+@@ -0,0 +1,87 @@
++// upstream/docker-server-ghost-cleanup.mjs
++import { execFile } from 'node:child_process';
++import { promisify } from 'node:util';
++import { buildCleanupPrompt } from './docker-server-ghost-cleanup-core.mjs';
++import { computeExpired } from './docker-server-ghost-audit-core.mjs';
++import { matchExpectedLinks } from './docker-server-ghosts-core.mjs';
++import { readLatestGhosts } from './docker-server-ghosts.mjs';
++import { findRepoByName } from './docker-server-snapshots.mjs';
++
++const execFileP = promisify(execFile);
++
++async function getRecentCommits(repoPath, days = 90) {
++  try {
++    const { stdout } = await execFileP(
++      'git',
++      ['log', `--since=${days} days ago`, '--pretty=format:%h %s'],
++      { cwd: repoPath, maxBuffer: 4 * 1024 * 1024 },
++    );
++    return stdout.split('\n').filter(Boolean).slice(0, 50);
++  } catch {
++    return [];
++  }
++}
++
++export async function buildCleanupPrompts(repoPath) {
++  const runtime = await readLatestGhosts(repoPath);
++  if (!runtime) return { expired: [] };
++  const expired = computeExpired(runtime.ghosts || [], { gracePeriodDays: 30, now: new Date() });
++  if (expired.total === 0) return { expired: [] };
++
++  const allFiles = new Set();
++  for (const g of runtime.ghosts || []) {
++    if (g.links) for (const l of g.links) if (l.file) allFiles.add(l.file);
++  }
++  const recentCommits = await getRecentCommits(repoPath, 90);
++
++  const out = [];
++  for (const entry of expired.list) {
++    const ghost = (runtime.ghosts || []).find(g => g.id === entry.id);
++    if (!ghost) continue;
++    const { matched } = matchExpectedLinks(ghost.declared, [...allFiles]);
++    const prompt = buildCleanupPrompt({
++      ghost: { ...ghost, daysPastExpiry: entry.daysPastExpiry },
++      matchedNodes: matched.map(m => m.matchedPath),
++      recentCommits,
++    });
++    out.push({
++      id: entry.id,
++      title: ghost.declared?.title || entry.id,
++      expectedBy: ghost.declared?.expectedBy,
++      daysPastExpiry: entry.daysPastExpiry,
++      alertLevel: entry.alertLevel,
++      prompt,
++    });
++  }
++  return { expired: out };
++}
++
++export async function handleGhostsCleanupPrompt(url, res, opts) {
++  const repoName = url.searchParams.get('repo');
++  if (!repoName) {
++    res.writeHead(400, { 'Content-Type': 'application/json' });
++    return res.end(JSON.stringify({ error: 'missing repo' }));
++  }
++  const repo = await findRepoByName(repoName, opts.api);
++  if (!repo) {
++    res.writeHead(400, { 'Content-Type': 'application/json' });
++    return res.end(JSON.stringify({ error: `repo not found: ${repoName}` }));
++  }
++  const repoPath = repo.repoPath || repo.path;
++  try {
++    const result = await buildCleanupPrompts(repoPath);
++    res.writeHead(200, { 'Content-Type': 'application/json' });
++    res.end(JSON.stringify(result));
++  } catch (err) {
++    res.writeHead(500, { 'Content-Type': 'application/json' });
++    res.end(JSON.stringify({ error: err.message }));
++  }
++}
++
++export async function handleGhostsCleanupRoute(req, url, res, opts) {
++  if (url.pathname === '/ghosts/cleanup-prompt' && req.method === 'POST') {
++    await handleGhostsCleanupPrompt(url, res, opts);
++    return true;
++  }
++  return false;
++}
 diff --git a/docker-server-ghosts-core.mjs b/docker-server-ghosts-core.mjs
 new file mode 100644
 index 0000000..71f15da
