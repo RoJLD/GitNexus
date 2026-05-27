@@ -2333,10 +2333,10 @@ index 0000000..c57e279
 +}
 diff --git a/docker-server-ghost-audit-core.mjs b/docker-server-ghost-audit-core.mjs
 new file mode 100644
-index 0000000..ee817b1
+index 0000000..325cefe
 --- /dev/null
 +++ b/docker-server-ghost-audit-core.mjs
-@@ -0,0 +1,203 @@
+@@ -0,0 +1,249 @@
 +/**
 + * Pure functions for the roadmap-predictive Audit view.
 + * No I/O. Imports from docker-server-ghosts-core.mjs only if needed.
@@ -2539,6 +2539,52 @@ index 0000000..ee817b1
 +  const history = allWeeks.slice(-26).map(([weekStarting, count]) => ({ weekStarting, count }));
 +
 +  return { windowDays, currentCount, history };
++}
++
++// --- Expired (Update 1 — 6th audit metric) ---
++
++/**
++ * Counts and lists ghosts whose declared.expectedBy has passed (with grace period)
++ * and that have not been materialized or cancelled. Critical = past expiry by > 50%
++ * of the original time-to-expiry from plannedAt.date (so "tier-3-2" with
++ * plannedAt 2026-01-01, expectedBy 2026-04-30, now 2026-05-26+ becomes critical).
++ *
++ * @param {Array} ghosts  runtime ghost objects (with .declared, .plannedAt, .materializedAt, .cancelledAt).
++ * @param {{ gracePeriodDays?: number, now?: Date }} opts
++ * @returns {{ total: number, critical: number, expiredButRecent: number, list: Array }}
++ */
++export function computeExpired(ghosts, opts = {}) {
++  const gracePeriodDays = opts.gracePeriodDays ?? 30;
++  const now = opts.now ? new Date(opts.now) : new Date();
++  const out = { total: 0, critical: 0, expiredButRecent: 0, list: [] };
++  for (const g of ghosts || []) {
++    if (g.materializedAt || g.cancelledAt) continue;
++    const expectedByStr = g.declared?.expectedBy;
++    if (!expectedByStr) continue;
++    const expectedByDate = parseTargetDate(expectedByStr);
++    if (!expectedByDate) continue;
++    const expiryWithGrace = new Date(expectedByDate.getTime() + gracePeriodDays * 86400000);
++    if (now <= expiryWithGrace) continue;
++    const daysPastExpiry = Math.floor((now - expiryWithGrace) / 86400000);
++    // critical = > 50% past the original plannedAt→expectedBy span
++    const plannedAtDate = g.plannedAt?.date ? new Date(g.plannedAt.date) : null;
++    let alertLevel = 'expiredButRecent';
++    if (plannedAtDate) {
++      const originalSpanMs = expectedByDate - plannedAtDate;
++      if (originalSpanMs > 0 && (now - expectedByDate) > 0.5 * originalSpanMs) alertLevel = 'critical';
++    }
++    out.total += 1;
++    if (alertLevel === 'critical') out.critical += 1;
++    else out.expiredButRecent += 1;
++    out.list.push({
++      id: g.id,
++      expectedBy: expectedByStr,
++      daysPastExpiry,
++      alertLevel,
++    });
++  }
++  out.list.sort((a, b) => b.daysPastExpiry - a.daysPastExpiry);
++  return out;
 +}
 diff --git a/docker-server-ghosts-core.mjs b/docker-server-ghosts-core.mjs
 new file mode 100644
