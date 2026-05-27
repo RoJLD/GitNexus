@@ -376,6 +376,26 @@ const TOOLS = [
       return { ok: true, summary: s, audit };
     },
   },
+  {
+    name: 'gitnexus_clusters',
+    description: 'Returns the ghost clusters for a repo. A cluster groups 2+ related ghosts. Two sources: "declared" (from `## 🔗 Clusters` section in ROADMAP.md) or "auto" (connected components of the dependsOn graph). Each cluster carries aggregate counts + synthesizedStatus ({shipped|planned|cancelled|expired}). Use after gitnexus_ghosts_sync.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        repo: { type: 'string' },
+        source: { type: 'string', enum: ['declared', 'auto'], description: 'Optional filter by source.' },
+      },
+      required: ['repo'],
+      additionalProperties: false,
+    },
+    handler: async ({ repo, source }) => {
+      const params = { repo };
+      if (source) params.source = source;
+      const data = await callWeb('/clusters', params);
+      const summary = formatClustersSummary(data);
+      return { ok: true, summary, data };
+    },
+  },
 ];
 
 function formatGhostAuditSummary(audit) {
@@ -397,6 +417,22 @@ function formatGhostAuditSummary(audit) {
     `  Velocity (${v.windowDays ?? 28}d): ${v.currentCount ?? 0} materializations.`,
     `  Expired: ${x.total ?? 0}${x.critical ? ` (${x.critical} critical)` : ''}.`,
   ].join('\n');
+}
+
+function formatClustersSummary(data) {
+  if (!data || data.error) return data?.error || 'no clusters';
+  const cs = data.clusters || [];
+  if (cs.length === 0) return 'No clusters declared or auto-derived for this repo.';
+  return [
+    `${cs.length} cluster(s) (synced ${data.syncedAt}):`,
+    ...cs.slice(0, 8).map((c) => {
+      const agg = c.aggregate || {};
+      const pct = typeof agg.completionPct === 'number' ? agg.completionPct.toFixed(0) : '0';
+      const expectedBy = c.expectedBy ? ` · expectedBy=${c.expectedBy}` : '';
+      return `  - [${c.synthesizedStatus}] ${c.title} (${pct}% · ${agg.materialized ?? 0}/${agg.total ?? 0} matérialisés${expectedBy}) [source=${c.source}]`;
+    }),
+    cs.length > 8 ? `  ... +${cs.length - 8} more` : '',
+  ].filter(Boolean).join('\n');
 }
 
 // ── HTTP helpers ─────────────────────────────────────────────────────

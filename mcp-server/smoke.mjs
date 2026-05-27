@@ -83,18 +83,18 @@ try {
 
   notify('notifications/initialized');
 
-  // 2. tools/list — should list 19 tools (18 + ghost_audit)
+  // 2. tools/list — should list 20 tools (19 + clusters)
   const list = await send('tools/list');
   if (list.error) fail(`tools/list: ${list.error.message}`);
   const tools = list.result?.tools || [];
-  if (tools.length !== 19) fail(`tools/list: expected 19 tools, got ${tools.length}`);
+  if (tools.length !== 20) fail(`tools/list: expected 20 tools, got ${tools.length}`);
   for (const expected of [
     'gitnexus_list_repos', 'gitnexus_entropy', 'gitnexus_churn', 'gitnexus_coupling',
     'gitnexus_growth', 'gitnexus_lifespan', 'gitnexus_ownership', 'gitnexus_dissonance',
     'gitnexus_semantic_labels', 'gitnexus_coupling_cross', 'gitnexus_growth_cross',
     'gitnexus_similarity', 'gitnexus_entropy_commits', 'gitnexus_watches',
     'gitnexus_repo_by_id', 'gitnexus_commit_footprint', 'gitnexus_snapshot_auto',
-    'gitnexus_snapshot_from_pr', 'gitnexus_ghost_audit',
+    'gitnexus_snapshot_from_pr', 'gitnexus_ghost_audit', 'gitnexus_clusters',
   ]) {
     if (!tools.find((t) => t.name === expected)) fail(`tools/list: missing ${expected}`);
   }
@@ -135,6 +135,22 @@ try {
         pass(`gitnexus_ghost_audit(${repo}) → ${payload.audit?.summary?.total ?? '?'} ghosts (cached=${payload.audit?.cached ?? '?'})`);
       } else {
         fail(`gitnexus_ghost_audit(${repo}): unexpected response shape`);
+      }
+      // 4c. tools/call gitnexus_clusters — hits gitnexus-web at :4173
+      // Tolerant: a repo without synced ghosts (or without clusters.json yet)
+      // is expected to error; we only care that the handler wires through.
+      const clusters = await send('tools/call', {
+        name: 'gitnexus_clusters',
+        arguments: { repo },
+      });
+      if (clusters.result?.isError) {
+        console.warn(`SKIP: gitnexus_clusters(${repo}) returned error (no clusters synced yet?): ${clusters.result.content[0]?.text}`);
+      } else if (Array.isArray(clusters.result?.content) && clusters.result.content[0]?.type === 'text') {
+        const payload = JSON.parse(clusters.result.content[0].text);
+        const cs = payload.data?.clusters || [];
+        pass(`gitnexus_clusters(${repo}) → ${cs.length} cluster(s)`);
+      } else {
+        fail(`gitnexus_clusters(${repo}): unexpected response shape`);
       }
     }
   } else {
