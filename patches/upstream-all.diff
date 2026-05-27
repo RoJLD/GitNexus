@@ -23799,10 +23799,10 @@ index 25c5776..421605d 100644
  
    return <AppStateContext.Provider value={value}>{children}</AppStateContext.Provider>;
 diff --git a/gitnexus-web/src/hooks/useSigma.ts b/gitnexus-web/src/hooks/useSigma.ts
-index 461de0f..a0f56ad 100644
+index 461de0f..d678e66 100644
 --- a/gitnexus-web/src/hooks/useSigma.ts
 +++ b/gitnexus-web/src/hooks/useSigma.ts
-@@ -8,6 +8,28 @@ import EdgeCurveProgram from '@sigma/edge-curve';
+@@ -8,6 +8,34 @@ import EdgeCurveProgram from '@sigma/edge-curve';
  import { SigmaNodeAttributes, SigmaEdgeAttributes } from '../lib/graph-adapter';
  import type { NodeAnimation } from './useAppState';
  import type { EdgeType } from '../lib/constants';
@@ -23828,10 +23828,16 @@ index 461de0f..a0f56ad 100644
 +  pointInPolygon,
 +  type Point,
 +} from '../lib/cluster-layout';
++import {
++  loadLayout,
++  applyLayoutToGraph,
++  saveLayoutFromGraph,
++  clearLayout,
++} from '../lib/layout-cache';
  // Helper: Parse hex color to RGB
  const hexToRgb = (hex: string): { r: number; g: number; b: number } => {
    const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
-@@ -62,6 +84,51 @@ interface UseSigmaOptions {
+@@ -62,12 +90,65 @@ interface UseSigmaOptions {
    blastRadiusNodeIds?: Set<string>;
    animatedNodes?: Map<string, NodeAnimation>;
    visibleEdgeTypes?: EdgeType[];
@@ -23883,7 +23889,22 @@ index 461de0f..a0f56ad 100644
  }
  
  interface UseSigmaReturn {
-@@ -78,8 +145,91 @@ interface UseSigmaReturn {
+   containerRef: React.RefObject<HTMLDivElement | null>;
+   sigmaRef: React.RefObject<Sigma | null>;
+-  setGraph: (graph: Graph<SigmaNodeAttributes, SigmaEdgeAttributes>) => void;
++  setGraph: (
++    graph: Graph<SigmaNodeAttributes, SigmaEdgeAttributes>,
++    opts?: { cacheKey?: string },
++  ) => void;
++  /**
++   * Wipe persisted layout cache for `cacheKey` and re-run FA2 on the
++   * currently-mounted graph. Header "Recompute layout" button hook.
++   */
++  recomputeLayout: (cacheKey?: string) => void;
+   zoomIn: () => void;
+   zoomOut: () => void;
+   resetZoom: () => void;
+@@ -78,8 +159,91 @@ interface UseSigmaReturn {
    selectedNode: string | null;
    setSelectedNode: (nodeId: string | null) => void;
    refreshHighlights: () => void;
@@ -23975,7 +23996,7 @@ index 461de0f..a0f56ad 100644
  // Noverlap for final cleanup - minimal since it starts with good positions
  const NOVERLAP_SETTINGS = {
    maxIterations: 20, // Reduced - less cleanup needed
-@@ -138,6 +288,39 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
+@@ -138,6 +302,39 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
    const blastRadiusRef = useRef<Set<string>>(new Set());
    const animatedNodesRef = useRef<Map<string, NodeAnimation>>(new Map());
    const visibleEdgeTypesRef = useRef<EdgeType[] | null>(null);
@@ -24015,7 +24036,7 @@ index 461de0f..a0f56ad 100644
    const layoutTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
    const animationFrameRef = useRef<number | null>(null);
    const [isLayoutRunning, setIsLayoutRunning] = useState(false);
-@@ -148,12 +331,20 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
+@@ -148,12 +345,20 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
      blastRadiusRef.current = options.blastRadiusNodeIds || new Set();
      animatedNodesRef.current = options.animatedNodes || new Map();
      visibleEdgeTypesRef.current = options.visibleEdgeTypes || null;
@@ -24036,7 +24057,7 @@ index 461de0f..a0f56ad 100644
    ]);
  
    // Animation loop for node effects
-@@ -222,6 +413,13 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
+@@ -222,6 +427,13 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
          curved: EdgeCurveProgram,
        },
  
@@ -24050,7 +24071,7 @@ index 461de0f..a0f56ad 100644
        // Custom hover renderer - dark background instead of white
        defaultDrawNodeHover: (context, data, settings) => {
          const label = data.label;
-@@ -283,6 +481,87 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
+@@ -283,6 +495,87 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
            return res;
          }
  
@@ -24138,7 +24159,7 @@ index 461de0f..a0f56ad 100644
          const currentSelected = selectedNodeRef.current;
          const highlighted = highlightedRef.current;
          const blastRadius = blastRadiusRef.current;
-@@ -393,6 +672,17 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
+@@ -393,6 +686,17 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
        edgeReducer: (edge, data) => {
          const res = { ...data };
  
@@ -24156,7 +24177,7 @@ index 461de0f..a0f56ad 100644
          // Check edge type visibility first
          const visibleTypes = visibleEdgeTypesRef.current;
          if (visibleTypes && data.relationType) {
-@@ -402,6 +692,23 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
+@@ -402,6 +706,23 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
            }
          }
  
@@ -24180,7 +24201,148 @@ index 461de0f..a0f56ad 100644
          const currentSelected = selectedNodeRef.current;
          const highlighted = highlightedRef.current;
          const blastRadius = blastRadiusRef.current;
-@@ -629,6 +936,308 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
+@@ -500,50 +821,66 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
+     };
+   }, []);
+ 
+-  // Run ForceAtlas2 layout
+-  const runLayout = useCallback((graph: Graph<SigmaNodeAttributes, SigmaEdgeAttributes>) => {
+-    const nodeCount = graph.order;
+-    if (nodeCount === 0) return;
++  // Run ForceAtlas2 layout. When `opts.cacheKey` is provided, persist the
++  // converged positions to `localStorage` (via `saveLayoutFromGraph`) so that
++  // the next `setGraph(graph, { cacheKey })` can restore them and skip FA2.
++  const runLayout = useCallback(
++    (
++      graph: Graph<SigmaNodeAttributes, SigmaEdgeAttributes>,
++      opts: { cacheKey?: string } = {},
++    ) => {
++      const nodeCount = graph.order;
++      if (nodeCount === 0) return;
++
++      // Kill existing
++      if (layoutRef.current) {
++        layoutRef.current.kill();
++        layoutRef.current = null;
++      }
++      if (layoutTimeoutRef.current) {
++        clearTimeout(layoutTimeoutRef.current);
++        layoutTimeoutRef.current = null;
++      }
+ 
+-    // Kill existing
+-    if (layoutRef.current) {
+-      layoutRef.current.kill();
+-      layoutRef.current = null;
+-    }
+-    if (layoutTimeoutRef.current) {
+-      clearTimeout(layoutTimeoutRef.current);
+-      layoutTimeoutRef.current = null;
+-    }
++      // Get settings
++      const inferredSettings = forceAtlas2.inferSettings(graph);
++      const customSettings = getFA2Settings(nodeCount);
++      const settings = { ...inferredSettings, ...customSettings };
+ 
+-    // Get settings
+-    const inferredSettings = forceAtlas2.inferSettings(graph);
+-    const customSettings = getFA2Settings(nodeCount);
+-    const settings = { ...inferredSettings, ...customSettings };
++      const layout = new FA2Layout(graph, { settings });
+ 
+-    const layout = new FA2Layout(graph, { settings });
++      layoutRef.current = layout;
++      layout.start();
++      setIsLayoutRunning(true);
+ 
+-    layoutRef.current = layout;
+-    layout.start();
+-    setIsLayoutRunning(true);
++      const duration = getLayoutDuration(nodeCount);
+ 
+-    const duration = getLayoutDuration(nodeCount);
++      layoutTimeoutRef.current = setTimeout(() => {
++        if (layoutRef.current) {
++          layoutRef.current.stop();
++          layoutRef.current = null;
+ 
+-    layoutTimeoutRef.current = setTimeout(() => {
+-      if (layoutRef.current) {
+-        layoutRef.current.stop();
+-        layoutRef.current = null;
++          // Light noverlap cleanup
++          noverlap.assign(graph, NOVERLAP_SETTINGS);
++          sigmaRef.current?.refresh();
+ 
+-        // Light noverlap cleanup
+-        noverlap.assign(graph, NOVERLAP_SETTINGS);
+-        sigmaRef.current?.refresh();
++          setIsLayoutRunning(false);
+ 
+-        setIsLayoutRunning(false);
+-      }
+-    }, duration);
+-  }, []);
++          // Persist converged positions for fast revisit on next setGraph.
++          if (opts.cacheKey) {
++            saveLayoutFromGraph(opts.cacheKey, graph);
++          }
++        }
++      }, duration);
++    },
++    [],
++  );
+ 
+   const setGraph = useCallback(
+-    (newGraph: Graph<SigmaNodeAttributes, SigmaEdgeAttributes>) => {
++    (
++      newGraph: Graph<SigmaNodeAttributes, SigmaEdgeAttributes>,
++      opts: { cacheKey?: string } = {},
++    ) => {
+       const sigma = sigmaRef.current;
+       if (!sigma) return;
+ 
+@@ -560,12 +897,38 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
+       sigma.setGraph(newGraph);
+       setSelectedNode(null);
+ 
+-      runLayout(newGraph);
++      // Fast path: cached layout covers ≥80% of current node set →
++      // restore positions, skip FA2, just animate camera and refresh.
++      if (opts.cacheKey && newGraph.order > 0) {
++        const cached = loadLayout(opts.cacheKey);
++        if (cached) {
++          const { applied } = applyLayoutToGraph(cached, newGraph);
++          if (applied / newGraph.order >= 0.8) {
++            sigma.refresh();
++            sigma.getCamera().animatedReset({ duration: 200 });
++            return;
++          }
++        }
++      }
++
++      runLayout(newGraph, { cacheKey: opts.cacheKey });
+       sigma.getCamera().animatedReset({ duration: 500 });
+     },
+     [runLayout, setSelectedNode],
+   );
+ 
++  // Wipe cached positions for `cacheKey` (if any) and re-run FA2 on the
++  // currently-mounted graph. Bound to the Header "Recompute layout" button.
++  const recomputeLayout = useCallback(
++    (cacheKey?: string) => {
++      const graph = graphRef.current;
++      if (!graph || graph.order === 0) return;
++      if (cacheKey) clearLayout(cacheKey);
++      runLayout(graph, { cacheKey });
++    },
++    [runLayout],
++  );
++
+   const focusNode = useCallback((nodeId: string) => {
+     const sigma = sigmaRef.current;
+     const graph = graphRef.current;
+@@ -629,10 +992,313 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
      sigmaRef.current?.refresh();
    }, []);
  
@@ -24489,7 +24651,12 @@ index 461de0f..a0f56ad 100644
    return {
      containerRef,
      sigmaRef,
-@@ -643,5 +1252,18 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
+     setGraph,
++    recomputeLayout,
+     zoomIn,
+     zoomOut,
+     resetZoom,
+@@ -643,5 +1309,18 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
      selectedNode,
      setSelectedNode,
      refreshHighlights,
