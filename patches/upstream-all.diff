@@ -18864,6 +18864,68 @@ index 0000000..ba51c80
 +    </rect>
 +  );
 +}
+diff --git a/gitnexus-web/src/components/gantt/GanttRow.tsx b/gitnexus-web/src/components/gantt/GanttRow.tsx
+new file mode 100644
+index 0000000..d14ffea
+--- /dev/null
++++ b/gitnexus-web/src/components/gantt/GanttRow.tsx
+@@ -0,0 +1,56 @@
++/**
++ * GanttRow — one ghost line in the Gantt chart.
++ *
++ * Left column : truncated title (max 28 chars, ellipsis).
++ * Right column : bar area, translated by `labelWidth`.
++ *
++ * Whole group is clickable — forwards the ghostId to onClick so the
++ * parent panel can drive selection / detail-panel opening.
++ *
++ * See docs/superpowers/specs/2026-05-26-roadmap-predictive-gantt-design.md
++ */
++
++import type { GanttRow as GanttRowData } from '../../lib/gantt-layout';
++import GanttBar from './GanttBar';
++
++type Props = {
++  row: GanttRowData;
++  scale: (d: Date) => number;
++  y: number;
++  height: number;
++  labelWidth: number;
++  onClick: (ghostId: string) => void;
++};
++
++const MAX_LABEL_CHARS = 28;
++
++function truncate(s: string): string {
++  return s.length > MAX_LABEL_CHARS ? s.slice(0, MAX_LABEL_CHARS - 2) + '…' : s;
++}
++
++export default function GanttRow({ row, scale, y, height, labelWidth, onClick }: Props) {
++  return (
++    <g
++      className="gantt-row"
++      data-ghost-id={row.ghostId}
++      onClick={() => onClick(row.ghostId)}
++      style={{ cursor: 'pointer' }}
++    >
++      <text x={4} y={y + height / 2 + 4} fontSize={11} fill="#ddd">
++        {truncate(row.title)}
++      </text>
++      <g transform={`translate(${labelWidth}, 0)`}>
++        {row.bars.map((bar, i) => (
++          <GanttBar
++            key={i}
++            bar={bar}
++            scale={scale}
++            y={y + 3}
++            height={height - 6}
++            title={`${row.title} (${row.status})`}
++          />
++        ))}
++      </g>
++    </g>
++  );
++}
 diff --git a/gitnexus-web/src/core/llm/agent.ts b/gitnexus-web/src/core/llm/agent.ts
 index 49862a9..5c552dd 100644
 --- a/gitnexus-web/src/core/llm/agent.ts
