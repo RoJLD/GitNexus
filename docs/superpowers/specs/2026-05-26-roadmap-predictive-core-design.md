@@ -318,3 +318,16 @@ Local : `node --check` + smoke `node -e "import(...)..."` à chaque tâche. CI L
 ### Suite
 
 Les sub-specs Audit / Augmented graph / Cleanup+connectors / Gantt / Brainstorm-hook restent à exécuter dans cet ordre (cf [IDEAS-PARKING-roadmap-predictive.md](IDEAS-PARKING-roadmap-predictive.md)). Brainstorms déjà faits pour Audit / Augmented / Gantt / Cleanup ; à brainstormer encore : Brainstorm-hook + SysML (bonus).
+
+---
+
+## Update 2026-05-27 — Brainstorm-hook integration
+
+Suite à la livraison de la [sub-spec Brainstorm-hook](2026-05-26-roadmap-predictive-brainstorm-hook-design.md), le CORE parser reconnaît une 3ème source de ghosts :
+
+- `## ✅ Déjà livré` — table rows → ghosts `materialized` (déjà supporté)
+- `### N.M — Title ✅/🗑️/(no emoji)` — Tier subsections → ghosts par statut (déjà supporté)
+- **NOUVEAU** : `## 🧪 From spec brainstorms` — table rows entre `<!-- specs:start -->` / `<!-- specs:end -->` markers → ghosts `planned` automatiquement créés par `scripts/ghost-from-spec.mjs`
+
+Implémentation : 1 nouvelle regex (`FROM_SPEC_SECTION_RE`) + branche dans le parser pour set `defaultStatus = 'planned'` quand la section est rencontrée. Aucun changement de schéma JSON.
+
