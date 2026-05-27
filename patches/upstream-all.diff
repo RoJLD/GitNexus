@@ -6801,10 +6801,10 @@ index 0000000..810a2bd
 +}
 diff --git a/docker-server-snapshot-incremental.mjs b/docker-server-snapshot-incremental.mjs
 new file mode 100644
-index 0000000..5d18699
+index 0000000..9811bb3
 --- /dev/null
 +++ b/docker-server-snapshot-incremental.mjs
-@@ -0,0 +1,484 @@
+@@ -0,0 +1,498 @@
 +/**
 + * Incremental snapshot — Phase C of the incremental-snapshots design.
 + *
@@ -7120,6 +7120,12 @@ index 0000000..5d18699
 +  }
 +  const filters = mergeFilters(body);
 +  const force = !!body.force;
++  // reuseDump: skip the worktree+analyze and re-filter the dump left by a
++  // prior call for the SAME commit. Used by the bench to apply N filter
++  // combos to one analyze (6× fewer analyzes). Caller is responsible for
++  // having run a non-reuse pass on this commit first; we don't re-verify
++  // the dump's provenance beyond its existence.
++  const reuseDump = !!body.reuseDump;
 +
 +  const baseRepo = repoName.split('@')[0];
 +  const live = await findRepoByName(baseRepo, opts.api);
@@ -7168,30 +7174,38 @@ index 0000000..5d18699
 +    }
 +  }
 +
-+  // Worktree setup.
 +  const wtPath = worktreePath(repoPath);
-+  const t0 = Date.now();
-+  let worktreeStatus;
-+  try {
-+    worktreeStatus = await ensureWorktree(repoPath, wtPath, fullSha);
-+  } catch (err) {
-+    res.writeHead(500, { 'Content-Type': 'application/json' });
-+    res.end(JSON.stringify({ error: `worktree setup failed: ${err.message}` }));
-+    return;
-+  }
-+  const tWorktree = Date.now() - t0;
++  let worktreeStatus = { created: false, reused: false };
++  let tWorktree = 0;
++  let tAnalyze = 0;
 +
-+  // Analyze.
-+  const tAnalyzeStart = Date.now();
-+  let analyzeResult;
-+  try {
-+    analyzeResult = await triggerAnalyze(opts.api, wtPath);
-+  } catch (err) {
-+    res.writeHead(502, { 'Content-Type': 'application/json' });
-+    res.end(JSON.stringify({ error: `analyze failed: ${err.message}` }));
-+    return;
++  if (reuseDump) {
++    // Skip worktree + analyze entirely. The dump from the previous
++    // (non-reuse) pass on this commit is still on disk in the worktree.
++    worktreeStatus = { created: false, reused: true };
++  } else {
++    // Worktree setup.
++    const t0 = Date.now();
++    try {
++      worktreeStatus = await ensureWorktree(repoPath, wtPath, fullSha);
++    } catch (err) {
++      res.writeHead(500, { 'Content-Type': 'application/json' });
++      res.end(JSON.stringify({ error: `worktree setup failed: ${err.message}` }));
++      return;
++    }
++    tWorktree = Date.now() - t0;
++
++    // Analyze.
++    const tAnalyzeStart = Date.now();
++    try {
++      await triggerAnalyze(opts.api, wtPath);
++    } catch (err) {
++      res.writeHead(502, { 'Content-Type': 'application/json' });
++      res.end(JSON.stringify({ error: `analyze failed: ${err.message}` }));
++      return;
++    }
++    tAnalyze = Date.now() - tAnalyzeStart;
 +  }
-+  const tAnalyze = Date.now() - tAnalyzeStart;
 +
 +  // Read dump.
 +  let dump;
@@ -11790,6 +11804,107 @@ index 0000000..01e2d63
 +    </div>
 +  );
 +};
+diff --git a/gitnexus-web/src/components/GhostTooltip.tsx b/gitnexus-web/src/components/GhostTooltip.tsx
+new file mode 100644
+index 0000000..dabff90
+--- /dev/null
++++ b/gitnexus-web/src/components/GhostTooltip.tsx
+@@ -0,0 +1,95 @@
++/**
++ * GhostTooltip — popup rendered when a ghost node is clicked on the
++ * canvas. Shows the ghost's tier badge, title, description, the list
++ * of expected-link paths (each annotated ✓ matched / ✗ unmatched),
++ * any label-style expected links as small badges, and an "open in
++ * ROADMAP" button.
++ *
++ * Section D / Task 8 of
++ * docs/superpowers/specs/2026-05-26-roadmap-predictive-augmented-graph-design.md
++ */
++
++import type { GhostRuntime } from '../services/ghosts-client';
++
++type Props = {
++  ghost: GhostRuntime;
++  /** IDs of real graph nodes that match this ghost's expectedLinks. */
++  matchedNodeIds: string[];
++  onClose: () => void;
++  onOpenRoadmap: (ghostId: string) => void;
++};
++
++export default function GhostTooltip({
++  ghost,
++  matchedNodeIds,
++  onClose,
++  onOpenRoadmap,
++}: Props) {
++  const d = ghost.declared;
++  const tierLabel = d.tier ? `Tier ${d.tier}` : 'No tier';
++  const pathLinks = d.expectedLinks.filter((l) => l.kind === 'path');
++  const labelLinks = d.expectedLinks.filter((l) => l.kind === 'label');
++
++  const matchedSet = new Set(matchedNodeIds);
++  const isMatched = (val: string): boolean => {
++    for (const id of matchedSet) {
++      if (id.endsWith(val) || id.includes('/' + val)) return true;
++    }
++    return false;
++  };
++
++  return (
++    <div
++      className="ghost-tooltip pointer-events-auto absolute top-16 right-4 z-30 w-80 animate-fade-in rounded-lg border border-border-subtle bg-elevated/95 p-4 shadow-lg backdrop-blur-sm"
++      data-testid="ghost-tooltip"
++    >
++      <header className="mb-2 flex items-start gap-2">
++        <span className="badge tier rounded bg-accent/20 px-2 py-0.5 text-[11px] font-mono text-accent">
++          {tierLabel}
++        </span>
++        <h3 className="flex-1 text-sm font-semibold text-text-primary">{d.title}</h3>
++        <button
++          onClick={onClose}
++          aria-label="close"
++          className="rounded p-1 text-text-muted transition-colors hover:bg-hover hover:text-text-primary"
++        >
++          ×
++        </button>
++      </header>
++      {d.description && (
++        <p className="description mb-3 text-xs text-text-secondary">{d.description}</p>
++      )}
++      <h4 className="mb-1 text-[11px] font-medium tracking-wide text-text-muted uppercase">
++        Expected links
++      </h4>
++      <ul className="mb-2 space-y-1">
++        {pathLinks.map((l, i) => (
++          <li key={i} className="flex items-center gap-2 text-xs">
++            <span className={isMatched(l.value) ? 'text-emerald-400' : 'text-rose-400'}>
++              {isMatched(l.value) ? '✓' : '✗'}
++            </span>
++            <code className="font-mono text-text-secondary">{l.value}</code>
++          </li>
++        ))}
++      </ul>
++      {labelLinks.length > 0 && (
++        <div className="mb-3 flex flex-wrap gap-1">
++          {labelLinks.map((l, i) => (
++            <span
++              key={i}
++              className="badge label rounded bg-border-subtle/40 px-2 py-0.5 text-[10px] font-mono text-text-secondary"
++            >
++              {l.value}
++            </span>
++          ))}
++        </div>
++      )}
++      <button
++        onClick={() => onOpenRoadmap(d.id)}
++        className="w-full rounded border border-border-subtle bg-elevated px-3 py-1.5 text-xs text-text-secondary transition-colors hover:bg-hover hover:text-text-primary"
++      >
++        Open in ROADMAP.md
++      </button>
++    </div>
++  );
++}
 diff --git a/gitnexus-web/src/components/Graph3DCanvas.tsx b/gitnexus-web/src/components/Graph3DCanvas.tsx
 new file mode 100644
 index 0000000..05e7618
