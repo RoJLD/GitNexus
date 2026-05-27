@@ -9337,10 +9337,10 @@ index 0000000..c6a7798
 +  return false;
 +}
 diff --git a/docker-server.mjs b/docker-server.mjs
-index 8143eb4..767efd4 100644
+index 8143eb4..5ec24f5 100644
 --- a/docker-server.mjs
 +++ b/docker-server.mjs
-@@ -1,12 +1,61 @@
+@@ -1,12 +1,62 @@
 -import { createReadStream } from 'node:fs';
 -import { stat } from 'node:fs/promises';
 +import { createReadStream, createWriteStream } from 'node:fs';
@@ -9374,6 +9374,7 @@ index 8143eb4..767efd4 100644
 +import { handleGhostAuditRoute } from './docker-server-ghost-audit.mjs';
 +import { handleGhostsCleanupRoute } from './docker-server-ghost-cleanup.mjs';
 +import { handleConnectorsRoute } from './docker-server-connectors.mjs';
++import { handleSysmlExportRoute } from './docker-server-sysml-export.mjs';
  
  const host = '0.0.0.0';
  const port = Number(process.env.PORT || '4173');
@@ -9405,7 +9406,7 @@ index 8143eb4..767efd4 100644
  const contentTypes = {
    '.css': 'text/css; charset=utf-8',
    '.html': 'text/html; charset=utf-8',
-@@ -20,6 +69,416 @@ const contentTypes = {
+@@ -20,6 +70,416 @@ const contentTypes = {
    '.woff2': 'font/woff2',
  };
  
@@ -9822,7 +9823,7 @@ index 8143eb4..767efd4 100644
  // Static asset server for the gitnexus-web Docker image.
  //
  // Path-injection containment: the request handler is intentionally a single
-@@ -39,8 +498,77 @@ const contentTypes = {
+@@ -39,8 +499,79 @@ const contentTypes = {
  // the request handler's reassignment paths in vanilla JS. The inline-at-sink
  // shape below is the documented analyzer-friendly idiom.
  const server = createServer(async (req, res) => {
@@ -9896,12 +9897,14 @@ index 8143eb4..767efd4 100644
 +  if (await handleGhostsCleanupRoute(req, reqUrl, res, { api: GITNEXUS_API })) return;
 +  // Roadmap-predictive connector suggestions (Plane / Linear / GitHub / Jira)
 +  if (await handleConnectorsRoute(req, reqUrl, res, { api: GITNEXUS_API })) return;
++  // Roadmap-predictive SysML export (Tier 3.x bonus)
++  if (await handleSysmlExportRoute(req, reqUrl, res, { api: GITNEXUS_API })) return;
  
 +  // ── Static asset serving (v1.6.5 CodeQL-compliant pipeline) ───────────
    let decoded;
    try {
      decoded = decodeURIComponent(urlPath);
-@@ -117,4 +645,7 @@ const server = createServer(async (req, res) => {
+@@ -117,4 +648,7 @@ const server = createServer(async (req, res) => {
  
  server.listen(port, host, () => {
    console.log(`gitnexus-web listening on http://${host}:${port}`);
