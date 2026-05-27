@@ -377,6 +377,75 @@ index 0000000..33f13d2
 +  }
 +  return false;
 +}
+diff --git a/docker-server-cluster-audit.mjs b/docker-server-cluster-audit.mjs
+new file mode 100644
+index 0000000..3a88f38
+--- /dev/null
++++ b/docker-server-cluster-audit.mjs
+@@ -0,0 +1,63 @@
++/**
++ * GET /clusters — read the runtime clusters.json sidecar for a repo, with an
++ * optional `?source=declared|auto` filter.
++ *
++ * Section C Task 6 of the Ghost Cluster plan
++ * (docs/superpowers/specs/2026-05-27-roadmap-predictive-ghost-cluster.md).
++ *
++ * Sibling of docker-server-ghost-audit.mjs : both are read-only HTTP wrappers
++ * over the runtime JSON written by `syncGhostsForRepo`. This handler does NOT
++ * trigger a sync — clients must POST /ghosts/sync first.
++ */
++import { readLatestClusters } from './docker-server-ghosts.mjs';
++import { findRepoByName } from './docker-server-snapshots.mjs';
++
++export async function handleClusters(url, res, opts) {
++  const repoName = url.searchParams.get('repo');
++  const sourceFilter = url.searchParams.get('source'); // 'declared' | 'auto' | null
++  if (!repoName) {
++    res.writeHead(400, { 'Content-Type': 'application/json' });
++    return res.end(JSON.stringify({ error: 'missing repo' }));
++  }
++  // Validate source before any I/O so a malformed query is a fast 400.
++  if (sourceFilter && sourceFilter !== 'declared' && sourceFilter !== 'auto') {
++    res.writeHead(400, { 'Content-Type': 'application/json' });
++    return res.end(JSON.stringify({ error: `invalid source: ${sourceFilter}` }));
++  }
++  try {
++    const repo = await findRepoByName(repoName, opts.api);
++    if (!repo) {
++      res.writeHead(400, { 'Content-Type': 'application/json' });
++      return res.end(JSON.stringify({ error: `repo not found: ${repoName}` }));
++    }
++    const repoPath = repo.repoPath || repo.path;
++    const runtime = await readLatestClusters(repoPath);
++    if (!runtime) {
++      res.writeHead(404, { 'Content-Type': 'application/json' });
++      return res.end(JSON.stringify({ error: 'No clusters.json — run POST /ghosts/sync first.' }));
++    }
++    let clusters = runtime.clusters || [];
++    if (sourceFilter === 'declared' || sourceFilter === 'auto') {
++      clusters = clusters.filter(c => c.source === sourceFilter);
++    }
++    res.writeHead(200, { 'Content-Type': 'application/json' });
++    res.end(JSON.stringify({ ...runtime, clusters }));
++  } catch (err) {
++    console.error('[clusters] get failed:', err);
++    res.writeHead(500, { 'Content-Type': 'application/json' });
++    res.end(JSON.stringify({ error: err.message }));
++  }
++}
++
++/**
++ * Public dispatcher : returns true if the request matches GET /clusters and
++ * is fully handled, false otherwise. Registered in `docker-server.mjs` next
++ * to the other audit dispatchers.
++ */
++export async function handleClustersRoute(req, url, res, opts) {
++  if (url.pathname === '/clusters' && req.method === 'GET') {
++    await handleClusters(url, res, opts);
++    return true;
++  }
++  return false;
++}
 diff --git a/docker-server-commit-footprint.mjs b/docker-server-commit-footprint.mjs
 new file mode 100644
 index 0000000..22952d6
