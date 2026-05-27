@@ -204,6 +204,16 @@ Pure frontend overlay — aucune route serveur, consomme `/ghosts?repo=` du CORE
 - Update 2 (Augmented Timeline — scrubber Timeline + ghosts par instant T) explicitement **out-of-scope** : la mécanique Timeline existe, la mécanique d'overlay ghosts existe, mais la fusion est une sub-spec dédiée à brainstormer si demandé.
 - Tests écrits (5 unit + 1 e2e) mais Vitest local bloqué par Node 21 → débloquera après upgrade Node 22 LTS (cf `docs/superpowers/decisions/2026-05-26-defer-node22-upgrade.md`).
 
+#### Roadmap-predictive Cleanup + Connectors (Tier 3.x, 2026-05-27)
+- `upstream/docker-server-ghost-cleanup-core.mjs` — `buildCleanupPrompt` + `parseCleanupResponse` (pure fns).
+- `upstream/docker-server-ghost-cleanup.mjs` — `POST /ghosts/cleanup-prompt` handler. Reuses `computeExpired` from Audit + `matchExpectedLinks` from CORE.
+- `upstream/docker-server-connectors-core.mjs` — `tokenize` + `jaccardSimilarity` + `fuzzyMatchTicketToGhost`.
+- `upstream/docker-server-connectors.mjs` — `GET /ghosts/connector-suggestions` handler + module-level connector registry.
+- `upstream/connectors/plane.mjs` — full Plane REST API connector (fetchOpenWorkItems / fetchClosedWorkItems). Auth via `X-API-Key` env var.
+- `upstream/connectors/{linear,github,jira}.mjs` — stubs that throw "not implemented yet (v1 stub)".
+- `upstream/gitnexus-web/src/components/audit/CleanupModal.tsx` — modal opened via the 6th "Expired" card in AuditSummary. Lists expired ghosts + LLM-ready prompts ; v1 user copies the prompt to their LLM, then edits ROADMAP.md manually.
+- **Config** (`.gitnexus.json > connectors.<name>`) : `{ enabled, apiUrl, workspaceSlug, projectId, matchThreshold }`. API keys via env (PLANE_API_KEY, GITHUB_TOKEN, LINEAR_API_KEY, JIRA_API_TOKEN).
+
 #### Dépendances ajoutées
 - `react-force-graph-3d`, `three` (pour le mode 3D) — déclarées dans `gitnexus-web/package.json`
 - `umap-js` (Tier 2.6.bis) — dynamic-importé par `SimilarityPanel/GalaxyView` quand le user clique sur "UMAP", reste out-of-bundle sinon

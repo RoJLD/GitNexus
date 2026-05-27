@@ -46,6 +46,9 @@ Pré-requis local : Rancher Desktop running, **Node ≥ 22 LTS**. CI : `.github/
 | Ghost layout — pure | `unit/ghost-layout.test.mjs` | `matchExistingNodes` + `computeGhostLayout` + `tierColor` + `passesFilter` + `derivedStatus` + `DEFAULT_GHOST_FILTERS` |
 | Ghost layout — decay | `unit/ghost-layout-decay.test.mjs` | `computeGhostVisualState` (Update 1 du spec — 4 alertLevels) |
 | Ghosts client | `unit/ghosts-client.test.mjs` | fetch `/ghosts` + 30s cache + 404 graceful + per-repo + refresh |
+| Ghost cleanup prompt | `unit/ghost-cleanup-prompt.test.mjs` | `buildCleanupPrompt` + `parseCleanupResponse` (pure fns) |
+| Connectors fuzzy match | `unit/connectors-fuzzy-match.test.mjs` | `tokenize` + `jaccardSimilarity` + `fuzzyMatchTicketToGhost` |
+| Connectors Plane | `unit/connectors-plane.test.mjs` | Plane connector — fetchOpenWorkItems / fetchClosedWorkItems (mocked fetch) |
 
 ### Components React (unit)
 | Test | Fichier | Couvre |
@@ -69,6 +72,7 @@ Pré-requis local : Rancher Desktop running, **Node ≥ 22 LTS**. CI : `.github/
 | Ghost audit — VelocitySparkline | `unit/components/audit/VelocitySparkline.test.tsx` | SVG sparkline rolling 28j |
 | Augmented graph — GhostTooltip | `unit/components/GhostTooltip.test.tsx` | render + matched/unmatched + Open ROADMAP button |
 | Augmented graph — Filters | `unit/components/Filters.test.tsx` | master "Show ghosts" + per-Tier + cancelled toggles |
+| Ghost cleanup — CleanupModal | `unit/components/audit/CleanupModal.test.tsx` | closed / empty / populated list with LLM prompts |
 
 ### Stack health
 | Test | Fichier | Couvre |
@@ -99,6 +103,8 @@ Pré-requis local : Rancher Desktop running, **Node ≥ 22 LTS**. CI : `.github/
 | Ghosts in snapshot | `integration/endpoints/ghosts-snapshot.test.mjs` | snapshot auto-sync writes ghosts.json per dir |
 | Ghost audit endpoint | `integration/endpoints/ghost-audit.test.mjs` | `GET /ghost-audit` shape |
 | Ghost audit cache | `integration/endpoints/ghost-audit-cache.test.mjs` | mtime invalidation flow |
+| Ghost cleanup prompt | `integration/endpoints/ghost-cleanup-prompt.test.mjs` | `POST /ghosts/cleanup-prompt` expired list + prompts |
+| Ghost connector suggestions | `integration/endpoints/ghost-connector-suggestions.test.mjs` | `GET /ghosts/connector-suggestions` empty-config + Plane path |
 | MCP ghost_audit | `integration/mcp/ghost_audit.test.mjs` | stdio JSON-RPC tool call |
 
 ### UI flows e2e
