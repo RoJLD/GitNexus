@@ -8900,6 +8900,72 @@ index 0000000..65f5880
 +  }
 +  return lines.join('\n') + '\n';
 +}
+diff --git a/docker-server-sysml-export.mjs b/docker-server-sysml-export.mjs
+new file mode 100644
+index 0000000..e0647c0
+--- /dev/null
++++ b/docker-server-sysml-export.mjs
+@@ -0,0 +1,60 @@
++// upstream/docker-server-sysml-export.mjs
++import { renderPlantUml, renderMermaid } from './docker-server-sysml-export-core.mjs';
++import { readLatestGhosts } from './docker-server-ghosts.mjs';
++import { findRepoByName } from './docker-server-snapshots.mjs';
++
++async function buildSysmlExport(repoPath, { format = 'plantuml', tierFilter, repoName }) {
++  const runtime = await readLatestGhosts(repoPath);
++  if (!runtime) return null;
++  const ghosts = runtime.ghosts || [];
++  // Collect referenced files from ghost.links — v1 doesn't include the full
++  // gitnexus graph (would explode the diagram). Files are only those that a
++  // ghost satisfies.
++  const files = [];
++  const seen = new Set();
++  for (const g of ghosts) for (const l of (g.links || [])) {
++    if (l.file && !seen.has(l.file)) { seen.add(l.file); files.push(l.file); }
++  }
++  if (format === 'mermaid') return renderMermaid({ ghosts, files, repoName, tierFilter });
++  return renderPlantUml({ ghosts, files, repoName, tierFilter });
++}
++
++export async function handleSysmlExport(url, res, opts) {
++  const repoName = url.searchParams.get('repo');
++  const format = url.searchParams.get('format') || 'plantuml';
++  const tierFilter = url.searchParams.get('tier');
++  if (!repoName) {
++    res.writeHead(400, { 'Content-Type': 'application/json' });
++    return res.end(JSON.stringify({ error: 'missing repo' }));
++  }
++  if (format !== 'plantuml' && format !== 'mermaid') {
++    res.writeHead(400, { 'Content-Type': 'application/json' });
++    return res.end(JSON.stringify({ error: `invalid format: ${format}` }));
++  }
++  const repo = await findRepoByName(repoName, opts.api);
++  if (!repo) {
++    res.writeHead(400, { 'Content-Type': 'application/json' });
++    return res.end(JSON.stringify({ error: `repo not found: ${repoName}` }));
++  }
++  const repoPath = repo.repoPath || repo.path;
++  try {
++    const out = await buildSysmlExport(repoPath, { format, tierFilter, repoName });
++    if (out === null) {
++      res.writeHead(404, { 'Content-Type': 'application/json' });
++      return res.end(JSON.stringify({ error: 'No ghosts.json — run POST /ghosts/sync first.' }));
++    }
++    res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
++    res.end(out);
++  } catch (err) {
++    res.writeHead(500, { 'Content-Type': 'application/json' });
++    res.end(JSON.stringify({ error: err.message }));
++  }
++}
++
++export async function handleSysmlExportRoute(req, url, res, opts) {
++  if (url.pathname === '/sysml-export' && req.method === 'GET') {
++    await handleSysmlExport(url, res, opts);
++    return true;
++  }
++  return false;
++}
 diff --git a/docker-server-watches.mjs b/docker-server-watches.mjs
 new file mode 100644
 index 0000000..c6a7798
