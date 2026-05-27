@@ -226,3 +226,19 @@ Sur le Gantt, un user voit immédiatement quels ghosts sont en retard : la bar d
 ### Effort additionnel
 
 **~0.2 jour** : impl + test. Le calcul `computeGhostVisualState` est déjà spec'é dans Augmented graph et réutilisable côté Gantt.
+
+---
+
+## Update 2026-05-27 — Shipped
+
+Gantt opérationnel livré. Notes :
+
+- Pure frontend (zéro backend modifié). Consomme `/ghosts?repo=X` du CORE via `ghosts-client.ts` partagé avec Augmented graph.
+- 4 styles de bar : solid (matérialisé), dashed (planifié futur via `parseTargetDate` du module shared), dot (planifié sans deadline), grey (annulé).
+- Update 1 (time-decaying bar color) implémentée : `late` → orange #e67e22, `critical` → rouge #c0392b. Réutilise `computeGhostVisualState` du `ghost-layout.ts` d'Augmented graph.
+- Toggle swimlanes (flat vs Tier major), sort dropdown (plannedAsc/tierAsc/status), CSV export client-side via Blob download.
+- Pattern SVG natif (cohérent avec GrowthChart.tsx + Augmented graph) — aucune nouvelle dep.
+- Filters : `ghostFilters?` prop ; consumer passe le state. Default panel-local (`showGhosts: true, showCancelled: true`) — pour rendre le panel utilisable standalone.
+- Tests : 1 layout + 1 decay + 4 components + 1 e2e. Runtime local Node 21 bloqué (vitest 4.x), CI Node 22.
+- 5 open questions du spec toutes résolues comme prévu.
+
