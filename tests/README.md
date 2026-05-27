@@ -51,6 +51,9 @@ Pré-requis local : Rancher Desktop running, **Node ≥ 22 LTS**. CI : `.github/
 | Connectors Plane | `unit/connectors-plane.test.mjs` | Plane connector — fetchOpenWorkItems / fetchClosedWorkItems (mocked fetch) |
 | Gantt layout | `unit/gantt-layout.test.mjs` | computeTimeWindow + dateScale + computeGanttRows |
 | Gantt layout — decay | `unit/gantt-layout-decay.test.mjs` | pickBarColor (Update 1) |
+| Spec parser | `unit/ghost-from-spec-parser.test.mjs` | deriveId + extractTitle + extractDescription + extractTier + extractExpectedLinks |
+| Managed section upsert | `unit/ghost-from-spec-roadmap.test.mjs` | upsertManagedSection (create / upsert / idempotent) |
+| Install hooks | `unit/install-brainstorm-hooks.test.mjs` | Claude merge + git-hook template + GHA workflow template |
 
 ### Components React (unit)
 | Test | Fichier | Couvre |
@@ -111,6 +114,7 @@ Pré-requis local : Rancher Desktop running, **Node ≥ 22 LTS**. CI : `.github/
 | Ghost audit cache | `integration/endpoints/ghost-audit-cache.test.mjs` | mtime invalidation flow |
 | Ghost cleanup prompt | `integration/endpoints/ghost-cleanup-prompt.test.mjs` | `POST /ghosts/cleanup-prompt` expired list + prompts |
 | Ghost connector suggestions | `integration/endpoints/ghost-connector-suggestions.test.mjs` | `GET /ghosts/connector-suggestions` empty-config + Plane path |
+| Brainstorm-hook e2e | `integration/endpoints/brainstorm-hook-e2e.test.mjs` | script run → ROADMAP managed section → CORE parser emits planned ghost |
 | MCP ghost_audit | `integration/mcp/ghost_audit.test.mjs` | stdio JSON-RPC tool call |
 
 ### UI flows e2e

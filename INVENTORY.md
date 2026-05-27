@@ -223,6 +223,15 @@ Pure frontend overlay — aucune route serveur, consomme `/ghosts?repo=` du CORE
 - `upstream/gitnexus-web/src/components/audit/CleanupModal.tsx` — modal opened via the 6th "Expired" card in AuditSummary. Lists expired ghosts + LLM-ready prompts ; v1 user copies the prompt to their LLM, then edits ROADMAP.md manually.
 - **Config** (`.gitnexus.json > connectors.<name>`) : `{ enabled, apiUrl, workspaceSlug, projectId, matchThreshold }`. API keys via env (PLANE_API_KEY, GITHUB_TOKEN, LINEAR_API_KEY, JIRA_API_TOKEN).
 
+#### Roadmap-predictive Brainstorm-hook (Tier 3.x, 2026-05-27)
+- `scripts/ghost-from-spec.mjs` — CLI entry point. Parse spec → upsert row in ROADMAP.md managed section → optional `POST /ghosts/sync` if `GITNEXUS_PORT` env set.
+- `scripts/ghost-from-spec-parser.mjs` — pure fns : `deriveId`, `extractTitle`, `extractDescription`, `extractTier`, `extractExpectedLinks`, `parseSpec`.
+- `scripts/ghost-from-spec-roadmap.mjs` — `upsertManagedSection` (create if missing, upsert by id, idempotent).
+- `scripts/install-brainstorm-hooks.mjs` — wizard that merges `.claude/settings.local.json` (PostToolUse hook on Write to specs/), creates `.git/hooks/post-commit`, and `.github/workflows/roadmap-sync.yml`. Non-destructive.
+- `upstream/docker-server-ghosts-core.mjs` — parser étendu pour reconnaître `## 🧪 From spec brainstorms` (Update — Brainstorm-hook integration sur le CORE spec).
+- **Storage** : la section managée de ROADMAP.md est la source. Le CORE re-parse à chaque sync.
+- **Triggers** : 4 convergents (manuel, Claude PostToolUse, git post-commit, GHA). Installable via `npm run setup:hooks`.
+
 #### Dépendances ajoutées
 - `react-force-graph-3d`, `three` (pour le mode 3D) — déclarées dans `gitnexus-web/package.json`
 - `umap-js` (Tier 2.6.bis) — dynamic-importé par `SimilarityPanel/GalaxyView` quand le user clique sur "UMAP", reste out-of-bundle sinon
