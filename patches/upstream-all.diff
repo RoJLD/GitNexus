@@ -20751,10 +20751,10 @@ index 6c660b0..937fd90 100644
  ═══════════════════════════════════════════════════════════════ */
 diff --git a/gitnexus-web/src/lib/gantt-layout.ts b/gitnexus-web/src/lib/gantt-layout.ts
 new file mode 100644
-index 0000000..51810bf
+index 0000000..ba48e1f
 --- /dev/null
 +++ b/gitnexus-web/src/lib/gantt-layout.ts
-@@ -0,0 +1,112 @@
+@@ -0,0 +1,149 @@
 +/**
 + * Pure functions for the Gantt panel.
 + * Reads ghost runtime objects (from /ghosts), emits SVG-ready layout data.
@@ -20821,6 +20821,41 @@ index 0000000..51810bf
 +  return 'planned';
 +}
 +
++/**
++ * Update 1 — time-decaying bar color.
++ *
++ * Reuses the visual-state engine shipped by the Augmented graph
++ * (`computeGhostVisualState` in `./ghost-layout`). For the Gantt the
++ * dashed bar's "expectation date" is the ghost's `plannedFor` (the
++ * planning-horizon target), so we synthesise a `GhostVisualInput` where
++ * `expectedBy = plannedFor ?? expectedBy` and forward to the engine.
++ *
++ * Returns:
++ *   - '#e67e22' (orange) when the engine reports `late`,
++ *   - '#c0392b' (red)    when it reports `critical`,
++ *   - tier color otherwise (fresh / mature / fallback).
++ *
++ * Cancelled ghosts never hit this path (handled by the grey-bar branch
++ * in `computeGanttRows`), but the engine still short-circuits to grey
++ * if it ever does.
++ */
++export function pickBarColor(ghost: GhostInput, now: Date): string {
++  const tier = ghost.declared?.tier ?? null;
++  const expectedBy = ghost.declared?.plannedFor ?? ghost.declared?.expectedBy ?? null;
++  const state = computeGhostVisualState(
++    {
++      tier,
++      status: 'planned',
++      plannedAt: ghost.plannedAt ?? null,
++      declared: { expectedBy },
++    },
++    now,
++  );
++  if (state.alertLevel === 'late') return '#e67e22';
++  if (state.alertLevel === 'critical') return '#c0392b';
++  return tierColor(tier);
++}
++
 +export function computeGanttRows(ghosts: GhostInput[], opts: { now?: Date } = {}): GanttRow[] {
 +  const now = opts.now ?? new Date();
 +  const rows: GanttRow[] = [];
@@ -20841,7 +20876,9 @@ index 0000000..51810bf
 +      if (target) {
 +        const startD = new Date(startDate);
 +        const startMs = Math.max(startD.getTime(), now.getTime());
-+        bars.push({ kind: 'dashed', startDate: new Date(startMs).toISOString(), endDate: target.toISOString(), color });
++        // Update 1 — time-decaying bar color : reuse computeGhostVisualState.
++        const dashColor = pickBarColor(g, now);
++        bars.push({ kind: 'dashed', startDate: new Date(startMs).toISOString(), endDate: target.toISOString(), color: dashColor });
 +      } else {
 +        bars.push({ kind: 'dot', startDate, endDate: null, color });
 +      }
