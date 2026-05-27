@@ -17081,6 +17081,85 @@ index 0000000..a6b20db
 +    </div>
 +  );
 +}
+diff --git a/gitnexus-web/src/components/audit/VelocitySparkline.tsx b/gitnexus-web/src/components/audit/VelocitySparkline.tsx
+new file mode 100644
+index 0000000..9a0b0a7
+--- /dev/null
++++ b/gitnexus-web/src/components/audit/VelocitySparkline.tsx
+@@ -0,0 +1,73 @@
++/**
++ * VelocitySparkline — a single-line SVG over the last N weeks of
++ * materialization counts, plus a big number for `currentCount` (matters
++ * in the configured window — default 28 days). Pattern mirrors the
++ * inline SVG style of GrowthChart.tsx (no chart lib).
++ *
++ * If `history` has fewer than 2 points the line is hidden (not enough
++ * to draw a slope); the currentCount remains visible.
++ *
++ * Spec : docs/superpowers/specs/2026-05-26-roadmap-predictive-audit-design.md
++ */
++
++const W = 240;
++const H = 56;
++const PAD = 4;
++
++type Props = {
++  data: {
++    windowDays: number;
++    currentCount: number;
++    history: { weekStarting: string; count: number }[];
++  };
++};
++
++export default function VelocitySparkline({ data }: Props) {
++  const history = data.history ?? [];
++  const max = Math.max(1, ...history.map((h) => h.count));
++  const innerW = W - PAD * 2;
++  const innerH = H - PAD * 2;
++  const step = history.length > 1 ? innerW / (history.length - 1) : 0;
++  const points = history
++    .map((h, i) => {
++      const x = PAD + i * step;
++      const y = PAD + innerH - (h.count / max) * innerH;
++      return `${x.toFixed(1)},${y.toFixed(1)}`;
++    })
++    .join(' ');
++  return (
++    <div className="velocity-sparkline" data-testid="velocity-sparkline">
++      <header>
++        <strong>Velocity</strong>
++        <span className="window">{data.windowDays}d window</span>
++      </header>
++      <div className="current-count" data-testid="current-count">
++        {data.currentCount}
++      </div>
++      {history.length >= 2 && (
++        <svg width={W} height={H} role="img" aria-label="Velocity sparkline">
++          <polyline
++            data-testid="sparkline-polyline"
++            fill="none"
++            stroke="#3b82f6"
++            strokeWidth={2}
++            points={points}
++          />
++          {history.map((h, i) => {
++            const x = PAD + i * step;
++            const y = PAD + innerH - (h.count / max) * innerH;
++            return (
++              <circle
++                key={h.weekStarting}
++                cx={x}
++                cy={y}
++                r={2}
++                fill="#3b82f6"
++              />
++            );
++          })}
++        </svg>
++      )}
++    </div>
++  );
++}
 diff --git a/gitnexus-web/src/core/llm/agent.ts b/gitnexus-web/src/core/llm/agent.ts
 index 49862a9..5c552dd 100644
 --- a/gitnexus-web/src/core/llm/agent.ts
