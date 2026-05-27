@@ -43,6 +43,9 @@ Pré-requis local : Rancher Desktop running, **Node ≥ 22 LTS**. CI : `.github/
 | Ghost audit — velocity | `unit/ghost-audit-velocity.test.mjs` | `computeVelocity` rolling window |
 | Ghost audit — expired | `unit/ghost-audit-expired.test.mjs` | `computeExpired` (Update 1) |
 | Ghost audit — cache | `unit/ghost-audit-cache.test.mjs` | `isCacheValid` |
+| Ghost layout — pure | `unit/ghost-layout.test.mjs` | `matchExistingNodes` + `computeGhostLayout` + `tierColor` + `passesFilter` + `derivedStatus` + `DEFAULT_GHOST_FILTERS` |
+| Ghost layout — decay | `unit/ghost-layout-decay.test.mjs` | `computeGhostVisualState` (Update 1 du spec — 4 alertLevels) |
+| Ghosts client | `unit/ghosts-client.test.mjs` | fetch `/ghosts` + 30s cache + 404 graceful + per-repo + refresh |
 
 ### Components React (unit)
 | Test | Fichier | Couvre |
@@ -64,6 +67,8 @@ Pré-requis local : Rancher Desktop running, **Node ≥ 22 LTS**. CI : `.github/
 | Ghost audit — PlanChurnList | `unit/components/audit/PlanChurnList.test.tsx` | Top churners + onSelectChurner callback |
 | Ghost audit — SlippageBar | `unit/components/audit/SlippageBar.test.tsx` | Stacked bar early/onTime/late/noTarget |
 | Ghost audit — VelocitySparkline | `unit/components/audit/VelocitySparkline.test.tsx` | SVG sparkline rolling 28j |
+| Augmented graph — GhostTooltip | `unit/components/GhostTooltip.test.tsx` | render + matched/unmatched + Open ROADMAP button |
+| Augmented graph — Filters | `unit/components/Filters.test.tsx` | master "Show ghosts" + per-Tier + cancelled toggles |
 
 ### Stack health
 | Test | Fichier | Couvre |
@@ -105,6 +110,7 @@ Pré-requis local : Rancher Desktop running, **Node ≥ 22 LTS**. CI : `.github/
 | CSV download | `e2e/specs/04-csv-download.spec.ts` | Download icon → .csv file |
 | Diff view | `e2e/specs/05-diff-view.spec.ts` | Diff banner appears |
 | E2E audit panel | `e2e/specs/03-ghost-audit-panel.spec.ts` | panel renders + churner highlight |
+| Augmented graph | `e2e/specs/04-augmented-graph.spec.ts` | "Show ghosts" master toggle → per-Tier + cancelled sub-toggles visibles |
 
 ## Tests désactivés / connus fragiles
 

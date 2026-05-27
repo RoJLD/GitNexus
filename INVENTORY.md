@@ -191,6 +191,19 @@ Fichiers à la racine du repo, qui rendent le setup reproductible sur poste Wind
 - MCP : tool `gitnexus_ghost_audit` ajouté dans `mcp-server/server.mjs` (19ème).
 - **Update 2 deferred** : `placementAccuracy` (ghosts placés vs vrais ghosts shipping) requiert accès Leiden communities côté backend → reporté quand cette API existera.
 
+#### Roadmap-predictive Augmented graph view (2026-05-27)
+Pure frontend overlay — aucune route serveur, consomme `/ghosts?repo=` du CORE :
+- `upstream/gitnexus-web/src/lib/ghost-layout.ts` — pure fns : `matchExistingNodes` (suffix + glob), `computeGhostLayout` (centroid pour anchored, grid 5 cols top-right pour satellite unmatched), `tierColor`, `passesFilter`, `derivedStatus`, `computeGhostVisualState` (Update 1 du spec — opacité time-decaying 4 alertLevels : fresh ≥0.5 / mature 0.4 / late 0.3 orange / critical 0.2 rouge), `DEFAULT_GHOST_FILTERS`.
+- `upstream/gitnexus-web/src/services/ghosts-client.ts` — fetch `/ghosts?repo=` avec cache mémoire 30s + 404 graceful + `invalidateGhostsCache()` exposé pour refresh manuel.
+- `upstream/gitnexus-web/src/lib/ghost-node-program.ts` — extension Sigma 3 `NodeCircleProgram` + outline dashed dessiné en canvas (pragmatic v1, pas de nouvelle dep Sigma).
+- `upstream/gitnexus-web/src/components/GhostTooltip.tsx` — popup React au click ghost : titre, description, liste expectedLinks avec ✓/✗ matched/unmatched, bouton "Open in ROADMAP.md".
+- `upstream/gitnexus-web/src/components/GhostFiltersSection.tsx` — section "Roadmap predictive" hiérarchique dans `FileTreePanel.tsx` (pattern existant) : master "Show ghosts" + per-Tier + cancelled.
+- `upstream/gitnexus-web/src/hooks/useSigma.ts` — étendu pour merger ghost nodes/edges dans le reducer + register `GhostNodeProgram`.
+- `upstream/gitnexus-web/src/hooks/useAppState.tsx` — `ghostFilters` lifted en state global (réutilise pattern existant des autres filtres).
+- `upstream/gitnexus-web/src/components/GraphCanvas.tsx` + `FileTreePanel.tsx` — wiring fetch `/ghosts` + dispatch click-ghost → GhostTooltip.
+- Update 2 (Augmented Timeline — scrubber Timeline + ghosts par instant T) explicitement **out-of-scope** : la mécanique Timeline existe, la mécanique d'overlay ghosts existe, mais la fusion est une sub-spec dédiée à brainstormer si demandé.
+- Tests écrits (5 unit + 1 e2e) mais Vitest local bloqué par Node 21 → débloquera après upgrade Node 22 LTS (cf `docs/superpowers/decisions/2026-05-26-defer-node22-upgrade.md`).
+
 #### Dépendances ajoutées
 - `react-force-graph-3d`, `three` (pour le mode 3D) — déclarées dans `gitnexus-web/package.json`
 - `umap-js` (Tier 2.6.bis) — dynamic-importé par `SimilarityPanel/GalaxyView` quand le user clique sur "UMAP", reste out-of-bundle sinon
