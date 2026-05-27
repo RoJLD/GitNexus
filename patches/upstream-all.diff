@@ -20751,10 +20751,10 @@ index 6c660b0..937fd90 100644
  ═══════════════════════════════════════════════════════════════ */
 diff --git a/gitnexus-web/src/lib/gantt-layout.ts b/gitnexus-web/src/lib/gantt-layout.ts
 new file mode 100644
-index 0000000..ba48e1f
+index 0000000..325a5c4
 --- /dev/null
 +++ b/gitnexus-web/src/lib/gantt-layout.ts
-@@ -0,0 +1,149 @@
+@@ -0,0 +1,156 @@
 +/**
 + * Pure functions for the Gantt panel.
 + * Reads ghost runtime objects (from /ghosts), emits SVG-ready layout data.
@@ -20903,6 +20903,13 @@ index 0000000..ba48e1f
 +  });
 +
 +  return rows;
++}
++
++export function dateScale(window: { start: Date; end: Date }, width: number): (d: Date) => number {
++  const startMs = window.start.getTime();
++  const span = window.end.getTime() - startMs;
++  if (span <= 0) return () => 0;
++  return (d: Date) => ((d.getTime() - startMs) / span) * width;
 +}
 diff --git a/gitnexus-web/src/lib/ghost-layout.ts b/gitnexus-web/src/lib/ghost-layout.ts
 new file mode 100644

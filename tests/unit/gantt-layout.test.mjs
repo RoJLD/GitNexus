@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   computeTimeWindow,
   computeGanttRows,
+  dateScale,
 } from '../../upstream/gitnexus-web/src/lib/gantt-layout.ts';
 
 const ghost = (planned, mat, cancel, plannedFor) => ({
@@ -79,5 +80,25 @@ describe('computeGanttRows', () => {
     b.plannedAt.date = '2026-04-01';
     const rows = computeGanttRows([a, b], { now });
     expect(rows.map(r => r.ghostId)).toEqual(['b', 'a']);
+  });
+});
+
+describe('dateScale', () => {
+  it('maps the window endpoints to [0, width]', () => {
+    const scale = dateScale({ start: new Date('2026-01-01'), end: new Date('2026-12-31') }, 1000);
+    expect(scale(new Date('2026-01-01'))).toBeCloseTo(0, 1);
+    expect(scale(new Date('2026-12-31'))).toBeCloseTo(1000, 1);
+  });
+
+  it('is linear in between', () => {
+    const scale = dateScale({ start: new Date('2026-01-01'), end: new Date('2026-12-31') }, 1000);
+    // Mid-year ~ 500
+    expect(scale(new Date('2026-07-02'))).toBeGreaterThan(490);
+    expect(scale(new Date('2026-07-02'))).toBeLessThan(510);
+  });
+
+  it('degenerate window (start >= end) returns 0 for every input', () => {
+    const scale = dateScale({ start: new Date('2026-01-01'), end: new Date('2026-01-01') }, 1000);
+    expect(scale(new Date('2026-06-01'))).toBe(0);
   });
 });
