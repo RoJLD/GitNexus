@@ -21829,7 +21829,7 @@ index 49862a9..5c552dd 100644
   * Create a Graph RAG agent
   */
 diff --git a/gitnexus-web/src/hooks/useAppState.tsx b/gitnexus-web/src/hooks/useAppState.tsx
-index 25c5776..421605d 100644
+index 25c5776..ac75680 100644
 --- a/gitnexus-web/src/hooks/useAppState.tsx
 +++ b/gitnexus-web/src/hooks/useAppState.tsx
 @@ -8,7 +8,12 @@ import {
@@ -21855,7 +21855,7 @@ index 25c5776..421605d 100644
    runQuery as backendRunQuery,
    search as backendSearch,
    grep as backendGrep,
-@@ -34,12 +41,24 @@ import {
+@@ -34,12 +41,29 @@ import {
    type ConnectResult,
    type JobProgress,
  } from '../services/backend-client';
@@ -21870,6 +21870,11 @@ index 25c5776..421605d 100644
 +import { providerSupportsEmbeddings } from '../core/llm/agent';
 +import { applyMutations, type Mutation } from '../services/mutation-engine';
 +import { DEFAULT_GHOST_FILTERS, type GhostFilters } from '../lib/ghost-layout';
++import {
++  createLayoutWorkerPool,
++  buildWorkerInputFromNodesEdges,
++  type LayoutPool,
++} from '../lib/layout-worker-pool';
  import { ERROR_RESET_DELAY_MS } from '../config/ui-constants';
  import { normalizePath } from '../lib/path-resolution';
  import { FILE_REF_REGEX, NODE_REF_REGEX } from '../lib/grounding-patterns';
@@ -21880,7 +21885,7 @@ index 25c5776..421605d 100644
  export type RightPanelTab = 'code' | 'chat';
  export type EmbeddingStatus = 'idle' | 'loading' | 'embedding' | 'indexing' | 'ready' | 'error';
  
-@@ -81,6 +100,9 @@ interface AppState {
+@@ -81,6 +105,9 @@ interface AppState {
    // View state
    viewMode: ViewMode;
    setViewMode: (mode: ViewMode) => void;
@@ -21890,7 +21895,7 @@ index 25c5776..421605d 100644
  
    // Graph data
    graph: KnowledgeGraph | null;
-@@ -192,6 +214,448 @@ interface AppState {
+@@ -192,6 +219,448 @@ interface AppState {
    clearAICodeReferences: () => void;
    clearCodeReferences: () => void;
    codeReferenceFocus: CodeReferenceFocus | null;
@@ -22339,7 +22344,7 @@ index 25c5776..421605d 100644
  }
  
  const AppStateContext = createContext<AppState | null>(null);
-@@ -205,6 +669,10 @@ export const AppStateProvider = ({ children }: { children: ReactNode }) => (
+@@ -205,6 +674,10 @@ export const AppStateProvider = ({ children }: { children: ReactNode }) => (
  const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
    // View state
    const [viewMode, setViewMode] = useState<ViewMode>('onboarding');
@@ -22350,7 +22355,7 @@ index 25c5776..421605d 100644
  
    const {
      graph,
-@@ -343,6 +811,157 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
+@@ -343,6 +816,165 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
    const [isCodePanelOpen, setCodePanelOpen] = useState(false);
    const [codeReferenceFocus, setCodeReferenceFocus] = useState<CodeReferenceFocus | null>(null);
  
@@ -22448,6 +22453,14 @@ index 25c5776..421605d 100644
 +  >(null);
 +  const [preloadError, setPreloadError] = useState<string | null>(null);
 +  const preloadAbortRef = useRef<AbortController | null>(null);
++  // FA2 pre-compute pool spawned during preloadAllSnapshots. Terminated
++  // when the user switches to a different base repo (snapshots of the
++  // old base become irrelevant) or when the component unmounts.
++  const layoutPoolRef = useRef<LayoutPool | null>(null);
++  // Bridge ref so the Header "Recompute layout" button (an action on
++  // useAppState) can reach `useSigma.recomputeLayout` which lives in
++  // GraphCanvas. GraphCanvas registers its handler on mount.
++  const recomputeLayoutRef = useRef<((cacheKey?: string) => void) | null>(null);
 +
 +  // Tier 2bis.2 follow-up: commit footprint overlay.
 +  const [commitFootprint, setCommitFootprint] = useState<CommitFootprint | null>(null);
@@ -22508,7 +22521,7 @@ index 25c5776..421605d 100644
    // Map of normalized file path → node ID for graph-based lookups
    const fileNodeByPath = useMemo(() => {
      if (!graph) return new Map<string, string>();
-@@ -1029,6 +1648,62 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
+@@ -1029,6 +1661,66 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
      async (repoName: string) => {
        if (!serverBaseUrl) return;
  
@@ -22523,6 +22536,10 @@ index 25c5776..421605d 100644
 +      if (prevBase && newBase && prevBase !== newBase) {
 +        snapshotCacheRef.current.clear();
 +        setCachedSnapshotNames(new Set());
++        // Layout pre-compute pool was keyed against the old base — its
++        // pending jobs reference snapshots we no longer care about.
++        layoutPoolRef.current?.terminate();
++        layoutPoolRef.current = null;
 +      }
 +
 +      if (cached) {
@@ -22571,7 +22588,7 @@ index 25c5776..421605d 100644
        setProgress({
          phase: 'extracting',
          percent: 0,
-@@ -1105,6 +1780,13 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
+@@ -1105,6 +1797,13 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
          for (const node of result.nodes) newGraph.addNode(node);
          for (const rel of result.relationships) newGraph.addRelationship(rel);
          setGraph(newGraph);
@@ -22585,7 +22602,7 @@ index 25c5776..421605d 100644
        } catch (err: unknown) {
          console.error('Repo switch failed:', err);
          setProgress({
-@@ -1207,9 +1889,1058 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
+@@ -1207,9 +1906,1089 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
      setCodeReferenceFocus(null);
    }, []);
  
@@ -23272,6 +23289,8 @@ index 25c5776..421605d 100644
 +  const clearSnapshotCache = useCallback(() => {
 +    snapshotCacheRef.current.clear();
 +    setCachedSnapshotNames(new Set());
++    layoutPoolRef.current?.terminate();
++    layoutPoolRef.current = null;
 +  }, []);
 +
 +  const cancelPreload = useCallback(() => {
@@ -23321,6 +23340,18 @@ index 25c5776..421605d 100644
 +    const ctrl = new AbortController();
 +    preloadAbortRef.current = ctrl;
 +
++    // Spawn (or reuse) a layout pre-compute pool. The pool persists
++    // FA2 positions in localStorage so the first Play frame after the
++    // preload completes is near-instant for every snapshot.
++    if (!layoutPoolRef.current) {
++      try {
++        layoutPoolRef.current = createLayoutWorkerPool(2);
++      } catch (err) {
++        // eslint-disable-next-line no-console
++        console.warn('[preload] layout worker pool unavailable', err);
++      }
++    }
++
 +    const queue = [...todo];
 +    const concurrency = Math.min(3, queue.length);
 +    let done = total - todo.length;
@@ -23344,6 +23375,23 @@ index 25c5776..421605d 100644
 +            done++;
 +            setCachedSnapshotNames(new Set(snapshotCacheRef.current.keys()));
 +            setPreloadProgress({ done, total, current: next.name });
++            // Fire-and-forget: queue a layout pre-compute job. The pool
++            // handles "already cached → skip" internally.
++            if (layoutPoolRef.current) {
++              try {
++                const graphData = buildWorkerInputFromNodesEdges(
++                  result.nodes,
++                  result.relationships,
++                );
++                layoutPoolRef.current.enqueue({
++                  cacheKey: next.name,
++                  graphData,
++                });
++              } catch (err) {
++                // eslint-disable-next-line no-console
++                console.warn('[preload] layout enqueue failed', next.name, err);
++              }
++            }
 +          } catch (err) {
 +            if (ctrl.signal.aborted) return;
 +            done++;
@@ -23644,7 +23692,7 @@ index 25c5776..421605d 100644
      graph,
      setGraph,
      selectedNode,
-@@ -1293,6 +3024,153 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
+@@ -1293,6 +3072,153 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
      clearAICodeReferences,
      clearCodeReferences,
      codeReferenceFocus,
@@ -25851,6 +25899,197 @@ index 0000000..7ddb50d
 +  }
 +  for (const k of keys) window.localStorage.removeItem(k);
 +}
+diff --git a/gitnexus-web/src/lib/layout-worker-pool.ts b/gitnexus-web/src/lib/layout-worker-pool.ts
+new file mode 100644
+index 0000000..ceaccda
+--- /dev/null
++++ b/gitnexus-web/src/lib/layout-worker-pool.ts
+@@ -0,0 +1,114 @@
++/**
++ * Small fixed-size worker pool driving `layout-worker.ts` to pre-compute
++ * FA2 positions for every snapshot during `preloadAllSnapshots`. Results
++ * are persisted to localStorage via `saveLayoutPositions` so subsequent
++ * `useSigma.setGraph(g, { cacheKey })` calls hit the fast path.
++ *
++ * Pool size 2 (CPU-bound, leaves a core for the main thread + the
++ * preload network pool).
++ */
++import Graph from 'graphology';
++import { saveLayoutPositions, loadLayout } from './layout-cache';
++import type { WorkerOutput } from './layout-worker';
++
++export type LayoutPoolJob = {
++  cacheKey: string;
++  graphData: any; // graph.export()
++  iterations?: number;
++};
++
++/**
++ * Build a minimal serialized graph (nodes + edges) suitable for the
++ * worker. FA2 only needs the topology — we strip styling to keep the
++ * postMessage clone small.
++ */
++export function buildWorkerInputFromNodesEdges(
++  nodes: Array<{ id: string }>,
++  edges: Array<{ sourceId: string; targetId: string }>,
++): any {
++  const g = new Graph({ multi: true, allowSelfLoops: true });
++  for (const n of nodes) {
++    if (!g.hasNode(n.id)) g.addNode(n.id);
++  }
++  for (const e of edges) {
++    if (!g.hasNode(e.sourceId) || !g.hasNode(e.targetId)) continue;
++    try {
++      g.addEdge(e.sourceId, e.targetId);
++    } catch {
++      // duplicate / forbidden — skip
++    }
++  }
++  return g.export();
++}
++
++export type LayoutPool = {
++  enqueue: (job: LayoutPoolJob) => void;
++  terminate: () => void;
++};
++
++export function createLayoutWorkerPool(size = 2): LayoutPool {
++  const queue: LayoutPoolJob[] = [];
++  const workers: Worker[] = [];
++  const busy: boolean[] = [];
++  let terminated = false;
++
++  function spawnWorker(idx: number) {
++    const w = new Worker(new URL('./layout-worker.ts', import.meta.url), {
++      type: 'module',
++    });
++    w.onmessage = (e: MessageEvent<WorkerOutput>) => {
++      const { cacheKey, positions, nodeCount } = e.data;
++      if (cacheKey && nodeCount > 0) {
++        saveLayoutPositions(cacheKey, positions);
++      }
++      busy[idx] = false;
++      pump();
++    };
++    w.onerror = (err) => {
++      // eslint-disable-next-line no-console
++      console.warn('[layout-worker-pool] worker error', err);
++      busy[idx] = false;
++      pump();
++    };
++    workers[idx] = w;
++    busy[idx] = false;
++  }
++
++  function pump() {
++    if (terminated) return;
++    for (let i = 0; i < size; i++) {
++      if (!busy[i] && queue.length > 0) {
++        const job = queue.shift();
++        if (!job) break;
++        // Skip if already cached — saves a worker round-trip when the
++        // user re-runs Preload after a partial cancel.
++        if (loadLayout(job.cacheKey)) continue;
++        if (!workers[i]) spawnWorker(i);
++        busy[i] = true;
++        workers[i].postMessage(job);
++      }
++    }
++  }
++
++  function enqueue(job: LayoutPoolJob) {
++    if (terminated) return;
++    queue.push(job);
++    pump();
++  }
++
++  function terminate() {
++    terminated = true;
++    queue.length = 0;
++    for (const w of workers) {
++      try {
++        w?.terminate();
++      } catch {
++        // ignore
++      }
++    }
++    workers.length = 0;
++    busy.length = 0;
++  }
++
++  return { enqueue, terminate };
++}
+diff --git a/gitnexus-web/src/lib/layout-worker.ts b/gitnexus-web/src/lib/layout-worker.ts
+new file mode 100644
+index 0000000..f8afa5a
+--- /dev/null
++++ b/gitnexus-web/src/lib/layout-worker.ts
+@@ -0,0 +1,65 @@
++/**
++ * Web Worker that runs ForceAtlas2 + light noverlap on a serialized
++ * graphology graph and posts back the converged positions. Driven by
++ * `useAppState.preloadAllSnapshots` so the first Play roadmap after a
++ * preload is near-instant (positions are already in localStorage).
++ *
++ * Imported via Vite as a module Worker:
++ *   new Worker(new URL('../lib/layout-worker.ts', import.meta.url),
++ *     { type: 'module' })
++ */
++import Graph from 'graphology';
++import forceAtlas2 from 'graphology-layout-forceatlas2';
++import noverlap from 'graphology-layout-noverlap';
++
++export type WorkerInput = {
++  cacheKey: string;
++  graphData: any; // result of graph.export() — JSON-clonable
++  iterations?: number; // default 200
++};
++
++export type WorkerOutput = {
++  cacheKey: string;
++  positions: Record<string, { x: number; y: number }>;
++  nodeCount: number;
++  durationMs: number;
++};
++
++// eslint-disable-next-line @typescript-eslint/no-explicit-any
++(self as any).onmessage = (e: MessageEvent<WorkerInput>) => {
++  const { cacheKey, graphData, iterations = 200 } = e.data;
++  const start =
++    typeof performance !== 'undefined' && typeof performance.now === 'function'
++      ? performance.now()
++      : Date.now();
++  const graph = Graph.from(graphData);
++  if (graph.order === 0) {
++    (self as any).postMessage({
++      cacheKey,
++      positions: {},
++      nodeCount: 0,
++      durationMs: 0,
++    } satisfies WorkerOutput);
++    return;
++  }
++  const settings = forceAtlas2.inferSettings(graph);
++  forceAtlas2.assign(graph, { iterations, settings });
++  // Light noverlap pass — matches useSigma's NOVERLAP_SETTINGS spirit.
++  noverlap.assign(graph, { gridSize: 20, margin: 5, ratio: 1.1 });
++  const positions: Record<string, { x: number; y: number }> = {};
++  graph.forEachNode((id, attrs) => {
++    if (typeof attrs.x === 'number' && typeof attrs.y === 'number') {
++      positions[id] = { x: attrs.x, y: attrs.y };
++    }
++  });
++  const end =
++    typeof performance !== 'undefined' && typeof performance.now === 'function'
++      ? performance.now()
++      : Date.now();
++  (self as any).postMessage({
++    cacheKey,
++    positions,
++    nodeCount: graph.order,
++    durationMs: end - start,
++  } satisfies WorkerOutput);
++};
 diff --git a/gitnexus-web/src/lib/lucide-icons.tsx b/gitnexus-web/src/lib/lucide-icons.tsx
 index 05676e5..8844aab 100644
 --- a/gitnexus-web/src/lib/lucide-icons.tsx
