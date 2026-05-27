@@ -232,6 +232,14 @@ Pure frontend overlay — aucune route serveur, consomme `/ghosts?repo=` du CORE
 - **Storage** : la section managée de ROADMAP.md est la source. Le CORE re-parse à chaque sync.
 - **Triggers** : 4 convergents (manuel, Claude PostToolUse, git post-commit, GHA). Installable via `npm run setup:hooks`.
 
+#### Roadmap-predictive SysML export (Tier 3.x bonus, 2026-05-27)
+- `upstream/docker-server-sysml-export-core.mjs` — pure fns `safeId`, `renderPlantUml`, `renderMermaid`. Pas de dépendance externe.
+- `upstream/docker-server-sysml-export.mjs` — I/O wrapper qui lit `.gitnexus/ghosts.json` via `readLatestGhosts`, agrège les fichiers référencés par `ghost.links[]`, appelle le renderer choisi.
+- Endpoint : `GET /sysml-export?repo=<name>&format=plantuml|mermaid&tier=<n>`. Renvoie `text/plain`. 200 / 400 (missing/bad params) / 404 (no sync) / 500 (errors).
+- **Mapping SysML** : File → block, Ghost planned/expired → requirement, ghost.links → `<<satisfy>>`, dependsOn → `<<deriveReqt>>`, Tier major → package.
+- **Out** : XMI, SysML v2, CALLS/IMPORTS edges, rendering PNG/SVG (le user rend chez lui), composant frontend.
+- **Usage** : `curl :4173/sysml-export?repo=hmm_studio > diagram.puml` puis ouvrir dans PlantUML server / VSCode extension.
+
 #### Dépendances ajoutées
 - `react-force-graph-3d`, `three` (pour le mode 3D) — déclarées dans `gitnexus-web/package.json`
 - `umap-js` (Tier 2.6.bis) — dynamic-importé par `SimilarityPanel/GalaxyView` quand le user clique sur "UMAP", reste out-of-bundle sinon

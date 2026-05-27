@@ -54,6 +54,8 @@ Pré-requis local : Rancher Desktop running, **Node ≥ 22 LTS**. CI : `.github/
 | Spec parser | `unit/ghost-from-spec-parser.test.mjs` | deriveId + extractTitle + extractDescription + extractTier + extractExpectedLinks |
 | Managed section upsert | `unit/ghost-from-spec-roadmap.test.mjs` | upsertManagedSection (create / upsert / idempotent) |
 | Install hooks | `unit/install-brainstorm-hooks.test.mjs` | Claude merge + git-hook template + GHA workflow template |
+| SysML — PlantUML renderer | unit/sysml-export-plantuml.test.mjs | safeId + renderPlantUml + tier filter + satisfy + deriveReqt |
+| SysML — Mermaid renderer | unit/sysml-export-mermaid.test.mjs | renderMermaid (graph TD + subgraphs) |
 
 ### Components React (unit)
 | Test | Fichier | Couvre |
@@ -115,6 +117,7 @@ Pré-requis local : Rancher Desktop running, **Node ≥ 22 LTS**. CI : `.github/
 | Ghost cleanup prompt | `integration/endpoints/ghost-cleanup-prompt.test.mjs` | `POST /ghosts/cleanup-prompt` expired list + prompts |
 | Ghost connector suggestions | `integration/endpoints/ghost-connector-suggestions.test.mjs` | `GET /ghosts/connector-suggestions` empty-config + Plane path |
 | Brainstorm-hook e2e | `integration/endpoints/brainstorm-hook-e2e.test.mjs` | script run → ROADMAP managed section → CORE parser emits planned ghost |
+| SysML endpoint | integration/endpoints/sysml-export.test.mjs | GET 200 (text/plain), 400 missing repo, 400 invalid format |
 | MCP ghost_audit | `integration/mcp/ghost_audit.test.mjs` | stdio JSON-RPC tool call |
 
 ### UI flows e2e

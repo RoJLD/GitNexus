@@ -197,6 +197,10 @@ curl -s -o /dev/null -w "entropy/commits: HTTP %{http_code}\n" \
 curl -s -o /dev/null -w "watches: HTTP %{http_code}\n" \
   "http://localhost:4173/watches"
 
+# SysML export (Tier 3.x bonus — pure read-only, no side effects)
+curl -s -o /dev/null -w "sysml-export: HTTP %{http_code}\n" \
+  "http://localhost:4173/sysml-export?repo=hmm_studio&format=plantuml"
+
 # MCP sidecar — stdio JSON-RPC against the live stack. Exercises the
 # wrapper layer that exposes our analytics to Claude Code / Cursor.
 node mcp-server/smoke.mjs
