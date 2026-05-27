@@ -77,6 +77,45 @@ index b102a70..308cf09 100644
  
  RUN chown -R node:node /app
  
+diff --git a/connectors/github.mjs b/connectors/github.mjs
+new file mode 100644
+index 0000000..cfb073a
+--- /dev/null
++++ b/connectors/github.mjs
+@@ -0,0 +1,7 @@
++// upstream/connectors/github.mjs — v1 stub (framework only).
++export const githubConnector = {
++  name: 'github',
++  configKey: 'connectors.github',
++  async fetchOpenWorkItems() { throw new Error('github connector not implemented yet (v1 stub)'); },
++  async fetchClosedWorkItems() { throw new Error('github connector not implemented yet (v1 stub)'); },
++};
+diff --git a/connectors/jira.mjs b/connectors/jira.mjs
+new file mode 100644
+index 0000000..0e0d949
+--- /dev/null
++++ b/connectors/jira.mjs
+@@ -0,0 +1,7 @@
++// upstream/connectors/jira.mjs — v1 stub (framework only).
++export const jiraConnector = {
++  name: 'jira',
++  configKey: 'connectors.jira',
++  async fetchOpenWorkItems() { throw new Error('jira connector not implemented yet (v1 stub)'); },
++  async fetchClosedWorkItems() { throw new Error('jira connector not implemented yet (v1 stub)'); },
++};
+diff --git a/connectors/linear.mjs b/connectors/linear.mjs
+new file mode 100644
+index 0000000..443c834
+--- /dev/null
++++ b/connectors/linear.mjs
+@@ -0,0 +1,7 @@
++// upstream/connectors/linear.mjs — v1 stub (framework only).
++export const linearConnector = {
++  name: 'linear',
++  configKey: 'connectors.linear',
++  async fetchOpenWorkItems() { throw new Error('linear connector not implemented yet (v1 stub)'); },
++  async fetchClosedWorkItems() { throw new Error('linear connector not implemented yet (v1 stub)'); },
++};
 diff --git a/connectors/plane.mjs b/connectors/plane.mjs
 new file mode 100644
 index 0000000..69d006d
