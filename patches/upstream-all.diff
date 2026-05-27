@@ -16920,6 +16920,207 @@ index 0000000..2b136a3
 +    </div>
 +  );
 +}
+diff --git a/gitnexus-web/src/components/audit/GhostTable.tsx b/gitnexus-web/src/components/audit/GhostTable.tsx
+new file mode 100644
+index 0000000..b34c402
+--- /dev/null
++++ b/gitnexus-web/src/components/audit/GhostTable.tsx
+@@ -0,0 +1,195 @@
++import { useMemo, useState } from 'react';
++
++/**
++ * GhostTable — sortable, filterable list of ghosts. One row per ghost,
++ * columns : Tier / Title / Status / Lead time / Slippage / Churn count.
++ *
++ * Interactions :
++ *   - Click a column header to sort by it (toggle asc/desc).
++ *   - Filter by tier (dropdown over distinct tier values).
++ *   - Filter by status (toggle: All / materialized / planned / cancelled).
++ *   - Click a row → onGhostSelect(id), AuditPanel propagates to Sigma graph.
++ *   - When `highlightedId === ghost.id`, the row gets the
++ *     `.row-highlighted` class for the Sigma-linked highlight.
++ *
++ * Spec : docs/superpowers/specs/2026-05-26-roadmap-predictive-audit-design.md
++ */
++
++type Ghost = {
++  id: string;
++  tier?: string | null;
++  declared?: {
++    title?: string;
++    description?: string;
++    plannedFor?: string;
++  };
++  plannedAt?: { date: string } | null;
++  materializedAt?: { date: string } | null;
++  cancelledAt?: { date: string } | null;
++  churn?: number;
++  leadTimeDays?: number | null;
++  slippage?: string | null;
++};
++
++type SortKey = 'tier' | 'title' | 'status' | 'leadTime' | 'slippage' | 'churn';
++type StatusFilter = 'all' | 'materialized' | 'planned' | 'cancelled';
++
++type Props = {
++  ghosts: Ghost[];
++  highlightedId?: string | null;
++  onGhostSelect?: (id: string) => void;
++};
++
++function derivedStatus(g: Ghost): 'materialized' | 'planned' | 'cancelled' {
++  if (g.cancelledAt) return 'cancelled';
++  if (g.materializedAt) return 'materialized';
++  return 'planned';
++}
++
++function compare(a: any, b: any): number {
++  if (a == null && b == null) return 0;
++  if (a == null) return 1;
++  if (b == null) return -1;
++  if (typeof a === 'number' && typeof b === 'number') return a - b;
++  return String(a).localeCompare(String(b));
++}
++
++export default function GhostTable({ ghosts, highlightedId, onGhostSelect }: Props) {
++  const [sortKey, setSortKey] = useState<SortKey>('tier');
++  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
++  const [tierFilter, setTierFilter] = useState<string>('all');
++  const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
++
++  const tiers = useMemo(() => {
++    const set = new Set<string>();
++    for (const g of ghosts) if (g.tier) set.add(g.tier);
++    return ['all', ...Array.from(set).sort()];
++  }, [ghosts]);
++
++  const filtered = useMemo(() => {
++    return ghosts.filter((g) => {
++      if (tierFilter !== 'all' && g.tier !== tierFilter) return false;
++      if (statusFilter !== 'all' && derivedStatus(g) !== statusFilter) return false;
++      return true;
++    });
++  }, [ghosts, tierFilter, statusFilter]);
++
++  const sorted = useMemo(() => {
++    const arr = [...filtered];
++    arr.sort((a, b) => {
++      let av: any, bv: any;
++      switch (sortKey) {
++        case 'tier':
++          av = a.tier; bv = b.tier; break;
++        case 'title':
++          av = a.declared?.title ?? a.id; bv = b.declared?.title ?? b.id; break;
++        case 'status':
++          av = derivedStatus(a); bv = derivedStatus(b); break;
++        case 'leadTime':
++          av = a.leadTimeDays; bv = b.leadTimeDays; break;
++        case 'slippage':
++          av = a.slippage; bv = b.slippage; break;
++        case 'churn':
++          av = a.churn ?? 0; bv = b.churn ?? 0; break;
++      }
++      const r = compare(av, bv);
++      return sortDir === 'asc' ? r : -r;
++    });
++    return arr;
++  }, [filtered, sortKey, sortDir]);
++
++  function onSortClick(key: SortKey) {
++    if (key === sortKey) setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
++    else {
++      setSortKey(key);
++      setSortDir('asc');
++    }
++  }
++
++  return (
++    <div className="ghost-table" data-testid="ghost-table">
++      <header className="filters">
++        <label>
++          Tier
++          <select
++            data-testid="filter-tier"
++            value={tierFilter}
++            onChange={(e) => setTierFilter(e.target.value)}
++          >
++            {tiers.map((t) => (
++              <option key={t} value={t}>
++                {t}
++              </option>
++            ))}
++          </select>
++        </label>
++        <label>
++          Status
++          <select
++            data-testid="filter-status"
++            value={statusFilter}
++            onChange={(e) => setStatusFilter(e.target.value as StatusFilter)}
++          >
++            <option value="all">all</option>
++            <option value="materialized">materialized</option>
++            <option value="planned">planned</option>
++            <option value="cancelled">cancelled</option>
++          </select>
++        </label>
++        <span className="row-count" data-testid="row-count">
++          {sorted.length} of {ghosts.length}
++        </span>
++      </header>
++      <table>
++        <thead>
++          <tr>
++            {(
++              [
++                ['tier', 'Tier'],
++                ['title', 'Title'],
++                ['status', 'Status'],
++                ['leadTime', 'Lead time'],
++                ['slippage', 'Slippage'],
++                ['churn', 'Churn'],
++              ] as [SortKey, string][]
++            ).map(([k, label]) => (
++              <th
++                key={k}
++                data-testid={`sort-${k}`}
++                onClick={() => onSortClick(k)}
++                role="button"
++                tabIndex={0}
++                style={{ cursor: 'pointer' }}
++              >
++                {label}
++                {sortKey === k && (sortDir === 'asc' ? ' ▲' : ' ▼')}
++              </th>
++            ))}
++          </tr>
++        </thead>
++        <tbody>
++          {sorted.map((g) => {
++            const status = derivedStatus(g);
++            const highlighted = highlightedId === g.id;
++            return (
++              <tr
++                key={g.id}
++                data-testid={`row-${g.id}`}
++                className={`status-${status}${highlighted ? ' row-highlighted' : ''}`}
++                onClick={() => onGhostSelect?.(g.id)}
++                style={{ cursor: 'pointer' }}
++              >
++                <td>{g.tier ?? '—'}</td>
++                <td>{g.declared?.title ?? g.id}</td>
++                <td>{status}</td>
++                <td>{g.leadTimeDays != null ? `${g.leadTimeDays}d` : '—'}</td>
++                <td>{g.slippage ?? '—'}</td>
++                <td>{g.churn ?? 0}</td>
++              </tr>
++            );
++          })}
++        </tbody>
++      </table>
++    </div>
++  );
++}
 diff --git a/gitnexus-web/src/components/audit/LeadTimeHistogram.tsx b/gitnexus-web/src/components/audit/LeadTimeHistogram.tsx
 new file mode 100644
 index 0000000..b564d0a
