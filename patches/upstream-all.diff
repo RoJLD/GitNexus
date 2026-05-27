@@ -16920,6 +16920,91 @@ index 0000000..2b136a3
 +    </div>
 +  );
 +}
+diff --git a/gitnexus-web/src/components/audit/LeadTimeHistogram.tsx b/gitnexus-web/src/components/audit/LeadTimeHistogram.tsx
+new file mode 100644
+index 0000000..b564d0a
+--- /dev/null
++++ b/gitnexus-web/src/components/audit/LeadTimeHistogram.tsx
+@@ -0,0 +1,79 @@
++/**
++ * LeadTimeHistogram — hand-rolled SVG 4-bucket histogram of ghost
++ * materialization lead-times. Pattern follows GrowthChart.tsx (no
++ * chart library — we own the SVG). Hides itself when there is no
++ * distribution data (e.g. zero materialized ghosts).
++ *
++ * Buckets are emitted by computeLeadTime as `0-7d / 7-14d / 14-30d / 30d+`.
++ *
++ * Spec : docs/superpowers/specs/2026-05-26-roadmap-predictive-audit-design.md
++ */
++
++const W = 320;
++const H = 140;
++const PAD = { top: 8, right: 8, bottom: 28, left: 28 };
++
++type Props = {
++  data: {
++    medianDays: number | null;
++    p25Days: number | null;
++    p75Days: number | null;
++    maxDays: number | null;
++    distribution: { bucket: string; count: number }[];
++  };
++};
++
++export default function LeadTimeHistogram({ data }: Props) {
++  const dist = data.distribution ?? [];
++  if (dist.length === 0) return null;
++  const max = Math.max(1, ...dist.map((d) => d.count));
++  const innerW = W - PAD.left - PAD.right;
++  const innerH = H - PAD.top - PAD.bottom;
++  const barW = innerW / dist.length;
++  return (
++    <div className="lead-time-histogram" data-testid="lead-time-histogram">
++      <header>
++        <strong>Lead time</strong>
++        {data.medianDays != null && (
++          <span className="median">median {data.medianDays}d</span>
++        )}
++      </header>
++      <svg width={W} height={H} role="img" aria-label="Lead time histogram">
++        {dist.map((d, i) => {
++          const h = (d.count / max) * innerH;
++          const x = PAD.left + i * barW + 4;
++          const y = PAD.top + innerH - h;
++          return (
++            <g key={d.bucket} data-testid={`bar-${d.bucket}`}>
++              <rect
++                x={x}
++                y={y}
++                width={Math.max(2, barW - 8)}
++                height={h}
++                fill="#3b82f6"
++              />
++              <text
++                x={x + (barW - 8) / 2}
++                y={H - 14}
++                fontSize={10}
++                textAnchor="middle"
++                fill="currentColor"
++              >
++                {d.bucket}
++              </text>
++              <text
++                x={x + (barW - 8) / 2}
++                y={y - 4}
++                fontSize={10}
++                textAnchor="middle"
++                fill="currentColor"
++              >
++                {d.count}
++              </text>
++            </g>
++          );
++        })}
++      </svg>
++    </div>
++  );
++}
 diff --git a/gitnexus-web/src/core/llm/agent.ts b/gitnexus-web/src/core/llm/agent.ts
 index 49862a9..5c552dd 100644
 --- a/gitnexus-web/src/core/llm/agent.ts
