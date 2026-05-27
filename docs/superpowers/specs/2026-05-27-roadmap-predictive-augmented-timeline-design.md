@@ -239,3 +239,26 @@ Quand ON : `lockGhostsToHead = true` ⇒ même comportement qu'aujourd'hui (ghos
 ## 7. Suite
 
 Plan d'implémentation via `superpowers:writing-plans`. **Dernier item de l'IDEAS-PARKING** — clôt la série Roadmap Predictive (8 sous-specs + 1 CORE = 9 livraisons).
+
+---
+
+## Update 2026-05-27 — Shipped
+
+Augmented Timeline livré sur la branche `deployment` (8 commits, identité `roblastar@live.fr`). Notes :
+
+- **3 pure fns** (`selectGhostsAt`, `computeTransitions`, `resolveAugmentedTimelineMode`) dans `upstream/gitnexus-web/src/lib/augmented-timeline.ts` + service `snapshot-ghosts-cache.ts` (parallel pool POOL=3, cap 50, TTL 30s, abort-aware).
+- **3 activation triggers fonctionnels** : (1) auto-detect (cursor B < HEAD - 60s ⇒ time-aware), (2) Lock toggle dans Filters (`data-testid="toggle-lock-ghosts-to-head"`, visible quand showGhosts ON), (3) Animate button Timeline (`data-testid="animate-roadmap-button"`, auto-cursor earliest + auto-Play + setAnimationActive).
+- **Cross-fade 200 ms** via `useSigma.opacityOverrideRef` + single shared rAF loop (`startGhostCrossFade` / `startRealNodeCrossFade` / `clearCrossFades`). Trigger uniquement pendant `animationActive` — au drag manuel on hard-swap pour éviter le freezing.
+- **Cap 50 snapshots** (cost ~2s pre-fetch initial), TTL 30s. Refresh implicite quand le user change de repo.
+- **Aucun endpoint serveur ajouté** — pure réutilisation `/ghosts/at` du CORE.
+- **Field name discovered** : la cursor state est `cursorB: string | null` (ISO date) dans `useAppState.tsx`, introduit par Timeline-zoom Phase 1 (pas `timelineCursorDate` comme dans le draft du plan). HEAD = `availableRepos.find((r) => r.name === baseRepo)?.indexedAt`.
+- **Tests** : 2 unit (pure fns + cache) + 1 component (Animate button) + 2 component (Lock toggle dans Filters.test.tsx) + 1 e2e. Runtime local Node 21 bloqué (vitest 4.x) ; validation via `node --check` + check-test-inventory (exit 0).
+- **Dernier item IDEAS-PARKING-roadmap-predictive.md** — clôture la série (8 sous-specs + 1 CORE + bonus SysML).
+
+### Limitations connues (re-confirmées)
+
+1. Skew tolerance "current" = 60s. Sub-1-min snapshots déclencheraient time-aware par erreur. Acceptable.
+2. Cap 50 snapshots — repos plus longs voient seulement les 50 derniers en mode time-aware.
+3. Cluster halos PAS time-aware en v1 (toujours latest). Future si demandé.
+4. Animation playback position non persistante entre sessions.
+5. La cross-fade `startRealNodeCrossFade` réutilise le canal `size` pour le real-node fade-in (pas de canal opacity générique côté `nodeReducer`) — visuel léger, mais correct fonctionnellement.
