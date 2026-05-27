@@ -2588,10 +2588,10 @@ index 0000000..325cefe
 +}
 diff --git a/docker-server-ghost-audit.mjs b/docker-server-ghost-audit.mjs
 new file mode 100644
-index 0000000..3ac0909
+index 0000000..db635fa
 --- /dev/null
 +++ b/docker-server-ghost-audit.mjs
-@@ -0,0 +1,86 @@
+@@ -0,0 +1,137 @@
 +/**
 + * I/O wrapper for the roadmap-predictive Audit view.
 + * Reads CORE sidecars (.gitnexus/ghosts.json and snapshots/*\/ghosts.json),
@@ -2603,8 +2603,9 @@ index 0000000..3ac0909
 +import { join } from 'node:path';
 +import {
 +  computeSummary, computeLeadTime, computeSlippage,
-+  computePlanChurn, computeVelocity,
++  computePlanChurn, computeVelocity, computeExpired,
 +} from './docker-server-ghost-audit-core.mjs';
++import { findRepoByName } from './docker-server-snapshots.mjs';
 +
 +async function fileExists(p) { try { await access(p); return true; } catch { return false; } }
 +
@@ -2643,6 +2644,7 @@ index 0000000..3ac0909
 +    slippage: computeSlippage(ghosts),
 +    planChurn: computePlanChurn(snapshots),
 +    velocity: computeVelocity(ghosts, { windowDays: opts.windowDays ?? 28 }),
++    expired: computeExpired(ghosts, { gracePeriodDays: 30, now: new Date() }),
 +  };
 +}
 +
@@ -2677,6 +2679,55 @@ index 0000000..3ac0909
 +  await mkdir(join(repoPath, '.gitnexus'), { recursive: true });
 +  await writeFile(cachePath, JSON.stringify(fresh, null, 2) + '\n');
 +  return { ...fresh, cached: false };
++}
++
++// --- HTTP route handler ---
++// Resolves repo from ?repo via findRepoByName, then delegates to computeAudit.
++// Same shape as handleGhostsGet in docker-server-ghosts.mjs.
++
++export async function handleGhostAudit(url, res, opts) {
++  const repoName = url.searchParams.get('repo');
++  if (!repoName) {
++    res.writeHead(400, { 'Content-Type': 'application/json' });
++    res.end(JSON.stringify({ error: 'missing repo' }));
++    return;
++  }
++  try {
++    const repo = await findRepoByName(repoName, opts.api);
++    if (!repo) {
++      res.writeHead(400, { 'Content-Type': 'application/json' });
++      res.end(JSON.stringify({ error: `repo not found: ${repoName}` }));
++      return;
++    }
++    const repoPath = repo.repoPath || repo.path;
++    const windowDaysRaw = url.searchParams.get('windowDays');
++    const windowDays = windowDaysRaw ? Number(windowDaysRaw) : undefined;
++    const audit = await computeAudit(repoPath, { windowDays });
++    if (!audit) {
++      res.writeHead(404, { 'Content-Type': 'application/json' });
++      res.end(JSON.stringify({ error: 'No ghosts.json — run POST /ghosts/sync first.' }));
++      return;
++    }
++    res.writeHead(200, { 'Content-Type': 'application/json' });
++    res.end(JSON.stringify(audit));
++  } catch (err) {
++    console.error('[ghost-audit] failed:', err);
++    res.writeHead(500, { 'Content-Type': 'application/json' });
++    res.end(JSON.stringify({ error: err.message }));
++  }
++}
++
++/**
++ * Public dispatcher : returns true if the request matches /ghost-audit
++ * (and is fully handled), false otherwise. Registered in `docker-server.mjs`
++ * next to the other analytics dispatchers.
++ */
++export async function handleGhostAuditRoute(req, url, res, opts) {
++  if (url.pathname === '/ghost-audit' && req.method === 'GET') {
++    await handleGhostAudit(url, res, opts);
++    return true;
++  }
++  return false;
 +}
 diff --git a/docker-server-ghosts-core.mjs b/docker-server-ghosts-core.mjs
 new file mode 100644
