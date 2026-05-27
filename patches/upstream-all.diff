@@ -19251,10 +19251,10 @@ index 6c660b0..937fd90 100644
  ═══════════════════════════════════════════════════════════════ */
 diff --git a/gitnexus-web/src/lib/ghost-layout.ts b/gitnexus-web/src/lib/ghost-layout.ts
 new file mode 100644
-index 0000000..446dfb2
+index 0000000..0e29a29
 --- /dev/null
 +++ b/gitnexus-web/src/lib/ghost-layout.ts
-@@ -0,0 +1,125 @@
+@@ -0,0 +1,202 @@
 +/**
 + * Pure functions for placing ghost nodes on the Sigma canvas.
 + * Reused from frontend only — no I/O, no Sigma deps.
@@ -19379,6 +19379,83 @@ index 0000000..446dfb2
 +  if (!tier) return '#6d6d6d';
 +  const major = String(tier).split('.')[0];
 +  return TIER_COLORS[major] ?? '#6d6d6d';
++}
++
++/**
++ * Update 1 — time-decaying opacity for ghost nodes.
++ *
++ * Parses an ISO date (YYYY-MM-DD or full ISO timestamp), a quarter
++ * (YYYY-Qx where x ∈ 1..4), or a year-month (YYYY-MM).
++ * Returns null if the input is missing or unrecognised.
++ */
++export function parseTargetDate(value: string | null | undefined): Date | null {
++  if (!value || typeof value !== 'string') return null;
++  const s = value.trim();
++  if (!s) return null;
++  // YYYY-Qx form
++  const quarterMatch = s.match(/^(\d{4})-Q([1-4])$/i);
++  if (quarterMatch) {
++    const year = Number(quarterMatch[1]);
++    const q = Number(quarterMatch[2]);
++    // End of quarter: month = q*3 (1..12), day = last day of that month.
++    const endMonth = q * 3; // 3, 6, 9, 12
++    // Date constructor month is 0-indexed; day 0 of next month = last day of current month.
++    return new Date(Date.UTC(year, endMonth, 0, 23, 59, 59));
++  }
++  // YYYY-MM form
++  const monthMatch = s.match(/^(\d{4})-(\d{2})$/);
++  if (monthMatch) {
++    const year = Number(monthMatch[1]);
++    const month = Number(monthMatch[2]);
++    if (month < 1 || month > 12) return null;
++    return new Date(Date.UTC(year, month, 0, 23, 59, 59));
++  }
++  // Fallback: native Date parsing (ISO date / timestamp).
++  const t = Date.parse(s);
++  if (Number.isNaN(t)) return null;
++  return new Date(t);
++}
++
++export type GhostAlertLevel = 'fresh' | 'mature' | 'late' | 'critical' | 'cancelled';
++
++export type GhostVisualState = {
++  opacity: number;
++  outlineColor: string;
++  alertLevel: GhostAlertLevel;
++};
++
++export type GhostVisualInput = {
++  tier?: string | null;
++  status?: 'planned' | 'materialized' | 'cancelled' | string | null;
++  plannedAt?: { date?: string | null } | null;
++  declared?: { expectedBy?: string | null } | null;
++};
++
++/**
++ * Computes the visual state of a ghost node based on how much of its
++ * planned->expectedBy window has elapsed at `now`. The further past the
++ * expected date, the more opaque and alarming the outline.
++ *
++ * See spec : docs/superpowers/specs/2026-05-26-roadmap-predictive-augmented-graph-design.md
++ * (Update 1 — time-decaying opacity).
++ */
++export function computeGhostVisualState(ghost: GhostVisualInput, now: Date): GhostVisualState {
++  if (ghost.status === 'cancelled') {
++    return { opacity: 0.3, outlineColor: '#6d6d6d', alertLevel: 'cancelled' };
++  }
++  const tc = tierColor(ghost.tier ?? null);
++  const planned = ghost.plannedAt?.date ? new Date(ghost.plannedAt.date) : null;
++  const expectedBy = parseTargetDate(ghost.declared?.expectedBy);
++  if (!planned || Number.isNaN(planned.getTime()) || !expectedBy) {
++    return { opacity: 0.4, outlineColor: tc, alertLevel: 'fresh' };
++  }
++  const totalMs = expectedBy.getTime() - planned.getTime();
++  const elapsedMs = now.getTime() - planned.getTime();
++  const ratio = totalMs > 0 ? elapsedMs / totalMs : 1;
++  if (ratio < 0.5) return { opacity: 0.5, outlineColor: tc, alertLevel: 'fresh' };
++  if (ratio < 1.0) return { opacity: 0.4, outlineColor: tc, alertLevel: 'mature' };
++  if (ratio < 1.5) return { opacity: 0.3, outlineColor: '#e67e22', alertLevel: 'late' };
++  return { opacity: 0.2, outlineColor: '#c0392b', alertLevel: 'critical' };
 +}
 diff --git a/gitnexus-web/src/lib/graph-diff.ts b/gitnexus-web/src/lib/graph-diff.ts
 new file mode 100644
