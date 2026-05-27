@@ -11045,10 +11045,10 @@ index 2ee3569..4292ecf 100644
        {serverDisconnected && (
 diff --git a/gitnexus-web/src/components/AuditPanel.tsx b/gitnexus-web/src/components/AuditPanel.tsx
 new file mode 100644
-index 0000000..b570e15
+index 0000000..2ba192e
 --- /dev/null
 +++ b/gitnexus-web/src/components/AuditPanel.tsx
-@@ -0,0 +1,161 @@
+@@ -0,0 +1,203 @@
 +import { useEffect, useState } from 'react';
 +import AuditSummary from './audit/AuditSummary';
 +import LeadTimeHistogram from './audit/LeadTimeHistogram';
@@ -11057,6 +11057,8 @@ index 0000000..b570e15
 +import PlanChurnList from './audit/PlanChurnList';
 +import GhostTable from './audit/GhostTable';
 +import CleanupModal from './audit/CleanupModal';
++import ClusterDrillModal from './audit/ClusterDrillModal';
++import { fetchClusters, type ClusterRuntime } from '../services/clusters-client';
 +
 +/**
 + * Roadmap-predictive Audit container.
@@ -11127,6 +11129,12 @@ index 0000000..b570e15
 +  const [error, setError] = useState<string | null>(null);
 +  const [highlightedId, setHighlightedId] = useState<string | null>(null);
 +  const [cleanupOpen, setCleanupOpen] = useState(false);
++  // Section H / Task 13 — clusters + drill modal. Fetch is best-effort
++  // (a repo with no /clusters route or no clusters.json sidecar simply
++  // leaves the 7th card hidden — `ClustersCard` returns null when the
++  // array is empty).
++  const [clusters, setClusters] = useState<ClusterRuntime[] | null>(null);
++  const [clustersOpen, setClustersOpen] = useState(false);
 +
 +  async function loadAll() {
 +    setError(null);
@@ -11149,6 +11157,26 @@ index 0000000..b570e15
 +  useEffect(() => {
 +    loadAll();
 +    // eslint-disable-next-line react-hooks/exhaustive-deps
++  }, [repo]);
++
++  // Clusters live in their own sidecar (clusters.json) so the audit
++  // payload doesn't carry them — we fetch in parallel with /ghosts.
++  // 404 (cache miss / no roadmap synced) silently leaves the 7th
++  // card hidden.
++  useEffect(() => {
++    let cancelled = false;
++    fetchClusters(repo)
++      .then((data) => {
++        if (cancelled) return;
++        setClusters(data?.clusters ?? null);
++      })
++      .catch(() => {
++        if (cancelled) return;
++        setClusters(null);
++      });
++    return () => {
++      cancelled = true;
++    };
 +  }, [repo]);
 +
 +  async function handleSync() {
@@ -11190,6 +11218,8 @@ index 0000000..b570e15
 +        data={audit.summary}
 +        expired={audit.expired}
 +        onExpiredClick={() => setCleanupOpen(true)}
++        clusters={clusters ?? undefined}
++        onClustersClick={() => setClustersOpen(true)}
 +      />
 +      <SlippageBar data={audit.slippage} />
 +      <LeadTimeHistogram data={audit.leadTime} />
@@ -11207,6 +11237,18 @@ index 0000000..b570e15
 +        }}
 +      />
 +      <CleanupModal repo={repo} open={cleanupOpen} onClose={() => setCleanupOpen(false)} />
++      {clusters && (
++        <ClusterDrillModal
++          clusters={clusters}
++          ghosts={ghosts ?? []}
++          open={clustersOpen}
++          onClose={() => setClustersOpen(false)}
++          onGhostClick={(id) => {
++            setHighlightedId(id);
++            onGhostSelect?.(id);
++          }}
++        />
++      )}
 +    </div>
 +  );
 +}
@@ -20005,18 +20047,26 @@ index 0000000..a370295
 +};
 diff --git a/gitnexus-web/src/components/audit/AuditSummary.tsx b/gitnexus-web/src/components/audit/AuditSummary.tsx
 new file mode 100644
-index 0000000..dd96877
+index 0000000..d4ac6cd
 --- /dev/null
 +++ b/gitnexus-web/src/components/audit/AuditSummary.tsx
-@@ -0,0 +1,74 @@
+@@ -0,0 +1,93 @@
 +/**
 + * AuditSummary — 5 always-on cards + a 6th "Expired" card that only
 + * appears when the audit response carries an `expired` block with
 + * `total > 0` (Update 1, computeExpired). The card uses a red badge
 + * (status-expired) to draw the eye to overdue ghosts.
 + *
++ * Section H / Task 13 of the Ghost Cluster plan adds a 7th "Clusters"
++ * card via the optional `clusters` + `onClustersClick` props — the
++ * `ClustersCard` component handles its own visibility (returns null
++ * when the array is empty).
++ *
 + * Spec : docs/superpowers/specs/2026-05-26-roadmap-predictive-audit-design.md
 + */
++
++import ClustersCard from './ClustersCard';
++import type { ClusterRuntime } from '../../services/clusters-client';
 +
 +type Summary = {
 +  total: number;
@@ -20037,9 +20087,17 @@ index 0000000..dd96877
 +  data: Summary;
 +  expired?: Expired;
 +  onExpiredClick?: () => void;
++  clusters?: ClusterRuntime[];
++  onClustersClick?: () => void;
 +};
 +
-+export default function AuditSummary({ data, expired, onExpiredClick }: Props) {
++export default function AuditSummary({
++  data,
++  expired,
++  onExpiredClick,
++  clusters,
++  onClustersClick,
++}: Props) {
 +  return (
 +    <div className="audit-summary" data-testid="audit-summary">
 +      <div className="stat">
@@ -20079,6 +20137,9 @@ index 0000000..dd96877
 +            </div>
 +          )}
 +        </div>
++      )}
++      {clusters && clusters.length > 0 && (
++        <ClustersCard clusters={clusters} onClick={onClustersClick} />
 +      )}
 +    </div>
 +  );
@@ -20178,6 +20239,227 @@ index 0000000..8487de6
 +          </ul>
 +        )}
 +      </div>
++    </div>
++  );
++}
+diff --git a/gitnexus-web/src/components/audit/ClusterDrillModal.tsx b/gitnexus-web/src/components/audit/ClusterDrillModal.tsx
+new file mode 100644
+index 0000000..32ddbbf
+--- /dev/null
++++ b/gitnexus-web/src/components/audit/ClusterDrillModal.tsx
+@@ -0,0 +1,155 @@
++/**
++ * ClusterDrillModal — opens from the 7th "Clusters" audit card.
++ * Lists the top 5-10 clusters sorted by completionPct ASC (the
++ * "furthest from done first" view), each row expandable to show the
++ * member list with per-member status badges.
++ *
++ * Section H / Task 13 of
++ * docs/superpowers/specs/2026-05-27-roadmap-predictive-ghost-cluster.md
++ */
++
++import { useMemo, useState } from 'react';
++import type { ClusterRuntime } from '../../services/clusters-client';
++
++type Ghost = {
++  id: string;
++  declared?: { title?: string };
++  materializedAt?: unknown;
++  cancelledAt?: unknown;
++};
++
++type Props = {
++  clusters: ClusterRuntime[];
++  ghosts?: Ghost[];
++  open: boolean;
++  onClose: () => void;
++  onGhostClick?: (ghostId: string) => void;
++  /** Hard cap on rows. Default 10 keeps the modal scannable on a
++   *  laptop screen; pass `Infinity` to disable. */
++  topN?: number;
++};
++
++function memberStatus(g?: Ghost): 'materialized' | 'cancelled' | 'planned' {
++  if (!g) return 'planned';
++  if (g.materializedAt) return 'materialized';
++  if (g.cancelledAt) return 'cancelled';
++  return 'planned';
++}
++
++function statusGlyph(s: 'materialized' | 'cancelled' | 'planned'): string {
++  if (s === 'materialized') return '✓';
++  if (s === 'cancelled') return '✕';
++  return '·';
++}
++
++export default function ClusterDrillModal({
++  clusters,
++  ghosts,
++  open,
++  onClose,
++  onGhostClick,
++  topN = 10,
++}: Props) {
++  const [expanded, setExpanded] = useState<Set<string>>(new Set());
++
++  const sorted = useMemo(() => {
++    if (!clusters) return [];
++    return [...clusters]
++      .sort(
++        (a, b) =>
++          (a.aggregate?.completionPct ?? 0) - (b.aggregate?.completionPct ?? 0),
++      )
++      .slice(0, topN);
++  }, [clusters, topN]);
++
++  const ghostsById = useMemo(() => {
++    const map = new Map<string, Ghost>();
++    for (const g of ghosts ?? []) map.set(g.id, g);
++    return map;
++  }, [ghosts]);
++
++  if (!open) return null;
++
++  const toggle = (id: string) => {
++    setExpanded((prev) => {
++      const next = new Set(prev);
++      if (next.has(id)) next.delete(id);
++      else next.add(id);
++      return next;
++    });
++  };
++
++  return (
++    <div
++      className="cluster-drill-modal cleanup-modal"
++      data-testid="cluster-drill-modal"
++      role="dialog"
++    >
++      <div className="modal-content">
++        <header>
++          <h2>Clusters — drill-down</h2>
++          <button type="button" onClick={onClose} aria-label="close">
++            ×
++          </button>
++        </header>
++        {sorted.length === 0 ? (
++          <p>No clusters declared or auto-derived for this repo.</p>
++        ) : (
++          <ul className="cluster-drill-list">
++            {sorted.map((c) => {
++              const isOpen = expanded.has(c.id);
++              const pct = c.aggregate?.completionPct ?? 0;
++              return (
++                <li
++                  key={c.id}
++                  data-testid={`cluster-drill-${c.id}`}
++                  className={`cluster-row status-${c.synthesizedStatus}`}
++                >
++                  <button
++                    type="button"
++                    className="cluster-drill-toggle"
++                    onClick={() => toggle(c.id)}
++                    data-testid={`cluster-drill-toggle-${c.id}`}
++                  >
++                    <span className="caret">{isOpen ? '▾' : '▸'}</span>
++                    <strong>{c.title}</strong>
++                    <span className="badge source">{c.source}</span>
++                    <span className="badge status">{c.synthesizedStatus}</span>
++                    <span className="completion">{pct.toFixed(0)}%</span>
++                    <span className="members-count">
++                      {c.aggregate?.materialized ?? 0}/{c.aggregate?.total ?? 0}
++                    </span>
++                  </button>
++                  {isOpen && (
++                    <ul className="cluster-members" data-testid={`cluster-drill-members-${c.id}`}>
++                      {c.memberIds.map((mid) => {
++                        const ghost = ghostsById.get(mid);
++                        const status = memberStatus(ghost);
++                        const label = ghost?.declared?.title ?? mid;
++                        return (
++                          <li key={mid}>
++                            <button
++                              type="button"
++                              className={`member member-${status}`}
++                              onClick={() => onGhostClick?.(mid)}
++                              data-testid={`cluster-drill-member-${mid}`}
++                            >
++                              <span className={`glyph status-${status}`}>
++                                {statusGlyph(status)}
++                              </span>
++                              <span>{label}</span>
++                            </button>
++                          </li>
++                        );
++                      })}
++                    </ul>
++                  )}
++                </li>
++              );
++            })}
++          </ul>
++        )}
++      </div>
++    </div>
++  );
++}
+diff --git a/gitnexus-web/src/components/audit/ClustersCard.tsx b/gitnexus-web/src/components/audit/ClustersCard.tsx
+new file mode 100644
+index 0000000..b186492
+--- /dev/null
++++ b/gitnexus-web/src/components/audit/ClustersCard.tsx
+@@ -0,0 +1,54 @@
++/**
++ * ClustersCard — 7th card on the audit summary strip, rendered next to
++ * Expired. Shows "N clusters · X% complete in median" so the user can
++ * see at a glance whether the declared groupings are converging.
++ * Click opens the ClusterDrillModal.
++ *
++ * Section H / Task 13 of
++ * docs/superpowers/specs/2026-05-27-roadmap-predictive-ghost-cluster.md
++ */
++
++import type { ClusterRuntime } from '../../services/clusters-client';
++
++type Props = {
++  clusters: ClusterRuntime[];
++  onClick?: () => void;
++};
++
++function median(values: number[]): number {
++  if (values.length === 0) return 0;
++  const sorted = [...values].sort((a, b) => a - b);
++  const mid = Math.floor(sorted.length / 2);
++  return sorted.length % 2 === 1
++    ? sorted[mid]
++    : (sorted[mid - 1] + sorted[mid]) / 2;
++}
++
++export default function ClustersCard({ clusters, onClick }: Props) {
++  if (!clusters || clusters.length === 0) return null;
++  const completions = clusters.map((c) => c.aggregate?.completionPct ?? 0);
++  const medianPct = median(completions);
++  const expiredCount = clusters.filter((c) => c.synthesizedStatus === 'expired').length;
++
++  return (
++    <div
++      className="stat status-cluster"
++      data-testid="stat-clusters"
++      onClick={onClick}
++      role={onClick ? 'button' : undefined}
++      tabIndex={onClick ? 0 : undefined}
++      style={onClick ? { cursor: 'pointer' } : undefined}
++    >
++      <div className="value">{clusters.length}</div>
++      <div className="label">Clusters</div>
++      <div className="badge" title="Median completion across clusters">
++        {medianPct.toFixed(0)}% median
++      </div>
++      {expiredCount > 0 && (
++        <div className="badge badge-red" title={`${expiredCount} expired cluster(s)`}>
++          {expiredCount} expired
++        </div>
++      )}
 +    </div>
 +  );
 +}
