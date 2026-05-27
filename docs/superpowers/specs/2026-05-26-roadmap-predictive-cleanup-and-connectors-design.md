@@ -252,3 +252,26 @@ Plan d'implémentation à écrire via `superpowers:writing-plans` quand prêt à
 Sous-specs ouvertes restantes (du IDEAS-PARKING) :
 - SysML export (bonus)
 - "Ghost Cluster" granularité intermédiaire (non débattu, parking)
+
+---
+
+## Update 2026-05-27 — Shipped
+
+Cleanup + Multi-tool connectors livré. Notes :
+
+- 2 endpoints livrés : `POST /ghosts/cleanup-prompt` (expired list + LLM-ready prompts) + `GET /ghosts/connector-suggestions` (Plane fetch + fuzzy-match).
+- Plane connector **full v1** : fetch open + closed via REST API + auth via `X-API-Key` env (`PLANE_API_KEY`).
+- Linear / GitHub / Jira **stubs** : framework prêt mais `fetchOpenWorkItems` / `fetchClosedWorkItems` lèvent "not implemented yet". Extension future.
+- Fuzzy match Jaccard (tokens minusculisés, ponctuation strippée), seuil 0.7 default, configurable via `.gitnexus.json > connectors.<name>.matchThreshold`.
+- `CleanupModal.tsx` ouvert via la 6ème card "Expired" de AuditSummary (déjà shippée en Audit Update 1). UI v1 : user copie le prompt, l'envoie à son LLM, applique la suggestion manuellement à ROADMAP.md puis re-sync. Auto-LLM call = follow-up.
+- Aucun connecteur ne modifie automatiquement les ghosts. Toujours suggestion → validation user.
+- Configuration via `.gitnexus.json` (cohérent avec Tier 2bis.4 .gitnexus.json unifié, pas .gitnexus.yaml malgré le spec original ; cf CORE Update — Shipped pour le pivot).
+- Tests : 3 unit + 1 component + 2 integration. Runtime local Node 21 impossible (vitest 4.x), CI Node 22 exerce le suite.
+
+### Limitations connues
+
+1. **LLM call manuel** : v1 le user copie le prompt. Auto-call via `createChatModel` (pattern semantic-labels) reste un follow-up.
+2. **Pas de Webhooks** (Plane push sur changement) — out-of-scope.
+3. **Linear / GitHub / Jira stubs** : framework ready, impl à venir si demandée.
+4. **Threshold Jaccard 0.7** : tuning empirique probable selon le corpus titres ghost vs tickets.
+5. **Bidirectionnel out** : pas de création de tickets Plane depuis le graph (asymétrie volontaire).
