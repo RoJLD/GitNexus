@@ -20,6 +20,43 @@ const HOOK_DEF = {
   command: 'node scripts/ghost-from-spec.mjs $CLAUDE_TOOL_FILE_PATH',
 };
 
+export const GIT_HOOK = `#!/bin/sh
+# Auto-installed by scripts/install-brainstorm-hooks.mjs
+git diff-tree --no-commit-id --name-only HEAD | grep -E '^docs/superpowers/specs/.*\\.md$' | while read spec; do
+  node scripts/ghost-from-spec.mjs "$spec"
+done
+`;
+
+export const GHA_WORKFLOW = `name: roadmap-sync
+on:
+  push:
+    branches: [deployment]
+    paths: ['docs/superpowers/specs/**']
+jobs:
+  sync-ghosts-from-specs:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 2 }
+      - uses: actions/setup-node@v4
+        with: { node-version: '22.11.0' }
+      - name: Find newly-changed specs and update ROADMAP
+        run: |
+          for spec in $(git diff --name-only HEAD~1 HEAD | grep '^docs/superpowers/specs/'); do
+            node scripts/ghost-from-spec.mjs "$spec"
+          done
+      - name: Commit ROADMAP changes back
+        run: |
+          if ! git diff --quiet ROADMAP.md; then
+            git config user.email "roblastar@live.fr"
+            git config user.name "Robin DENIS"
+            git add ROADMAP.md
+            git commit -m "chore(roadmap): sync ghosts from specs (auto)"
+            git push
+          fi
+`;
+
 export function mergeClaudeHook(settings) {
   const out = { ...(settings ?? {}) };
   out.hooks = { ...(out.hooks ?? {}) };
@@ -59,9 +96,25 @@ async function installClaudeHook() {
   console.log(`✓ Claude hook merged into ${p}`);
 }
 
+async function installGitHook() {
+  const p = join(ROOT, '.git', 'hooks', 'post-commit');
+  await writeFile(p, GIT_HOOK);
+  await chmod(p, 0o755).catch(() => {}); // Windows ignores chmod
+  console.log(`✓ Git post-commit hook installed at ${p}`);
+}
+
+async function installGhaWorkflow() {
+  const p = join(ROOT, '.github', 'workflows', 'roadmap-sync.yml');
+  await mkdir(dirname(p), { recursive: true });
+  await writeFile(p, GHA_WORKFLOW);
+  console.log(`✓ GHA workflow installed at ${p}`);
+}
+
 async function main() {
   console.log('Installing brainstorm-hook in 3 modes...');
   await installClaudeHook();
+  await installGitHook();
+  await installGhaWorkflow();
   console.log('\nDone. The hook is now active on this machine.');
   console.log('Test it : touch a spec under docs/superpowers/specs/ and commit.');
 }
