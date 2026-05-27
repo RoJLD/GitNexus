@@ -18712,6 +18712,81 @@ index 0000000..9a0b0a7
 +    </div>
 +  );
 +}
+diff --git a/gitnexus-web/src/components/gantt/GanttAxis.tsx b/gitnexus-web/src/components/gantt/GanttAxis.tsx
+new file mode 100644
+index 0000000..3c8ded8
+--- /dev/null
++++ b/gitnexus-web/src/components/gantt/GanttAxis.tsx
+@@ -0,0 +1,69 @@
++/**
++ * GanttAxis — SVG header with monthly ticks + year labels + today line.
++ *
++ * Renders one vertical tick per month within the time window plus a red
++ * "today" line at the supplied `now` position. Consumed by GanttPanel
++ * inside its main SVG (translated by `labelWidth` so axis aligns with
++ * the bar area).
++ *
++ * See docs/superpowers/specs/2026-05-26-roadmap-predictive-gantt-design.md
++ */
++
++import { dateScale } from '../../lib/gantt-layout';
++
++type Props = {
++  window: { start: Date; end: Date };
++  width: number;
++  height: number;
++  now: Date;
++};
++
++const MONTH_LABELS = [
++  'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
++  'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
++];
++
++export default function GanttAxis({ window, width, height, now }: Props) {
++  const scale = dateScale(window, width);
++  const months: Date[] = [];
++  const cursor = new Date(window.start);
++  cursor.setUTCDate(1);
++  // Reset to first day of the starting month so ticks always land on month boundaries.
++  while (cursor <= window.end) {
++    months.push(new Date(cursor));
++    cursor.setUTCMonth(cursor.getUTCMonth() + 1);
++  }
++  const todayX = scale(now);
++
++  return (
++    <svg width={width} height={height} className="gantt-axis">
++      {months.map((m, i) => {
++        const x = scale(m);
++        return (
++          <g key={i}>
++            <line
++              x1={x}
++              y1={0}
++              x2={x}
++              y2={height}
++              stroke="#444"
++              strokeWidth={1}
++            />
++            <text x={x + 4} y={height - 5} fontSize={10} fill="#888">
++              {MONTH_LABELS[m.getUTCMonth()]} &apos;{String(m.getUTCFullYear()).slice(-2)}
++            </text>
++          </g>
++        );
++      })}
++      <line
++        className="today"
++        x1={todayX}
++        y1={0}
++        x2={todayX}
++        y2={height}
++        stroke="#e74c3c"
++        strokeWidth={2}
++      />
++    </svg>
++  );
++}
 diff --git a/gitnexus-web/src/core/llm/agent.ts b/gitnexus-web/src/core/llm/agent.ts
 index 49862a9..5c552dd 100644
 --- a/gitnexus-web/src/core/llm/agent.ts
