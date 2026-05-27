@@ -1,5 +1,5 @@
 diff --git a/Dockerfile.web b/Dockerfile.web
-index b102a70..9b049ac 100644
+index b102a70..989e116 100644
 --- a/Dockerfile.web
 +++ b/Dockerfile.web
 @@ -21,7 +21,10 @@ RUN npm run build --prefix gitnexus-shared
@@ -14,7 +14,7 @@ index b102a70..9b049ac 100644
  
  COPY gitnexus-web ./gitnexus-web
  RUN npm run build --prefix gitnexus-web
-@@ -29,15 +32,50 @@ RUN npm run build --prefix gitnexus-web
+@@ -29,15 +32,51 @@ RUN npm run build --prefix gitnexus-web
  # node:22-bookworm-slim
  FROM node:22-bookworm-slim@sha256:9f6d5975c7dca860947d3915877f85607946403fc55349f39b4bc3688448bb6e AS runtime
  
@@ -62,6 +62,7 @@ index b102a70..9b049ac 100644
 +COPY docker-server-commit-footprint.mjs ./docker-server-commit-footprint.mjs
 +COPY docker-server-snapshot-auto.mjs ./docker-server-snapshot-auto.mjs
 +COPY docker-server-snapshot-from-pr.mjs ./docker-server-snapshot-from-pr.mjs
++COPY docker-server-snapshot-incremental.mjs ./docker-server-snapshot-incremental.mjs
 +COPY docker-server-csv.mjs ./docker-server-csv.mjs
  
  RUN chown -R node:node /app
@@ -2329,6 +2330,34 @@ index 0000000..c57e279
 +    return true;
 +  }
 +  return false;
++}
+diff --git a/docker-server-ghost-audit-core.mjs b/docker-server-ghost-audit-core.mjs
+new file mode 100644
+index 0000000..15457a8
+--- /dev/null
++++ b/docker-server-ghost-audit-core.mjs
+@@ -0,0 +1,22 @@
++/**
++ * Pure functions for the roadmap-predictive Audit view.
++ * No I/O. Imports from docker-server-ghosts-core.mjs only if needed.
++ *
++ * See docs/superpowers/specs/2026-05-26-roadmap-predictive-audit-design.md
++ */
++
++function derivedStatus(g) {
++  if (g.cancelledAt) return 'cancelled';
++  if (g.materializedAt) return 'materialized';
++  return 'planned';
++}
++
++export function computeSummary(ghosts) {
++  const counts = { total: 0, materialized: 0, planned: 0, cancelled: 0 };
++  for (const g of ghosts) {
++    counts.total += 1;
++    counts[derivedStatus(g)] += 1;
++  }
++  const cancellationRate = counts.total === 0 ? 0 : counts.cancelled / counts.total;
++  return { ...counts, cancellationRate };
 +}
 diff --git a/docker-server-ghosts-core.mjs b/docker-server-ghosts-core.mjs
 new file mode 100644
@@ -6400,6 +6429,496 @@ index 0000000..810a2bd
 +  }
 +  return false;
 +}
+diff --git a/docker-server-snapshot-incremental.mjs b/docker-server-snapshot-incremental.mjs
+new file mode 100644
+index 0000000..5d18699
+--- /dev/null
++++ b/docker-server-snapshot-incremental.mjs
+@@ -0,0 +1,484 @@
++/**
++ * Incremental snapshot — Phase C of the incremental-snapshots design.
++ *
++ * Endpoint:
++ *   POST /snapshot/incremental?repo=<base>&commit=<sha>
++ *   Body (optional):
++ *     {
++ *       "filters": {
++ *         "dropGlobalNodes": true,
++ *         "dropEmptyFields": true,
++ *         "filterRelationships": "effectiveWriteSet",  // | "toWrite" | "none"
++ *         "includeLabels": null,                       // or string[]
++ *         "includeRelationshipTypes": null,            // or string[]
++ *         "maxNodes": null,                            // or number
++ *         "onMaxNodes": "error",                       // | "truncate-tail" | "truncate-low-degree"
++ *         "compress": "gzip"                           // | "none" | "brotli"
++ *       },
++ *       "force": false                                 // re-generate even if diff exists
++ *     }
++ *
++ * Behavior:
++ *   1. Validate repo + commit (must exist in git history).
++ *   2. Ensure a per-repo worktree exists (or create one) at a stable path
++ *      `<repoParent>/.gitnexus-incremental-worktree-<repoName>`. This dir
++ *      lives alongside the main checkout, shares the git objects via
++ *      worktree-add (no clone cost), and gets reused across calls.
++ *   3. `git checkout <sha>` in the worktree.
++ *   4. Trigger gitnexus analyze via /api/analyze on that path. The patched
++ *      analyze (scripts/patch-incremental-dump.mjs) writes the subgraph
++ *      dump to <worktree>/.gitnexus/_last-incremental-subgraph.json.
++ *   5. Read that dump, apply filters, optionally compress.
++ *   6. Persist to <repoPath>/.gitnexus/incremental/<sha>.json[.gz] with
++ *      a _meta header recording the filter config + before/after stats.
++ *   7. Return summary.
++ *
++ * --- Honest framing ---
++ *
++ * This is the PoC endpoint for the design in docs/superpowers/specs/
++ * 2026-05-26-incremental-snapshots-phase-c-design.md (§3.bis). It is
++ * end-to-end functional but:
++ *   - No reconstruction endpoint yet (Phase C step §4.3, separate work).
++ *   - No baseline rebuild logic yet (Phase C step §4.4).
++ *   - No /watches integration to auto-trigger on push (Phase C nice-to-have).
++ *
++ * Use it to: benchmark storage size across filter combos, validate the
++ * dump pipeline end-to-end, and feed real data to the reconstruction
++ * design before the next stage.
++ */
++
++import { spawn } from 'node:child_process';
++import { readFile, writeFile, mkdir, stat, rm } from 'node:fs/promises';
++import { join, dirname, basename } from 'node:path';
++import { gzipSync, brotliCompressSync } from 'node:zlib';
++import { findRepoByName } from './docker-server-snapshots.mjs';
++
++const SCHEMA_VERSION = 1;
++const ANALYZE_TIMEOUT_MS = 10 * 60 * 1000;
++
++const DEFAULT_FILTERS = {
++  dropGlobalNodes: true,
++  dropEmptyFields: true,
++  filterRelationships: 'effectiveWriteSet',
++  includeLabels: null,
++  includeRelationshipTypes: null,
++  maxNodes: null,
++  onMaxNodes: 'error',
++  compress: 'gzip',
++};
++
++// Nodes that are global (re-emitted on every analyze pass) and don't
++// belong in a per-commit diff. Matches the audit findings (Community
++// + Process in subgraph dumps).
++const GLOBAL_NODE_LABELS = new Set(['Community', 'Process']);
++
++function runCmd(cmd, args, opts = {}) {
++  return new Promise((resolve, reject) => {
++    const child = spawn(cmd, args, opts);
++    let stdout = '';
++    let stderr = '';
++    child.stdout?.on('data', (d) => (stdout += d.toString()));
++    child.stderr?.on('data', (d) => (stderr += d.toString()));
++    child.on('error', reject);
++    child.on('close', (code) => {
++      if (code === 0) resolve(stdout.trim());
++      else reject(new Error(`${cmd} exited ${code}: ${stderr.trim() || stdout.trim()}`));
++    });
++  });
++}
++
++function mergeFilters(body) {
++  const f = body?.filters || {};
++  const merged = { ...DEFAULT_FILTERS };
++  for (const k of Object.keys(DEFAULT_FILTERS)) {
++    if (f[k] !== undefined) merged[k] = f[k];
++  }
++  // Normalize enums.
++  if (!['none', 'gzip', 'brotli'].includes(merged.compress)) merged.compress = 'gzip';
++  if (!['none', 'toWrite', 'effectiveWriteSet'].includes(merged.filterRelationships)) {
++    merged.filterRelationships = 'effectiveWriteSet';
++  }
++  if (!['error', 'truncate-tail', 'truncate-low-degree'].includes(merged.onMaxNodes)) {
++    merged.onMaxNodes = 'error';
++  }
++  return merged;
++}
++
++// Worktree path: alongside the main repo, predictable name.
++function worktreePath(repoPath) {
++  const parent = dirname(repoPath);
++  const name = basename(repoPath);
++  return join(parent, `.gitnexus-incremental-worktree-${name}`);
++}
++
++async function ensureWorktree(repoPath, wtPath, commit) {
++  const wtExists = await stat(wtPath).catch(() => null);
++  if (!wtExists) {
++    // First time: add a detached worktree at the requested commit.
++    await runCmd('git', ['-C', repoPath, 'worktree', 'add', '--detach', wtPath, commit]);
++    return { created: true };
++  }
++  // Already exists: just checkout the requested commit.
++  await runCmd('git', ['-C', wtPath, 'checkout', '--detach', commit]);
++  return { created: false };
++}
++
++async function triggerAnalyze(api, wtPath) {
++  const resp = await fetch(`${api}/api/analyze`, {
++    method: 'POST',
++    headers: { 'Content-Type': 'application/json' },
++    body: JSON.stringify({ path: wtPath, force: false }),
++  });
++  if (!resp.ok) throw new Error(`/api/analyze failed: HTTP ${resp.status}`);
++  const { jobId } = await resp.json();
++  if (!jobId) throw new Error('no jobId returned from /api/analyze');
++  const start = Date.now();
++  while (true) {
++    if (Date.now() - start > ANALYZE_TIMEOUT_MS) {
++      throw new Error('analyze timed out (10min)');
++    }
++    await new Promise((r) => setTimeout(r, 1000));
++    const statusResp = await fetch(`${api}/api/analyze/${encodeURIComponent(jobId)}`);
++    if (!statusResp.ok) throw new Error(`status fetch failed: HTTP ${statusResp.status}`);
++    const job = await statusResp.json();
++    if (job.status === 'complete') return { jobId, elapsedMs: Date.now() - start };
++    if (job.status === 'failed') throw new Error(`analyze failed: ${job.error || 'unknown'}`);
++  }
++}
++
++async function readDump(wtPath) {
++  const dumpPath = join(wtPath, '.gitnexus', '_last-incremental-subgraph.json');
++  let raw;
++  try {
++    raw = await readFile(dumpPath, 'utf8');
++  } catch (err) {
++    throw new Error(`dump not found at ${dumpPath} (patch-incremental-dump.mjs not active?): ${err.message}`);
++  }
++  return JSON.parse(raw);
++}
++
++// ── Filter application ──────────────────────────────────────────────
++
++function stripEmptyFields(rel) {
++  const out = { ...rel };
++  if (out.confidence === 1) delete out.confidence;
++  if (out.reason === '') delete out.reason;
++  return out;
++}
++
++function applyFilters(dump, filters) {
++  const rawStats = {
++    nodes: dump.nodes.length,
++    relationships: dump.relationships.length,
++  };
++
++  let nodes = dump.nodes;
++  let relationships = dump.relationships;
++
++  // Drop globals.
++  if (filters.dropGlobalNodes) {
++    nodes = nodes.filter((n) => !GLOBAL_NODE_LABELS.has(n.label));
++  }
++
++  // includeLabels whitelist.
++  if (Array.isArray(filters.includeLabels) && filters.includeLabels.length > 0) {
++    const wl = new Set(filters.includeLabels);
++    nodes = nodes.filter((n) => wl.has(n.label));
++  }
++
++  // Build node ID set to filter dangling relationships.
++  const keptNodeIds = new Set(nodes.map((n) => n.id));
++
++  // includeRelationshipTypes whitelist.
++  if (Array.isArray(filters.includeRelationshipTypes) && filters.includeRelationshipTypes.length > 0) {
++    const wl = new Set(filters.includeRelationshipTypes);
++    relationships = relationships.filter((r) => wl.has(r.type));
++  }
++
++  // Drop relationships whose endpoints aren't in the kept node set.
++  relationships = relationships.filter(
++    (r) => keptNodeIds.has(r.sourceId) && keptNodeIds.has(r.targetId),
++  );
++
++  // filterRelationships scope: 'none' keeps everything we have above;
++  // 'toWrite' narrows to those touching a file in hashDiff.toWrite;
++  // 'effectiveWriteSet' (default) narrows to effectiveWriteSet files.
++  // The endpoint resolves whether a relationship "touches" a path by
++  // looking at sourceId / targetId for File:<path> or for symbols whose
++  // ID encodes the file (Label:filepath:symbolname).
++  if (filters.filterRelationships !== 'none') {
++    const targetFiles = new Set(
++      filters.filterRelationships === 'toWrite'
++        ? dump.hashDiff.toWrite
++        : dump.effectiveWriteSet,
++    );
++    const idTouchesFile = (id) => {
++      if (typeof id !== 'string') return false;
++      // File:<path> or Folder:<path>
++      if (id.startsWith('File:') || id.startsWith('Folder:')) {
++        return targetFiles.has(id.slice(id.indexOf(':') + 1));
++      }
++      // Function:path:name etc. → path is the second segment.
++      const firstColon = id.indexOf(':');
++      const secondColon = id.indexOf(':', firstColon + 1);
++      if (secondColon < 0) return false;
++      const path = id.slice(firstColon + 1, secondColon);
++      return targetFiles.has(path);
++    };
++    relationships = relationships.filter(
++      (r) => idTouchesFile(r.sourceId) || idTouchesFile(r.targetId),
++    );
++  }
++
++  // Drop empty fields on relationships (small win, often-applied).
++  if (filters.dropEmptyFields) {
++    relationships = relationships.map(stripEmptyFields);
++  }
++
++  // maxNodes cap.
++  let truncated = null;
++  if (filters.maxNodes != null && nodes.length > filters.maxNodes) {
++    if (filters.onMaxNodes === 'error') {
++      throw new Error(
++        `subgraph has ${nodes.length} nodes (post-filter), exceeds maxNodes=${filters.maxNodes}. ` +
++        `Use filters.onMaxNodes='truncate-tail' or 'truncate-low-degree' to cap.`,
++      );
++    }
++    if (filters.onMaxNodes === 'truncate-low-degree') {
++      // Sort by degree desc, keep top N.
++      const degree = new Map();
++      for (const r of relationships) {
++        degree.set(r.sourceId, (degree.get(r.sourceId) || 0) + 1);
++        degree.set(r.targetId, (degree.get(r.targetId) || 0) + 1);
++      }
++      nodes = nodes
++        .slice()
++        .sort((a, b) => (degree.get(b.id) || 0) - (degree.get(a.id) || 0))
++        .slice(0, filters.maxNodes);
++      truncated = `low-degree: dropped ${rawStats.nodes - nodes.length} nodes`;
++    } else {
++      nodes = nodes.slice(0, filters.maxNodes);
++      truncated = `tail: dropped ${rawStats.nodes - nodes.length} nodes`;
++    }
++    // Re-filter relationships to the surviving node set.
++    const survivors = new Set(nodes.map((n) => n.id));
++    relationships = relationships.filter(
++      (r) => survivors.has(r.sourceId) && survivors.has(r.targetId),
++    );
++  }
++
++  return {
++    nodes,
++    relationships,
++    rawStats,
++    filteredStats: { nodes: nodes.length, relationships: relationships.length },
++    truncated,
++  };
++}
++
++function maybeCompress(buf, mode) {
++  if (mode === 'gzip') return { data: gzipSync(buf), ext: 'json.gz' };
++  if (mode === 'brotli') return { data: brotliCompressSync(buf), ext: 'json.br' };
++  return { data: buf, ext: 'json' };
++}
++
++// ── Route handler ───────────────────────────────────────────────────
++
++async function handleSnapshotIncremental(url, req, res, opts) {
++  const repoName = url.searchParams.get('repo');
++  const commit = url.searchParams.get('commit');
++
++  if (!repoName) {
++    res.writeHead(400, { 'Content-Type': 'application/json' });
++    res.end(JSON.stringify({ error: 'missing repo' }));
++    return;
++  }
++  if (!commit || !/^[0-9a-f]{4,64}$/i.test(commit)) {
++    res.writeHead(400, { 'Content-Type': 'application/json' });
++    res.end(JSON.stringify({ error: 'missing or malformed commit (must be 4-64 hex chars)' }));
++    return;
++  }
++
++  // Body
++  let body = {};
++  let raw = '';
++  for await (const chunk of req) raw += chunk;
++  if (raw) {
++    try { body = JSON.parse(raw); }
++    catch {
++      res.writeHead(400, { 'Content-Type': 'application/json' });
++      res.end(JSON.stringify({ error: 'invalid JSON body' }));
++      return;
++    }
++  }
++  const filters = mergeFilters(body);
++  const force = !!body.force;
++
++  const baseRepo = repoName.split('@')[0];
++  const live = await findRepoByName(baseRepo, opts.api);
++  if (!live) {
++    res.writeHead(404, { 'Content-Type': 'application/json' });
++    res.end(JSON.stringify({ error: `repo not found: ${baseRepo}` }));
++    return;
++  }
++  const repoPath = live.repoPath || live.path;
++  if (!(await stat(join(repoPath, '.git')).catch(() => null))) {
++    res.writeHead(400, { 'Content-Type': 'application/json' });
++    res.end(JSON.stringify({ error: `${baseRepo} is not a git repo` }));
++    return;
++  }
++
++  // Resolve the commit to a full SHA.
++  let fullSha;
++  try {
++    fullSha = await runCmd('git', ['-C', repoPath, 'rev-parse', '--verify', `${commit}^{commit}`]);
++  } catch (err) {
++    res.writeHead(404, { 'Content-Type': 'application/json' });
++    res.end(JSON.stringify({ error: `commit not found: ${commit} (${err.message})` }));
++    return;
++  }
++
++  // Idempotency: check if a diff already exists.
++  const outDir = join(repoPath, '.gitnexus', 'incremental');
++  await mkdir(outDir, { recursive: true });
++  for (const ext of ['json.gz', 'json.br', 'json']) {
++    const candidate = join(outDir, `${fullSha}.${ext}`);
++    if (await stat(candidate).catch(() => null)) {
++      if (force) {
++        await rm(candidate).catch(() => {});
++      } else {
++        res.writeHead(200, { 'Content-Type': 'application/json' });
++        res.end(JSON.stringify({
++          repo: baseRepo,
++          commit: fullSha,
++          shortSha: fullSha.slice(0, 7),
++          existing: true,
++          existingPath: candidate,
++          hint: 'pass body.force=true to regenerate',
++        }));
++        return;
++      }
++    }
++  }
++
++  // Worktree setup.
++  const wtPath = worktreePath(repoPath);
++  const t0 = Date.now();
++  let worktreeStatus;
++  try {
++    worktreeStatus = await ensureWorktree(repoPath, wtPath, fullSha);
++  } catch (err) {
++    res.writeHead(500, { 'Content-Type': 'application/json' });
++    res.end(JSON.stringify({ error: `worktree setup failed: ${err.message}` }));
++    return;
++  }
++  const tWorktree = Date.now() - t0;
++
++  // Analyze.
++  const tAnalyzeStart = Date.now();
++  let analyzeResult;
++  try {
++    analyzeResult = await triggerAnalyze(opts.api, wtPath);
++  } catch (err) {
++    res.writeHead(502, { 'Content-Type': 'application/json' });
++    res.end(JSON.stringify({ error: `analyze failed: ${err.message}` }));
++    return;
++  }
++  const tAnalyze = Date.now() - tAnalyzeStart;
++
++  // Read dump.
++  let dump;
++  try {
++    dump = await readDump(wtPath);
++  } catch (err) {
++    res.writeHead(500, { 'Content-Type': 'application/json' });
++    res.end(JSON.stringify({ error: err.message }));
++    return;
++  }
++
++  // Filter.
++  const tFilterStart = Date.now();
++  let filtered;
++  try {
++    filtered = applyFilters(dump, filters);
++  } catch (err) {
++    res.writeHead(413, { 'Content-Type': 'application/json' });
++    res.end(JSON.stringify({ error: err.message }));
++    return;
++  }
++  const tFilter = Date.now() - tFilterStart;
++
++  // Compose final payload + compress + persist.
++  const payload = {
++    _meta: {
++      ts: new Date().toISOString(),
++      schemaVersion: SCHEMA_VERSION,
++      commit: fullSha,
++      shortSha: fullSha.slice(0, 7),
++      repoPath,
++      worktreeCreated: worktreeStatus.created,
++      filters,
++      hashDiff: dump.hashDiff,
++      effectiveWriteSet: dump.effectiveWriteSet,
++      stats: {
++        rawNodes: filtered.rawStats.nodes,
++        filteredNodes: filtered.filteredStats.nodes,
++        rawRelationships: filtered.rawStats.relationships,
++        filteredRelationships: filtered.filteredStats.relationships,
++        truncated: filtered.truncated,
++      },
++      timings: {
++        worktreeMs: tWorktree,
++        analyzeMs: tAnalyze,
++        filterMs: tFilter,
++      },
++    },
++    subgraph: {
++      nodes: filtered.nodes,
++      relationships: filtered.relationships,
++    },
++  };
++
++  const jsonBuf = Buffer.from(JSON.stringify(payload), 'utf8');
++  const rawBytes = jsonBuf.length;
++  const { data: finalBuf, ext } = maybeCompress(jsonBuf, filters.compress);
++  const compressedBytes = finalBuf.length;
++
++  const outPath = join(outDir, `${fullSha}.${ext}`);
++  await writeFile(outPath, finalBuf);
++
++  res.writeHead(200, { 'Content-Type': 'application/json' });
++  res.end(JSON.stringify({
++    repo: baseRepo,
++    commit: fullSha,
++    shortSha: fullSha.slice(0, 7),
++    existing: false,
++    diffPath: outPath,
++    filters,
++    stats: {
++      rawNodes: filtered.rawStats.nodes,
++      filteredNodes: filtered.filteredStats.nodes,
++      rawRelationships: filtered.rawStats.relationships,
++      filteredRelationships: filtered.filteredStats.relationships,
++      jsonBytes: rawBytes,
++      finalBytes: compressedBytes,
++      compressionRatio:
++        rawBytes > 0 ? Number((rawBytes / Math.max(1, compressedBytes)).toFixed(2)) : 0,
++      truncated: filtered.truncated,
++    },
++    timings: {
++      worktreeMs: tWorktree,
++      analyzeMs: tAnalyze,
++      filterMs: tFilter,
++      totalMs: tWorktree + tAnalyze + tFilter,
++    },
++  }));
++}
++
++export async function handleSnapshotIncrementalRoute(req, url, res, opts) {
++  if (url.pathname === '/snapshot/incremental' && req.method === 'POST') {
++    await handleSnapshotIncremental(url, req, res, opts);
++    return true;
++  }
++  return false;
++}
 diff --git a/docker-server-snapshots-bulk.mjs b/docker-server-snapshots-bulk.mjs
 new file mode 100644
 index 0000000..086ce14
@@ -7442,10 +7961,10 @@ index 0000000..c6a7798
 +  return false;
 +}
 diff --git a/docker-server.mjs b/docker-server.mjs
-index 8143eb4..e40f9c7 100644
+index 8143eb4..9f7e048 100644
 --- a/docker-server.mjs
 +++ b/docker-server.mjs
-@@ -1,12 +1,57 @@
+@@ -1,12 +1,58 @@
 -import { createReadStream } from 'node:fs';
 -import { stat } from 'node:fs/promises';
 +import { createReadStream, createWriteStream } from 'node:fs';
@@ -7474,6 +7993,7 @@ index 8143eb4..e40f9c7 100644
 +import { handleCommitFootprintRoute } from './docker-server-commit-footprint.mjs';
 +import { handleSnapshotAutoRoute } from './docker-server-snapshot-auto.mjs';
 +import { handleSnapshotFromPrRoute } from './docker-server-snapshot-from-pr.mjs';
++import { handleSnapshotIncrementalRoute } from './docker-server-snapshot-incremental.mjs';
 +import { handleGhostsRoute } from './docker-server-ghosts.mjs';
  
  const host = '0.0.0.0';
@@ -7506,7 +8026,7 @@ index 8143eb4..e40f9c7 100644
  const contentTypes = {
    '.css': 'text/css; charset=utf-8',
    '.html': 'text/html; charset=utf-8',
-@@ -20,6 +65,416 @@ const contentTypes = {
+@@ -20,6 +66,416 @@ const contentTypes = {
    '.woff2': 'font/woff2',
  };
  
@@ -7923,7 +8443,7 @@ index 8143eb4..e40f9c7 100644
  // Static asset server for the gitnexus-web Docker image.
  //
  // Path-injection containment: the request handler is intentionally a single
-@@ -39,8 +494,67 @@ const contentTypes = {
+@@ -39,8 +495,69 @@ const contentTypes = {
  // the request handler's reassignment paths in vanilla JS. The inline-at-sink
  // shape below is the documented analyzer-friendly idiom.
  const server = createServer(async (req, res) => {
@@ -7985,6 +8505,8 @@ index 8143eb4..e40f9c7 100644
 +  if (await handleSnapshotAutoRoute(req, reqUrl, res, { api: GITNEXUS_API })) return;
 +  // PR-mode snapshot on-demand (Phase B of incremental-snapshots design)
 +  if (await handleSnapshotFromPrRoute(req, reqUrl, res, { api: GITNEXUS_API })) return;
++  // Per-commit incremental snapshot (Phase C of incremental-snapshots design)
++  if (await handleSnapshotIncrementalRoute(req, reqUrl, res, { api: GITNEXUS_API })) return;
 +  // Roadmap-predictive ghosts CORE (ROADMAP Tier 3.x predictive views)
 +  if (await handleGhostsRoute(req, reqUrl, res, { api: GITNEXUS_API })) return;
  
@@ -7992,7 +8514,7 @@ index 8143eb4..e40f9c7 100644
    let decoded;
    try {
      decoded = decodeURIComponent(urlPath);
-@@ -117,4 +631,7 @@ const server = createServer(async (req, res) => {
+@@ -117,4 +634,7 @@ const server = createServer(async (req, res) => {
  
  server.listen(port, host, () => {
    console.log(`gitnexus-web listening on http://${host}:${port}`);
