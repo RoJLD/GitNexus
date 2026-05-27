@@ -105,7 +105,9 @@ Fichiers à la racine du repo, qui rendent le setup reproductible sur poste Wind
 | [Dockerfile.cli](Dockerfile.cli) | Image 9 lignes dérivée d'`upstream:1.6.3` — fixe permissions `/data/hf-cache` + vendor `install-duckdb-extension.mjs` manquant du tarball npm |
 | [docker-compose.yml](docker-compose.yml) | Services + volumes globalement nommés + bind mount `PROJECTS_ROOT` |
 | [.env.example](.env.example) | Template par-machine |
-| [start.bat](start.bat) / [start.ps1](start.ps1) | Launchers desktop-clickable (CMD pour bypass PS policy) |
+| [start.bat](start.bat) / [start.ps1](start.ps1) | Launchers desktop-clickable (CMD pour bypass PS policy). `start.ps1 -Elysium` émet des marqueurs `[ELYSIUM] k/7` + supprime ses `Read-Host` / l'ouverture navigateur (piloté par le splash Elysium ; mode normal inchangé). |
+| [start-elysium.bat](start-elysium.bat) | Lance gitnexus derrière le splash Elysium (opt-in) : `Elysium.exe --manifest elysium.json`. `start.bat` reste le défaut console. Tier "Lanceur Elysium". |
+| [elysium.json](elysium.json) | Manifeste Elysium : `name`/`accent`, commande (`powershell -File start.ps1 -Elysium`), `successUrl`, défauts des cases. Consommé par Elysium.exe (repo `VScode/Elysium`). |
 | [stop.bat](stop.bat) / [stop.ps1](stop.ps1) | Stop gracieux |
 | [reindex.ps1](reindex.ps1) | Re-analyze forcé d'un repo existant |
 | [scripts/install-duckdb-extension.mjs](scripts/install-duckdb-extension.mjs) | Vendoré depuis `gitnexus@a418c47` |
