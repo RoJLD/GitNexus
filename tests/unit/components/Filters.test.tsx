@@ -97,4 +97,85 @@ describe('GhostFiltersSection', () => {
       expect.objectContaining({ showCancelled: true }),
     );
   });
+
+  // ── Section I / Task 14 — cluster halo filters ─────────────────────
+
+  it('renders the cluster-halos master toggle when the prop set is wired', () => {
+    render(
+      <GhostFiltersSection
+        ghostFilters={DEFAULT_GHOST_FILTERS}
+        setGhostFilters={vi.fn()}
+        showClusterHalos={false}
+        setShowClusterHalos={vi.fn()}
+        includeAutoClusters={false}
+        setIncludeAutoClusters={vi.fn()}
+        clusterSourceFilter="both"
+        setClusterSourceFilter={vi.fn()}
+      />,
+    );
+    expect(screen.getByTestId('toggle-show-cluster-halos')).toBeInTheDocument();
+    // Sub-toggles + radio are hidden until the master is on.
+    expect(screen.queryByTestId('toggle-include-auto-clusters')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('cluster-source-radio')).not.toBeInTheDocument();
+  });
+
+  it('clicking master cluster toggle calls setShowClusterHalos', () => {
+    const setShowClusterHalos = vi.fn();
+    render(
+      <GhostFiltersSection
+        ghostFilters={DEFAULT_GHOST_FILTERS}
+        setGhostFilters={vi.fn()}
+        showClusterHalos={false}
+        setShowClusterHalos={setShowClusterHalos}
+        includeAutoClusters={false}
+        setIncludeAutoClusters={vi.fn()}
+        clusterSourceFilter="both"
+        setClusterSourceFilter={vi.fn()}
+      />,
+    );
+    fireEvent.click(screen.getByTestId('toggle-show-cluster-halos'));
+    expect(setShowClusterHalos).toHaveBeenCalledWith(true);
+  });
+
+  it('exposes include-auto + source radio once master cluster toggle is on', () => {
+    render(
+      <GhostFiltersSection
+        ghostFilters={DEFAULT_GHOST_FILTERS}
+        setGhostFilters={vi.fn()}
+        showClusterHalos={true}
+        setShowClusterHalos={vi.fn()}
+        includeAutoClusters={false}
+        setIncludeAutoClusters={vi.fn()}
+        clusterSourceFilter="both"
+        setClusterSourceFilter={vi.fn()}
+      />,
+    );
+    expect(screen.getByTestId('toggle-include-auto-clusters')).toBeInTheDocument();
+    expect(screen.getByTestId('cluster-source-radio')).toBeInTheDocument();
+    // 3 options are mutually exclusive — only one is checked.
+    const both = screen.getByTestId('cluster-source-both') as HTMLInputElement;
+    const decl = screen.getByTestId('cluster-source-declared') as HTMLInputElement;
+    const auto = screen.getByTestId('cluster-source-auto') as HTMLInputElement;
+    expect(both.checked).toBe(true);
+    expect(decl.checked).toBe(false);
+    expect(auto.checked).toBe(false);
+  });
+
+  it('selecting a different cluster source calls setClusterSourceFilter (radio mutex)', () => {
+    const setClusterSourceFilter = vi.fn();
+    render(
+      <GhostFiltersSection
+        ghostFilters={DEFAULT_GHOST_FILTERS}
+        setGhostFilters={vi.fn()}
+        showClusterHalos={true}
+        setShowClusterHalos={vi.fn()}
+        includeAutoClusters={false}
+        setIncludeAutoClusters={vi.fn()}
+        clusterSourceFilter="both"
+        setClusterSourceFilter={setClusterSourceFilter}
+      />,
+    );
+    fireEvent.click(screen.getByTestId('cluster-source-declared'));
+    expect(setClusterSourceFilter).toHaveBeenCalledWith('declared');
+  });
 });
