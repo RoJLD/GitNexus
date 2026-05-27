@@ -18,7 +18,13 @@
 1. `upstream/` is gitignored — regen `patches/upstream-all.diff` instead of `git add upstream/...`.
 2. Vitest local runtime blocked on Node 21 — validate via `node --check` + `node -e` smoke, CI runs the suite.
 3. `git config user.email` must print `roblastar@live.fr`.
-4. Append `## Update YYYY-MM-DD — Shipped` to the spec when done (Task 29).
+4. Append `## Update YYYY-MM-DD — Shipped` to the spec when done (Task 27).
+
+**Updates to inject ad-hoc** (not in numbered sections — from the spec's 2 Update sections; same pattern as the CORE plan's Task 6.5 injection) :
+
+- **Update 1 (`computeExpired`)** — 6th metric. Inject as **Task 6.5** between Section A and Section B. New pure fn `computeExpired(ghosts, { gracePeriodDays = 30, now })` returning `{ total, critical, expiredButRecent, list }`. Endpoint payload in Section B grows by an `expired:` field. `AuditSummary` (Task 14) test + impl gain a 6th card. New unit test `tests/unit/ghost-audit-expired.test.mjs`. Effort ~0.3 j.
+
+- **Update 2 (`computePlacementAccuracy`)** — 7th metric. **MARKED AS DEFERABLE.** Inject as **Task 6.7** between 6.5 and Section B, but the first step is a **dependency check** : determine whether per-snapshot Leiden community lookups are available from the backend. If not reachable within ~half a day of investigation, mark BLOCKED and ship the 6-metric Audit; the placementAccuracy gets a follow-up sub-spec. Reason : `clusterPurity` is referenced in the spec but is not actually exported from `docker-server-dissonance.mjs` today, and Leiden communities are computed client-side (frontend `vendor/leiden/`). The accuracy of the +0.4 j estimate is uncertain; better to ship 6 metrics solidly than 7 shakily. Implementer should escalate after the dependency check.
 
 ---
 
@@ -30,9 +36,9 @@ upstream/
 ├── docker-server-ghost-audit.mjs            NEW  I/O + cache + route handler
 ├── docker-server.mjs                        MOD  Register /ghost-audit route
 
-gitnexus-claude-plugin/
-├── src/tools/ghost_audit.ts                 NEW  MCP tool schema + handler
-├── src/index.ts                             MOD  Register tool
+mcp-server/
+├── server.mjs                               MOD  Register gitnexus_ghost_audit (19th tool)
+└── smoke.mjs                                MOD  Add ghost_audit to the smoke loop
 
 upstream/gitnexus-web/src/components/
 ├── AuditPanel.tsx                           NEW  Container, 2 fetches, states
@@ -948,116 +954,110 @@ git commit -m "feat(ghost-audit): register GET /ghost-audit route"
 
 ---
 
-## Section C — MCP tool (Tasks 11-12, ~0.5 day)
+## Section C — MCP tool (Task 11, ~0.5 day)
 
-### Task 11: tools/ghost_audit.ts
+> The MCP sidecar at `mcp-server/server.mjs` (NOT `upstream/`) is a tracked file —
+> edit and `git add mcp-server/server.mjs` directly. It's a single-file Node ES module
+> using a JSON-schema-based `{ name, description, inputSchema, handler }` tool registry
+> and a `callWeb(path, query)` helper. There is no Zod, no TypeScript, no separate
+> per-tool files. Pattern reference : the 18 existing tools in the same file.
+
+### Task 11: Register `gitnexus_ghost_audit` as the 19th MCP tool
 
 **Files:**
-- Create: `gitnexus-claude-plugin/src/tools/ghost_audit.ts`
+- Modify: `mcp-server/server.mjs` — add tool entry to the tools array + summary-formatting helper
+- Modify: `mcp-server/smoke.mjs` — exercise the new tool against the live stack
 
-- [ ] **Step 1: Create the tool file**
+- [ ] **Step 1: Inspect the tool-array pattern in `server.mjs`**
 
-```ts
-import { z } from 'zod';
+Run :
+```
+node -e "const c = require('fs').readFileSync('mcp-server/server.mjs','utf8'); const i = c.indexOf('gitnexus_entropy_commits'); console.log(c.slice(Math.max(0,i-200), i+800))"
+```
+Note the shape : each entry has `name`, `description`, `inputSchema` (JSON Schema, NOT Zod), and `handler: ({ repo, ... }) => callWeb('/path', { repo, ... })`. The tool array is iterated by `tools/list`; `tools/call` dispatches by `name` to the matching `handler`.
 
-export const ghostAuditSchema = z.object({
-  repo: z.string().describe('Repo basename as known by gitnexus registry'),
-  windowDays: z.number().optional().describe('Velocity window in days (default 28)'),
-});
+- [ ] **Step 2: Add `gitnexus_ghost_audit` to the tool array**
 
-export const ghostAuditTool = {
-  name: 'ghost_audit',
-  description:
-    'Returns roadmap audit metrics: lead time, slippage vs plannedFor, ' +
-    'cancellation rate, plan churn, and velocity. Uses the cached result ' +
-    'if available. Use after `ghosts_sync` to see how the project ' +
-    'tracked against its roadmap over time.',
-  inputSchema: ghostAuditSchema,
-};
+Find the last `,` before the closing `]` of the tools array. Insert :
 
-export async function handleGhostAudit(args: z.infer<typeof ghostAuditSchema>) {
-  const port = process.env.GITNEXUS_PORT ?? '4173';
-  const qs = new URLSearchParams({ repo: args.repo });
-  if (args.windowDays !== undefined) qs.set('windowDays', String(args.windowDays));
-  const url = `http://localhost:${port}/ghost-audit?${qs}`;
-  const res = await fetch(url);
-  if (res.status === 404) {
-    return {
-      content: [{ type: 'text', text: `No audit available for ${args.repo}. Run ghosts_sync first.` }],
-      isError: false,
-    };
-  }
-  if (!res.ok) {
-    return { content: [{ type: 'text', text: `Audit failed: ${await res.text()}` }], isError: true };
-  }
-  const audit = await res.json();
-  const summary = [
-    `Roadmap audit (${audit.cached ? 'cached' : 'fresh'}, computed ${audit.computedAt})`,
-    ``,
-    `Summary: ${audit.summary.total} ghosts → ${audit.summary.materialized} shipped, ` +
-      `${audit.summary.planned} pending, ${audit.summary.cancelled} cancelled ` +
-      `(cancellation rate ${(audit.summary.cancellationRate * 100).toFixed(1)}%)`,
-    `Lead time: median ${audit.leadTime.medianDays?.toFixed(1) ?? '—'}d ` +
-      `(p25=${audit.leadTime.p25Days?.toFixed(1) ?? '—'}d, p75=${audit.leadTime.p75Days?.toFixed(1) ?? '—'}d)`,
-    `Slippage: ${audit.slippage.onTimePct !== null ? (audit.slippage.onTimePct * 100).toFixed(0) + '% on time' : 'no data'} ` +
-      `(${audit.slippage.early} early, ${audit.slippage.onTime} on time, ${audit.slippage.late} late, ${audit.slippage.noTarget} no target)`,
-    `Plan churn: ${audit.planChurn.totalGhostsWithChurn} ghosts revisited ` +
-      `(avg ${audit.planChurn.avgChurnPerGhost.toFixed(1)} times)`,
-    `Velocity: ${audit.velocity.currentCount} ghosts materialized in last ${audit.velocity.windowDays}d`,
+```js
+  {
+    name: 'gitnexus_ghost_audit',
+    description: 'Roadmap audit metrics (lead time, slippage vs plannedFor, cancellation rate, plan churn, 28-day velocity, expired ghosts past their expectedBy + grace_period). Reads CORE sidecars (.gitnexus/ghosts.json + .gitnexus/snapshots/*/ghosts.json) and caches the result on disk (mtime-invalidated). Use after gitnexus_ghosts_sync; returns 404-equivalent text if no ghosts have been synced yet.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        repo: { type: 'string', description: 'Base repo name as known by gitnexus.' },
+        windowDays: { type: 'number', minimum: 7, maximum: 365, default: 28, description: 'Velocity window in days. Default 28.' },
+      },
+      required: ['repo'],
+      additionalProperties: false,
+    },
+    handler: async ({ repo, windowDays }) => {
+      const params = { repo };
+      if (windowDays !== undefined) params.windowDays = windowDays;
+      const audit = await callWeb('/ghost-audit', params);
+      // Surface a human-readable summary plus the raw JSON for drill-down.
+      // Keep the summary tight so Claude can quote it verbatim without
+      // burning tokens.
+      const s = formatGhostAuditSummary(audit);
+      return { ok: true, summary: s, audit };
+    },
+  },
+```
+
+- [ ] **Step 3: Add the `formatGhostAuditSummary` helper**
+
+Just below the tools-array constant, add :
+
+```js
+function formatGhostAuditSummary(audit) {
+  if (!audit || audit.error) return audit?.error || 'no audit available';
+  const s = audit.summary || {};
+  const lt = audit.leadTime || {};
+  const sl = audit.slippage || {};
+  const pc = audit.planChurn || {};
+  const v = audit.velocity || {};
+  const x = audit.expired || { total: 0 };
+  const pct = (n) => (typeof n === 'number' ? `${(n * 100).toFixed(1)}%` : '—');
+  const day = (n) => (typeof n === 'number' ? `${n.toFixed(1)}d` : '—');
+  return [
+    `Roadmap audit (${audit.cached ? 'cached' : 'fresh'}, computed ${audit.computedAt}):`,
+    `  Summary: ${s.total ?? '?'} ghosts → ${s.materialized ?? '?'} shipped, ${s.planned ?? '?'} pending, ${s.cancelled ?? '?'} cancelled (cancellation rate ${pct(s.cancellationRate)}).`,
+    `  Lead time: median ${day(lt.medianDays)} (p25=${day(lt.p25Days)}, p75=${day(lt.p75Days)}).`,
+    `  Slippage: ${sl.onTimePct !== null && sl.onTimePct !== undefined ? `${pct(sl.onTimePct)} on time` : 'no targets'} (${sl.early ?? 0} early / ${sl.onTime ?? 0} on time / ${sl.late ?? 0} late / ${sl.noTarget ?? 0} untargeted).`,
+    `  Plan churn: ${pc.totalGhostsWithChurn ?? 0} ghosts revisited (avg ${(pc.avgChurnPerGhost ?? 0).toFixed(1)}/ghost).`,
+    `  Velocity (${v.windowDays ?? 28}d): ${v.currentCount ?? 0} materializations.`,
+    `  Expired: ${x.total ?? 0}${x.critical ? ` (${x.critical} critical)` : ''}.`,
   ].join('\n');
-  return {
-    content: [
-      { type: 'text', text: summary },
-      { type: 'text', text: '```json\n' + JSON.stringify(audit, null, 2) + '\n```' },
-    ],
-    isError: false,
-  };
 }
 ```
 
-- [ ] **Step 2: Validate TS syntax**
+- [ ] **Step 4: Validate syntax**
 
-Run: `npx --yes typescript@5 -- tsc --noEmit --skipLibCheck gitnexus-claude-plugin/src/tools/ghost_audit.ts`
-Expected: exit 0. If you don't have ts-node / tsc available, skip — CI will catch errors.
+Run: `node --check mcp-server/server.mjs`
+Expected : exit 0.
 
-- [ ] **Step 3: Commit**
+- [ ] **Step 5: Extend the smoke harness**
 
-```bash
-git add gitnexus-claude-plugin/src/tools/ghost_audit.ts
-git commit -m "feat(ghost-audit): MCP tool ghost_audit (13th tool in plugin)"
+Open `mcp-server/smoke.mjs` and find the block that iterates over a list of `tools/call` requests (one per tool). Add a request for `gitnexus_ghost_audit` :
+
+```js
+{ name: 'gitnexus_ghost_audit', arguments: { repo: SMOKE_REPO } },
 ```
 
----
+where `SMOKE_REPO` is whatever existing constant the file uses (usually `'hmm_studio'`).
 
-### Task 12: Register the tool in plugin index
+- [ ] **Step 6: Validate the smoke file**
 
-**Files:**
-- Modify: `gitnexus-claude-plugin/src/index.ts`
+Run: `node --check mcp-server/smoke.mjs`
+Expected : exit 0.
 
-- [ ] **Step 1: Locate the tool registry**
-
-Run: `node -e "console.log(require('fs').readFileSync('gitnexus-claude-plugin/src/index.ts','utf8').slice(0, 2000))"`
-
-Look for the section that imports and lists the 12 existing tools (likely an array or switch dispatch).
-
-- [ ] **Step 2: Add ghost_audit to the imports and registry**
-
-Following the existing pattern:
-```ts
-import { ghostAuditTool, handleGhostAudit } from './tools/ghost_audit.js';
-
-// In the tools array / registry :
-ghostAuditTool,
-
-// In the dispatch :
-case 'ghost_audit': return handleGhostAudit(args);
-```
-
-- [ ] **Step 3: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
-git add gitnexus-claude-plugin/src/index.ts
-git commit -m "feat(ghost-audit): register ghost_audit tool in plugin index"
+git add mcp-server/server.mjs mcp-server/smoke.mjs
+git commit -m "feat(ghost-audit): gitnexus_ghost_audit MCP tool (19th tool) + smoke"
 ```
 
 ---
@@ -1550,7 +1550,7 @@ git commit -m "docs(spec): append Update — Shipped on roadmap-predictive Audit
 - §3.2 Algorithms — Tasks 1-6.
 - §3.2 Cache — Task 8.
 - §3.2 Frontend (AuditPanel + 6 sub-components) — Tasks 13-19.
-- §3.2 MCP tool — Tasks 11-12.
+- §3.2 MCP tool — Task 11 (single task — patches `mcp-server/server.mjs` + `smoke.mjs`).
 - §3.2 Tests — Tasks 20-22 (integration + e2e) + unit tests woven into 1-6 + 13-19.
 - §3.2 Fixture extension — Task 23.
 - §4 Out-of-scope respected (no cross-repo audit, no PDF export, no projection).
@@ -1562,7 +1562,7 @@ git commit -m "docs(spec): append Update — Shipped on roadmap-predictive Audit
 
 **Known risks** :
 - Task 15-19 condensed format may not give an autonomous subagent enough to write good tests. If used with subagent-driven-development, expand each task in-flight from the pattern of Task 14.
-- Tasks 11-12 (MCP) assume the plugin structure mirrors Tier 2bis.1 ; if the actual plugin layout differs, adapt during impl.
+- Task 11 (MCP) patches `mcp-server/server.mjs` directly — the JSON-schema tools array pattern is verified against the 18 existing tools.
 
 ---
 
