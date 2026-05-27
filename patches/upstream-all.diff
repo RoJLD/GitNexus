@@ -18787,6 +18787,83 @@ index 0000000..3c8ded8
 +    </svg>
 +  );
 +}
+diff --git a/gitnexus-web/src/components/gantt/GanttBar.tsx b/gitnexus-web/src/components/gantt/GanttBar.tsx
+new file mode 100644
+index 0000000..ba51c80
+--- /dev/null
++++ b/gitnexus-web/src/components/gantt/GanttBar.tsx
+@@ -0,0 +1,71 @@
++/**
++ * GanttBar — single bar primitive in the Gantt chart.
++ *
++ * Four shapes, one per ghost lifecycle state :
++ *   - solid  : materialized (plannedAt → materializedAt)
++ *   - dashed : planned and forecast (plannedAt → plannedFor target)
++ *   - dot    : planned with no horizon (single anchor point)
++ *   - grey   : cancelled (plannedAt → cancelledAt, dimmed)
++ *
++ * Each bar exposes its title via SVG <title> for native tooltip on hover.
++ *
++ * See docs/superpowers/specs/2026-05-26-roadmap-predictive-gantt-design.md
++ */
++
++import type { GanttBar as GanttBarData } from '../../lib/gantt-layout';
++
++type Props = {
++  bar: GanttBarData;
++  scale: (d: Date) => number;
++  y: number;
++  height: number;
++  title: string;
++};
++
++export default function GanttBar({ bar, scale, y, height, title }: Props) {
++  const x = scale(new Date(bar.startDate));
++
++  if (bar.kind === 'dot') {
++    return (
++      <circle cx={x} cy={y + height / 2} r={height / 3} fill={bar.color}>
++        <title>{title}</title>
++      </circle>
++    );
++  }
++
++  const xEnd = scale(new Date(bar.endDate as string));
++  const w = Math.max(2, xEnd - x);
++
++  if (bar.kind === 'solid') {
++    return (
++      <rect x={x} y={y} width={w} height={height} fill={bar.color} rx={2}>
++        <title>{title}</title>
++      </rect>
++    );
++  }
++
++  if (bar.kind === 'dashed') {
++    return (
++      <rect
++        x={x}
++        y={y}
++        width={w}
++        height={height}
++        fill="none"
++        stroke={bar.color}
++        strokeWidth={1.5}
++        strokeDasharray="4 3"
++        rx={2}
++      >
++        <title>{title}</title>
++      </rect>
++    );
++  }
++
++  // kind === 'grey' (cancelled)
++  return (
++    <rect x={x} y={y} width={w} height={height} fill="#888" opacity={0.4} rx={2}>
++      <title>{title}</title>
++    </rect>
++  );
++}
 diff --git a/gitnexus-web/src/core/llm/agent.ts b/gitnexus-web/src/core/llm/agent.ts
 index 49862a9..5c552dd 100644
 --- a/gitnexus-web/src/core/llm/agent.ts
