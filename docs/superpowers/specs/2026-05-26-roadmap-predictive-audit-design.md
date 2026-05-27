@@ -296,3 +296,76 @@ C'est essentiellement le même calcul que Tier 2.2 Dissonance (community détect
 - **placementAccuracy** : "le code matérialisé est-il dans le cluster où il devait atterrir vs où il a été planifié ?"
 
 Réutilisation possible du `clusterPurity` core fn de la Dissonance feature.
+
+## Update 2026-05-27 — Shipped
+
+Section F of the execution plan landed. The Audit view is live in
+production. Concrete deltas vs the original design:
+
+### Shipped
+
+- **6 metrics** : `computeSummary`, `computeLeadTime` (p25/médian/p75/max
+  + buckets), `computeSlippage` (early/onTime/late/noTarget vs
+  `expectedBy`), `computePlanChurn` (cross-snapshot deltas + top
+  churners), `computeVelocity` (rolling 28j) + **Update 1** `computeExpired`
+  (alertLevel green/yellow/red).
+- **Endpoint** : `GET /ghost-audit?repo=<base>` — 404 when no
+  `/ghosts/sync` has run yet, otherwise returns the 6-metric JSON
+  payload with `cached: bool` + `computedAt`. **mtime cache** on
+  `<repo>/.gitnexus/ghosts.json` — recompute only when the sidecar
+  file has been touched since the last `computedAt`.
+- **MCP tool** : `gitnexus_ghost_audit` registered in
+  `mcp-server/server.mjs` (19th tool). Smoke covered in
+  `mcp-server/smoke.mjs`.
+- **7 React components** : `AuditPanel.tsx` container + 6 sub-components
+  (`AuditSummary`, `LeadTimeHistogram`, `SlippageBar`,
+  `VelocitySparkline`, `PlanChurnList`, `GhostTable`) under
+  `gitnexus-web/src/components/audit/`. PlanChurnList ↔ GhostTable
+  synchronized via `highlightedId` state lifted in the container.
+- **Host wiring** : `App.tsx` imports `AuditPanel`, local
+  `auditPanelOpen` state, floating bottom-right toggle button
+  (`data-testid="audit-panel-toggle"`) + top-right overlay rendering
+  `<AuditPanel repo={projectName} />` when open. Kept out of
+  `useAppState` to minimize patch surface against upstream.
+- **Fixture** : commit 12 added to `tests/fixtures/make-fixture.mjs`
+  (Alice, 2025-02-12). Flips `### 1.2 — Helpers utility` to ⏳ with
+  `**Expected by** : 2026-Q2`, and adds `### 2.2 — Cancelled feature 🗑️`.
+  This gives the audit metrics a planned ghost with `expectedBy` (for
+  slippage / expired), a materialized ghost (1.1), and two cancelled
+  ghosts (cancellation-rate ≠ 0).
+- **Smoke loop** : `/ghost-audit` added to the `for ep in …` loop in
+  `CLAUDE.md` + a dedicated curl note clarifying it requires a prior
+  `/ghosts/sync`.
+
+### Deferred — `Update 2` (placementAccuracy)
+
+The original spec mentioned a future Update 2 metric measuring "ghosts
+placed in the right community vs the planned location". That metric
+requires backend access to **Leiden communities** at snapshot time —
+which doesn't exist in our docker-server today (Dissonance recomputes
+its own clustering per request, but it's not exposed as a separate
+endpoint we can read from the audit core fn). Deferred until that
+backend exists. Tracked in this spec's history rather than in ROADMAP
+because it's an internal extension, not a new tier.
+
+### Known limitations
+
+- **`parseTargetDate` duplicated** : the audit-core module
+  (`docker-server-ghost-audit-core.mjs`) duplicates `parseTargetDate`
+  from `docker-server-ghosts-core.mjs` rather than re-importing it.
+  Choice : keep the audit module **self-contained** so it can be
+  pruned / split into a separate Tier sub-product later without taking
+  the CORE module as a hard dep. The duplication is small (one pure
+  fn, < 20 lines) and both copies have the same test golden.
+- **placementAccuracy deferred** — see above.
+
+### Build / CI status
+
+- **Local : Node 21** blocks vitest in this workspace (Phase 1b waiting
+  on the Node 22 upgrade, see
+  `docs/superpowers/decisions/2026-05-26-defer-node22-upgrade.md`).
+- **CI : Node 22** runs the full unit + integration + e2e suite,
+  including the 13 new audit test files inventoried in
+  `tests/README.md`.
+- Manual smoke : `docker compose build gitnexus-web` green + the
+  `/ghost-audit` curl in the after-restart smoke loop returns 200.
