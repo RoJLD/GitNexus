@@ -209,3 +209,18 @@ Le wizard est non-destructif :
 Plan d'implémentation via `superpowers:writing-plans`.
 
 Dernier brainstorm de cette session : **Gantt opérationnel**.
+
+---
+
+## Update 2026-05-27 — Shipped
+
+Brainstorm-hook livré. Notes :
+
+- Spec parser pure fns + ROADMAP upsert (idempotent) + CLI script ; tous tracked sous `scripts/`.
+- CORE parser étendu via 1 regex (`FROM_SPEC_SECTION_RE`) ; Update appliquée au CORE spec en // .
+- Wizard `install-brainstorm-hooks.mjs` non-destructif : merge `.claude/settings.local.json`, append vs create pour `.git/hooks/post-commit`, create `.github/workflows/roadmap-sync.yml`.
+- Root `package.json` créé (le repo n'en avait pas avant) avec scripts `ghost:from-spec` + `setup:hooks`. Zéro dépendance npm.
+- 4 triggers convergents : manuel, Claude PostToolUse, git post-commit, GitHub Actions — tous appellent le même code path.
+- Tests : 3 unit + 1 e2e. Runtime local Node 21 bloqué (vitest 4.x), CI Node 22.
+- 5 open questions du spec toutes résolues comme prévu.
+
