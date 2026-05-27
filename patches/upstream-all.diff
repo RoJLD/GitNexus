@@ -11804,6 +11804,125 @@ index 0000000..01e2d63
 +    </div>
 +  );
 +};
+diff --git a/gitnexus-web/src/components/FileTreePanel.tsx b/gitnexus-web/src/components/FileTreePanel.tsx
+index 98c20c6..162ab80 100644
+--- a/gitnexus-web/src/components/FileTreePanel.tsx
++++ b/gitnexus-web/src/components/FileTreePanel.tsx
+@@ -21,6 +21,7 @@ import {
+ import { useAppState } from '../hooks/useAppState';
+ import { FILTERABLE_LABELS, NODE_COLORS, ALL_EDGE_TYPES, EDGE_INFO } from '../lib/constants';
+ import type { GraphNode, NodeLabel } from 'gitnexus-shared';
++import GhostFiltersSection from './GhostFiltersSection';
+ 
+ // Tree node structure
+ interface TreeNode {
+@@ -222,6 +223,8 @@ export const FileTreePanel = ({ onFocusNode }: FileTreePanelProps) => {
+     openCodePanel,
+     depthFilter,
+     setDepthFilter,
++    ghostFilters,
++    setGhostFilters,
+   } = useAppState();
+ 
+   const [isCollapsed, setIsCollapsed] = useState(false);
+@@ -521,6 +524,12 @@ export const FileTreePanel = ({ onFocusNode }: FileTreePanelProps) => {
+             )}
+           </div>
+ 
++          {/* Roadmap predictive — augmented graph filters (Section E / Task 10) */}
++          <GhostFiltersSection
++            ghostFilters={ghostFilters}
++            setGhostFilters={setGhostFilters}
++          />
++
+           {/* Legend */}
+           <div className="mt-6 border-t border-border-subtle pt-4">
+             <h3 className="mb-3 text-xs font-medium tracking-wide text-text-secondary uppercase">
+diff --git a/gitnexus-web/src/components/GhostFiltersSection.tsx b/gitnexus-web/src/components/GhostFiltersSection.tsx
+new file mode 100644
+index 0000000..1d0d34a
+--- /dev/null
++++ b/gitnexus-web/src/components/GhostFiltersSection.tsx
+@@ -0,0 +1,79 @@
++/**
++ * GhostFiltersSection — the "Roadmap predictive" filter block embedded
++ * in the FileTreePanel's Filters tab. Lives as its own component so
++ * Task 10's test can render it in isolation without dragging the whole
++ * AppStateProvider into the test environment.
++ *
++ * Hierarchical UX :
++ *   - master toggle "Show ghosts"
++ *   - when on, 3 tier checkboxes ("1", "2", "3")
++ *   - plus a "Show cancelled ghosts" toggle
++ *
++ * Section E / Task 10 of
++ * docs/superpowers/specs/2026-05-26-roadmap-predictive-augmented-graph-design.md
++ */
++
++import type { GhostFilters } from '../lib/ghost-layout';
++
++type Props = {
++  ghostFilters: GhostFilters;
++  setGhostFilters: (next: GhostFilters) => void;
++};
++
++const TIERS = ['1', '2', '3'] as const;
++
++export default function GhostFiltersSection({ ghostFilters, setGhostFilters }: Props) {
++  return (
++    <section className="filter-section mt-6 border-t border-border-subtle pt-4">
++      <h3 className="mb-2 text-xs font-medium tracking-wide text-text-secondary uppercase">
++        Roadmap predictive
++      </h3>
++      <p className="mb-3 text-[11px] text-text-muted">
++        Overlay planned-but-unbuilt features on the graph
++      </p>
++
++      <label className="flex items-center gap-2 text-xs text-text-primary">
++        <input
++          type="checkbox"
++          checked={ghostFilters.showGhosts}
++          onChange={(e) =>
++            setGhostFilters({ ...ghostFilters, showGhosts: e.target.checked })
++          }
++        />
++        Show ghosts
++      </label>
++
++      {ghostFilters.showGhosts && (
++        <div className="mt-2 flex flex-col gap-1 pl-4">
++          {TIERS.map((t) => (
++            <label key={t} className="flex items-center gap-2 text-xs text-text-secondary">
++              <input
++                type="checkbox"
++                checked={ghostFilters.tiers.includes(t)}
++                onChange={(e) =>
++                  setGhostFilters({
++                    ...ghostFilters,
++                    tiers: e.target.checked
++                      ? [...ghostFilters.tiers, t].sort()
++                      : ghostFilters.tiers.filter((x) => x !== t),
++                  })
++                }
++              />
++              Tier {t}
++            </label>
++          ))}
++          <label className="mt-2 flex items-center gap-2 text-xs text-text-secondary">
++            <input
++              type="checkbox"
++              checked={ghostFilters.showCancelled}
++              onChange={(e) =>
++                setGhostFilters({ ...ghostFilters, showCancelled: e.target.checked })
++              }
++            />
++            Show cancelled ghosts
++          </label>
++        </div>
++      )}
++    </section>
++  );
++}
 diff --git a/gitnexus-web/src/components/GhostTooltip.tsx b/gitnexus-web/src/components/GhostTooltip.tsx
 new file mode 100644
 index 0000000..dabff90
