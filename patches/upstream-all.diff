@@ -2333,10 +2333,10 @@ index 0000000..c57e279
 +}
 diff --git a/docker-server-ghost-audit-core.mjs b/docker-server-ghost-audit-core.mjs
 new file mode 100644
-index 0000000..9b97661
+index 0000000..648f8c0
 --- /dev/null
 +++ b/docker-server-ghost-audit-core.mjs
-@@ -0,0 +1,125 @@
+@@ -0,0 +1,170 @@
 +/**
 + * Pure functions for the roadmap-predictive Audit view.
 + * No I/O. Imports from docker-server-ghosts-core.mjs only if needed.
@@ -2460,6 +2460,51 @@ index 0000000..9b97661
 +    p75Days: percentile(leadTimes, 0.75),
 +    maxDays: leadTimes[leadTimes.length - 1],
 +    distribution: dist,
++  };
++}
++
++// --- Plan churn ---
++
++function sameLinks(a, b) {
++  if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) return false;
++  for (let i = 0; i < a.length; i++) {
++    if (a[i].kind !== b[i].kind || a[i].value !== b[i].value) return false;
++  }
++  return true;
++}
++
++export function computePlanChurn(snapshots) {
++  const empty = { totalGhostsWithChurn: 0, avgChurnPerGhost: 0, topChurners: [] };
++  if (!Array.isArray(snapshots) || snapshots.length < 2) return empty;
++
++  // Sort by date ASC so consecutive comparison is chronological.
++  const sorted = [...snapshots].sort((a, b) => new Date(a.date) - new Date(b.date));
++  const churnById = new Map();
++
++  for (let i = 1; i < sorted.length; i++) {
++    const prevById = new Map(sorted[i - 1].ghosts.map(g => [g.id, g]));
++    for (const curr of sorted[i].ghosts) {
++      const prev = prevById.get(curr.id);
++      if (!prev) continue;
++      const deltas = [];
++      if (prev.declared.description !== curr.declared.description) deltas.push('description');
++      if (!sameLinks(prev.declared.expectedLinks ?? [], curr.declared.expectedLinks ?? [])) deltas.push('expectedLinks');
++      if (deltas.length > 0) {
++        const entry = churnById.get(curr.id) ?? { churn: 0, deltas: [] };
++        entry.churn += 1;
++        entry.deltas.push(...deltas);
++        churnById.set(curr.id, entry);
++      }
++    }
++  }
++
++  const all = [...churnById.entries()].map(([id, x]) => ({ id, ...x }));
++  const topChurners = all.sort((a, b) => b.churn - a.churn).slice(0, 10);
++  const totalChurn = all.reduce((sum, x) => sum + x.churn, 0);
++  return {
++    totalGhostsWithChurn: all.length,
++    avgChurnPerGhost: all.length === 0 ? 0 : totalChurn / all.length,
++    topChurners,
 +  };
 +}
 diff --git a/docker-server-ghosts-core.mjs b/docker-server-ghosts-core.mjs
