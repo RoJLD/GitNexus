@@ -17005,6 +17005,82 @@ index 0000000..b564d0a
 +    </div>
 +  );
 +}
+diff --git a/gitnexus-web/src/components/audit/SlippageBar.tsx b/gitnexus-web/src/components/audit/SlippageBar.tsx
+new file mode 100644
+index 0000000..a6b20db
+--- /dev/null
++++ b/gitnexus-web/src/components/audit/SlippageBar.tsx
+@@ -0,0 +1,70 @@
++/**
++ * SlippageBar — stacked horizontal bar with 4 segments
++ * (early / onTime / late / noTarget). Each segment's width is
++ * proportional to its count, so a visual glance tells you how much of
++ * the materialized population landed on time vs missed.
++ *
++ * The bar header displays `onTimePct` (formatted as a %). The pct
++ * denominator excludes `noTarget` (consistent with computeSlippage).
++ *
++ * Spec : docs/superpowers/specs/2026-05-26-roadmap-predictive-audit-design.md
++ */
++
++type Props = {
++  data: {
++    early: number;
++    onTime: number;
++    late: number;
++    noTarget: number;
++    onTimePct: number | null;
++  };
++};
++
++const SEGMENTS = [
++  { key: 'early', label: 'Early', color: '#3b82f6' },
++  { key: 'onTime', label: 'On time', color: '#10b981' },
++  { key: 'late', label: 'Late', color: '#ef4444' },
++  { key: 'noTarget', label: 'No target', color: '#9ca3af' },
++] as const;
++
++export default function SlippageBar({ data }: Props) {
++  const total = data.early + data.onTime + data.late + data.noTarget;
++  const pctText =
++    data.onTimePct == null ? '—' : `${(data.onTimePct * 100).toFixed(1)}%`;
++  return (
++    <div className="slippage-bar" data-testid="slippage-bar">
++      <header>
++        <strong>Slippage</strong>
++        <span className="on-time-pct" data-testid="on-time-pct">
++          {pctText} on time
++        </span>
++      </header>
++      <div className="bar" role="img" aria-label={`Slippage: ${pctText} on time`}>
++        {SEGMENTS.map((seg) => {
++          const count = data[seg.key];
++          const widthPct = total === 0 ? 0 : (count / total) * 100;
++          return (
++            <div
++              key={seg.key}
++              className={`segment segment-${seg.key}`}
++              data-testid={`segment-${seg.key}`}
++              title={`${seg.label}: ${count}`}
++              style={{
++                width: `${widthPct}%`,
++                background: seg.color,
++                display: 'inline-block',
++                height: 16,
++              }}
++            >
++              {widthPct > 8 && (
++                <span className="seg-label" style={{ color: 'white', fontSize: 10, padding: '0 4px' }}>
++                  {count}
++                </span>
++              )}
++            </div>
++          );
++        })}
++      </div>
++    </div>
++  );
++}
 diff --git a/gitnexus-web/src/core/llm/agent.ts b/gitnexus-web/src/core/llm/agent.ts
 index 49862a9..5c552dd 100644
 --- a/gitnexus-web/src/core/llm/agent.ts
