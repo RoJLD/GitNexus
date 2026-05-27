@@ -2333,10 +2333,10 @@ index 0000000..c57e279
 +}
 diff --git a/docker-server-ghost-audit-core.mjs b/docker-server-ghost-audit-core.mjs
 new file mode 100644
-index 0000000..15457a8
+index 0000000..7bc6648
 --- /dev/null
 +++ b/docker-server-ghost-audit-core.mjs
-@@ -0,0 +1,22 @@
+@@ -0,0 +1,47 @@
 +/**
 + * Pure functions for the roadmap-predictive Audit view.
 + * No I/O. Imports from docker-server-ghosts-core.mjs only if needed.
@@ -2358,6 +2358,31 @@ index 0000000..15457a8
 +  }
 +  const cancellationRate = counts.total === 0 ? 0 : counts.cancelled / counts.total;
 +  return { ...counts, cancellationRate };
++}
++
++// --- Target date parsing ---
++
++const ISO_RE = /^\d{4}-\d{2}-\d{2}/;
++const QUARTER_RE = /^(\d{4})-Q([1-4])$/;
++const MONTH_RE = /^(\d{4})-(\d{2})$/;
++
++export function parseTargetDate(s) {
++  if (!s || typeof s !== 'string') return null;
++  const q = s.match(QUARTER_RE);
++  if (q) {
++    const year = Number(q[1]);
++    const lastMonthOfQuarter = Number(q[2]) * 3; // 3, 6, 9, 12
++    return new Date(Date.UTC(year, lastMonthOfQuarter, 0)); // day 0 of next month = last of this
++  }
++  const m = s.match(MONTH_RE);
++  if (m) {
++    return new Date(Date.UTC(Number(m[1]), Number(m[2]), 0));
++  }
++  if (ISO_RE.test(s)) {
++    const d = new Date(s);
++    return isNaN(d.getTime()) ? null : d;
++  }
++  return null;
 +}
 diff --git a/docker-server-ghosts-core.mjs b/docker-server-ghosts-core.mjs
 new file mode 100644
