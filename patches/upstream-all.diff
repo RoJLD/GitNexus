@@ -23807,6 +23807,134 @@ index 6c660b0..937fd90 100644
  /* ═══════════════════════════════════════════════════════════════
     REDUCED MOTION — respect OS-level motion preferences (WCAG 2.3.3)
  ═══════════════════════════════════════════════════════════════ */
+diff --git a/gitnexus-web/src/lib/augmented-timeline.ts b/gitnexus-web/src/lib/augmented-timeline.ts
+new file mode 100644
+index 0000000..e05156f
+--- /dev/null
++++ b/gitnexus-web/src/lib/augmented-timeline.ts
+@@ -0,0 +1,122 @@
++/**
++ * Pure functions for the Augmented Timeline (Roadmap-predictive Tier 3.x).
++ * Reused across `GraphCanvas` (cursor → effective ghost set) and the
++ * Play animation cross-fade loop. No I/O, no Sigma deps.
++ *
++ * See docs/superpowers/specs/2026-05-27-roadmap-predictive-augmented-timeline-design.md
++ */
++
++import type { GhostInput } from './ghost-layout';
++
++/**
++ * One slot of the per-snapshot ghost cache: the snapshot's commit
++ * shortHash, its ISO commit date, and the ghosts that existed at that
++ * point in time. Built by `services/snapshot-ghosts-cache.ts`.
++ */
++export type SnapshotGhosts = {
++  sha: string;
++  date: string;
++  ghosts: GhostInput[];
++};
++
++/**
++ * Closest-prior lookup. Given a cursor time and the per-snapshot cache,
++ * returns the ghost set of the snapshot whose commit date is the
++ * greatest date ≤ cursorTime. In `lock-to-head` mode returns the
++ * `liveGhosts` argument unchanged — that's the "today" view, no
++ * time-aware behavior.
++ *
++ * Returns `[]` when the cache is empty or the cursor predates every
++ * snapshot (no closest-prior to land on).
++ */
++export function selectGhostsAt(
++  cache: Map<string, SnapshotGhosts>,
++  cursorTime: Date,
++  mode: 'time-aware' | 'lock-to-head',
++  liveGhosts: GhostInput[],
++): GhostInput[] {
++  if (mode === 'lock-to-head') return liveGhosts;
++  if (cache.size === 0) return [];
++  const cursorMs = cursorTime.getTime();
++  let best: SnapshotGhosts | null = null;
++  let bestMs = -Infinity;
++  for (const snap of cache.values()) {
++    const d = Date.parse(snap.date);
++    if (!Number.isFinite(d)) continue;
++    if (d > cursorMs) continue;
++    if (d > bestMs) {
++      best = snap;
++      bestMs = d;
++    }
++  }
++  return best?.ghosts ?? [];
++}
++
++/**
++ * Window-of-time transition detector. For the Play animation: returns
++ * the ghosts that crossed the `materialized` or `cancelled` threshold
++ * between `prevTime` and `nextTime` (i.e. their event date is in the
++ * half-open window `(prev, next]`). Used to trigger cross-fade
++ * transitions in `useSigma.startGhostCrossFade`.
++ *
++ * Walks the union of every ghost ever seen across all cached
++ * snapshots, deduped by id — a ghost that's materialized in snapshot
++ * 12 still appears in the cache (as `status: 'materialized'`), we
++ * detect the transition by inspecting its `materializedAt.date`.
++ */
++export function computeTransitions(
++  cache: Map<string, SnapshotGhosts>,
++  prevTime: Date,
++  nextTime: Date,
++): { materializing: string[]; cancelling: string[] } {
++  const materializing: string[] = [];
++  const cancelling: string[] = [];
++  const prev = prevTime.getTime();
++  const next = nextTime.getTime();
++  const seen = new Set<string>();
++  for (const snap of cache.values()) {
++    for (const g of snap.ghosts) {
++      if (seen.has(g.id)) continue;
++      seen.add(g.id);
++      // `materializedAt` and `cancelledAt` live on the `GhostRuntime`
++      // shape (`services/ghosts-client.ts`); `GhostInput` is the
++      // narrow flavor consumed by `ghost-layout`, but the snapshot
++      // ghosts cache hands us the full runtime payload merged in.
++      // We read defensively via `any` because the runtime shape is
++      // optional on `GhostInput`.
++      const matAt =
++        (g as unknown as { materializedAt?: { date?: string } | null }).materializedAt?.date;
++      const canAt =
++        (g as unknown as { cancelledAt?: { date?: string } | null }).cancelledAt?.date;
++      if (matAt) {
++        const t = Date.parse(matAt);
++        if (Number.isFinite(t) && t > prev && t <= next) materializing.push(g.id);
++      }
++      if (canAt) {
++        const t = Date.parse(canAt);
++        if (Number.isFinite(t) && t > prev && t <= next) cancelling.push(g.id);
++      }
++    }
++  }
++  return { materializing, cancelling };
++}
++
++/**
++ * Resolve the active "Augmented Timeline" mode for a given cursor /
++ * head pair. Three rules :
++ *  1. If the user pinned `lockGhostsToHead`, stay live (today's ghosts).
++ *  2. Else if the cursor is within `skewToleranceMs` (default 60 s) of
++ *     HEAD, treat as live — sub-minute drift is noise, not "history".
++ *  3. Else time-aware (cursor is genuinely in the past).
++ */
++export function resolveAugmentedTimelineMode(opts: {
++  cursor: Date;
++  head: Date;
++  lockGhostsToHead: boolean;
++  skewToleranceMs?: number;
++}): 'live' | 'time-aware' {
++  if (opts.lockGhostsToHead) return 'live';
++  const skew = opts.skewToleranceMs ?? 60_000;
++  if (Math.abs(opts.cursor.getTime() - opts.head.getTime()) < skew) return 'live';
++  return 'time-aware';
++}
 diff --git a/gitnexus-web/src/lib/cluster-layout.ts b/gitnexus-web/src/lib/cluster-layout.ts
 new file mode 100644
 index 0000000..9a7bffb
