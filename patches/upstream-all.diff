@@ -12582,10 +12582,10 @@ index 98c20c6..162ab80 100644
              <h3 className="mb-3 text-xs font-medium tracking-wide text-text-secondary uppercase">
 diff --git a/gitnexus-web/src/components/GanttPanel.tsx b/gitnexus-web/src/components/GanttPanel.tsx
 new file mode 100644
-index 0000000..29f0d2a
+index 0000000..fca0d1a
 --- /dev/null
 +++ b/gitnexus-web/src/components/GanttPanel.tsx
-@@ -0,0 +1,179 @@
+@@ -0,0 +1,263 @@
 +/**
 + * GanttPanel — fetch /ghosts, compute Gantt layout, render SVG + CSV export.
 + *
@@ -12635,6 +12635,30 @@ index 0000000..29f0d2a
 +  }));
 +}
 +
++type SwimlaneGroup = { tier: string; rows: GanttRowData[] };
++
++function groupByTier(rows: GanttRowData[]): SwimlaneGroup[] {
++  const groups = new Map<string, GanttRowData[]>();
++  for (const r of rows) {
++    const major = r.tier ? String(r.tier).split('.')[0] : 'none';
++    if (!groups.has(major)) groups.set(major, []);
++    groups.get(major)!.push(r);
++  }
++  // Sort groups by major-tier label so "1" < "2" < "3" < "none".
++  return [...groups.entries()]
++    .sort((a, b) => {
++      if (a[0] === 'none') return 1;
++      if (b[0] === 'none') return -1;
++      return a[0].localeCompare(b[0]);
++    })
++    .map(([tier, groupRows]) => ({ tier, rows: groupRows }));
++}
++
++function tierGroupLabel(tier: string): string {
++  if (tier === 'none') return 'No tier';
++  return `Tier ${tier}`;
++}
++
 +function rowsToCsv(rows: GanttRowData[]): string {
 +  const header = 'ghostId,title,tier,status,bar_kind,bar_start,bar_end';
 +  const lines: string[] = [header];
@@ -12669,9 +12693,12 @@ index 0000000..29f0d2a
 +  URL.revokeObjectURL(url);
 +}
 +
++const GROUP_HEADER_HEIGHT = 22;
++
 +export default function GanttPanel({ repo, onGhostSelect }: Props) {
 +  const [ghosts, setGhosts] = useState<GhostRuntime[] | null>(null);
 +  const [error, setError] = useState<string | null>(null);
++  const [swimlanes, setSwimlanes] = useState(false);
 +
 +  useEffect(() => {
 +    let cancelled = false;
@@ -12726,10 +12753,46 @@ index 0000000..29f0d2a
 +    triggerCsvDownload(csv, `ghosts-${repo}.csv`);
 +  };
 +
++  // Build either a flat row list or grouped swimlanes for rendering.
++  // We compute pre-positioned items so the SVG render loop is a single
++  // pass — much easier to scan than nested loops with running offsets.
++  type RenderItem =
++    | { kind: 'row'; row: GanttRowData; y: number }
++    | { kind: 'header'; label: string; y: number };
++
++  const items: RenderItem[] = [];
++  let cursorY = AXIS_HEIGHT;
++  if (swimlanes) {
++    const groups = groupByTier(rows);
++    for (const group of groups) {
++      items.push({ kind: 'header', label: tierGroupLabel(group.tier), y: cursorY });
++      cursorY += GROUP_HEADER_HEIGHT;
++      for (const row of group.rows) {
++        items.push({ kind: 'row', row, y: cursorY });
++        cursorY += ROW_HEIGHT;
++      }
++    }
++  } else {
++    for (const row of rows) {
++      items.push({ kind: 'row', row, y: cursorY });
++      cursorY += ROW_HEIGHT;
++    }
++  }
++  const svgHeight = cursorY;
++
 +  return (
 +    <div className="gantt-panel" data-testid="gantt-panel">
 +      <header style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
 +        <h3 style={{ margin: 0 }}>Gantt roadmap</h3>
++        <label style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
++          <input
++            type="checkbox"
++            checked={swimlanes}
++            onChange={(e) => setSwimlanes(e.target.checked)}
++            data-testid="gantt-swimlanes-toggle"
++          />
++          Swimlanes by Tier
++        </label>
 +        <button
 +          type="button"
 +          onClick={onExportCsv}
@@ -12738,10 +12801,7 @@ index 0000000..29f0d2a
 +          Export CSV
 +        </button>
 +      </header>
-+      <svg
-+        width={LABEL_WIDTH + BAR_AREA_WIDTH}
-+        height={AXIS_HEIGHT + rows.length * ROW_HEIGHT}
-+      >
++      <svg width={LABEL_WIDTH + BAR_AREA_WIDTH} height={svgHeight}>
 +        <g transform={`translate(${LABEL_WIDTH}, 0)`}>
 +          <GanttAxis
 +            window={timeWindow}
@@ -12750,17 +12810,41 @@ index 0000000..29f0d2a
 +            now={now}
 +          />
 +        </g>
-+        {rows.map((row, i) => (
-+          <GanttRow
-+            key={row.ghostId}
-+            row={row}
-+            scale={scale}
-+            y={AXIS_HEIGHT + i * ROW_HEIGHT}
-+            height={ROW_HEIGHT}
-+            labelWidth={LABEL_WIDTH}
-+            onClick={(id) => onGhostSelect?.(id)}
-+          />
-+        ))}
++        {items.map((item, i) => {
++          if (item.kind === 'header') {
++            return (
++              <g key={`hdr-${i}`} className="gantt-swimlane-header">
++                <rect
++                  x={0}
++                  y={item.y}
++                  width={LABEL_WIDTH + BAR_AREA_WIDTH}
++                  height={GROUP_HEADER_HEIGHT}
++                  fill="#1f1f1f"
++                />
++                <text
++                  x={6}
++                  y={item.y + GROUP_HEADER_HEIGHT / 2 + 4}
++                  fontSize={12}
++                  fill="#bbb"
++                  fontWeight={600}
++                >
++                  {item.label}
++                </text>
++              </g>
++            );
++          }
++          return (
++            <GanttRow
++              key={item.row.ghostId}
++              row={item.row}
++              scale={scale}
++              y={item.y}
++              height={ROW_HEIGHT}
++              labelWidth={LABEL_WIDTH}
++              onClick={(id) => onGhostSelect?.(id)}
++            />
++          );
++        })}
 +      </svg>
 +    </div>
 +  );

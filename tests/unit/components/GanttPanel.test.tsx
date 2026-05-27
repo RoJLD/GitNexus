@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import GanttPanel from '../../../upstream/gitnexus-web/src/components/GanttPanel';
 import {
   _seedCacheForTests,
@@ -62,6 +62,59 @@ describe('GanttPanel', () => {
     render(<GanttPanel repo="sample-repo" />);
     await waitFor(() => expect(screen.getByText('Entropy panel')).toBeInTheDocument());
     expect(screen.getByTestId('gantt-panel')).toBeInTheDocument();
+  });
+
+  it('expands into swimlane headers when the toggle is on', async () => {
+    _seedCacheForTests('swim-repo', {
+      syncedAt: '2026-05-26T00:00:00Z',
+      syncedCommit: 'abc',
+      ghosts: [
+        {
+          id: 'g1',
+          declared: {
+            id: 'g1',
+            tier: '1.4',
+            title: 'Tier1 ghost',
+            description: '',
+            status: 'materialized',
+            expectedLinks: [],
+            dependsOn: [],
+          },
+          plannedAt: { commit: 'a', date: '2026-04-01' },
+          materializedAt: { commit: 'b', date: '2026-04-08', confirmedBy: 'manual' },
+          cancelledAt: null,
+          links: [],
+        },
+        {
+          id: 'g2',
+          declared: {
+            id: 'g2',
+            tier: '2.3',
+            title: 'Tier2 ghost',
+            description: '',
+            status: 'materialized',
+            expectedLinks: [],
+            dependsOn: [],
+          },
+          plannedAt: { commit: 'c', date: '2026-04-05' },
+          materializedAt: { commit: 'd', date: '2026-04-20', confirmedBy: 'manual' },
+          cancelledAt: null,
+          links: [],
+        },
+      ],
+    });
+    render(<GanttPanel repo="swim-repo" />);
+    await waitFor(() => expect(screen.getByTestId('gantt-swimlanes-toggle')).toBeInTheDocument());
+
+    // Flat mode initially — no group headers.
+    expect(screen.queryByText(/^Tier 1$/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/^Tier 2$/)).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId('gantt-swimlanes-toggle'));
+
+    // Both tier headers should now be visible.
+    expect(screen.getByText('Tier 1')).toBeInTheDocument();
+    expect(screen.getByText('Tier 2')).toBeInTheDocument();
   });
 
   it('exposes a CSV export button', async () => {
