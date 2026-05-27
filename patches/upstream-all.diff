@@ -9072,7 +9072,7 @@ index 0000000..c6a7798
 +  return false;
 +}
 diff --git a/docker-server.mjs b/docker-server.mjs
-index 8143eb4..6a1e9ac 100644
+index 8143eb4..767efd4 100644
 --- a/docker-server.mjs
 +++ b/docker-server.mjs
 @@ -1,12 +1,61 @@
@@ -9557,7 +9557,7 @@ index 8143eb4..6a1e9ac 100644
  // Static asset server for the gitnexus-web Docker image.
  //
  // Path-injection containment: the request handler is intentionally a single
-@@ -39,8 +498,75 @@ const contentTypes = {
+@@ -39,8 +498,77 @@ const contentTypes = {
  // the request handler's reassignment paths in vanilla JS. The inline-at-sink
  // shape below is the documented analyzer-friendly idiom.
  const server = createServer(async (req, res) => {
@@ -9621,6 +9621,8 @@ index 8143eb4..6a1e9ac 100644
 +  if (await handleSnapshotFromPrRoute(req, reqUrl, res, { api: GITNEXUS_API })) return;
 +  // Per-commit incremental snapshot (Phase C of incremental-snapshots design)
 +  if (await handleSnapshotIncrementalRoute(req, reqUrl, res, { api: GITNEXUS_API })) return;
++  // Graph reconstruction at any commit (Phase C §4.3 — baseline + replay)
++  if (await handleGraphAtCommitRoute(req, reqUrl, res, { api: GITNEXUS_API })) return;
 +  // Roadmap-predictive ghosts CORE (ROADMAP Tier 3.x predictive views)
 +  if (await handleGhostsRoute(req, reqUrl, res, { api: GITNEXUS_API })) return;
 +  // Roadmap-predictive Audit view (Tier 3.x audit metrics)
@@ -9634,7 +9636,7 @@ index 8143eb4..6a1e9ac 100644
    let decoded;
    try {
      decoded = decodeURIComponent(urlPath);
-@@ -117,4 +643,7 @@ const server = createServer(async (req, res) => {
+@@ -117,4 +645,7 @@ const server = createServer(async (req, res) => {
  
  server.listen(port, host, () => {
    console.log(`gitnexus-web listening on http://${host}:${port}`);
@@ -20749,10 +20751,10 @@ index 6c660b0..937fd90 100644
  ═══════════════════════════════════════════════════════════════ */
 diff --git a/gitnexus-web/src/lib/gantt-layout.ts b/gitnexus-web/src/lib/gantt-layout.ts
 new file mode 100644
-index 0000000..66de19f
+index 0000000..51810bf
 --- /dev/null
 +++ b/gitnexus-web/src/lib/gantt-layout.ts
-@@ -0,0 +1,44 @@
+@@ -0,0 +1,112 @@
 +/**
 + * Pure functions for the Gantt panel.
 + * Reads ghost runtime objects (from /ghosts), emits SVG-ready layout data.
@@ -20796,6 +20798,74 @@ index 0000000..66de19f
 +  const minT = Math.min(...times);
 +  const maxT = Math.max(...times, now.getTime() + 90 * DAY);
 +  return { start: new Date(minT - 7 * DAY), end: new Date(maxT) };
++}
++
++export type GanttBar = {
++  kind: 'solid' | 'dashed' | 'dot' | 'grey';
++  startDate: string;
++  endDate: string | null;
++  color: string;
++};
++
++export type GanttRow = {
++  ghostId: string;
++  title: string;
++  tier: string | null;
++  status: 'planned' | 'materialized' | 'cancelled';
++  bars: GanttBar[];
++};
++
++function derivedStatus(g: GhostInput): 'planned' | 'materialized' | 'cancelled' {
++  if (g.cancelledAt) return 'cancelled';
++  if (g.materializedAt) return 'materialized';
++  return 'planned';
++}
++
++export function computeGanttRows(ghosts: GhostInput[], opts: { now?: Date } = {}): GanttRow[] {
++  const now = opts.now ?? new Date();
++  const rows: GanttRow[] = [];
++
++  for (const g of ghosts) {
++    const status = derivedStatus(g);
++    const tier = g.declared?.tier ?? null;
++    const color = tierColor(tier);
++    const startDate = g.plannedAt?.date ?? null;
++    const bars: GanttBar[] = [];
++
++    if (status === 'materialized' && startDate) {
++      bars.push({ kind: 'solid', startDate, endDate: g.materializedAt!.date, color });
++    } else if (status === 'cancelled' && startDate) {
++      bars.push({ kind: 'grey', startDate, endDate: g.cancelledAt!.date, color: '#888' });
++    } else if (status === 'planned' && startDate) {
++      const target = parseTargetDate(g.declared?.plannedFor ?? null);
++      if (target) {
++        const startD = new Date(startDate);
++        const startMs = Math.max(startD.getTime(), now.getTime());
++        bars.push({ kind: 'dashed', startDate: new Date(startMs).toISOString(), endDate: target.toISOString(), color });
++      } else {
++        bars.push({ kind: 'dot', startDate, endDate: null, color });
++      }
++    }
++
++    if (bars.length === 0) continue; // skip ghosts without plannedAt - pas representables
++
++    rows.push({
++      ghostId: g.id ?? g.declared?.title ?? 'unknown',
++      title: g.declared?.title ?? g.id ?? '(no title)',
++      tier,
++      status,
++      bars,
++    });
++  }
++
++  // Sort by plannedAt ASC, then by id for tie-break.
++  rows.sort((a, b) => {
++    const aDate = a.bars[0].startDate.localeCompare(b.bars[0].startDate);
++    if (aDate !== 0) return aDate;
++    return a.ghostId.localeCompare(b.ghostId);
++  });
++
++  return rows;
 +}
 diff --git a/gitnexus-web/src/lib/ghost-layout.ts b/gitnexus-web/src/lib/ghost-layout.ts
 new file mode 100644
