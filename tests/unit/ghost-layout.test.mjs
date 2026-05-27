@@ -1,5 +1,12 @@
 import { describe, it, expect } from 'vitest';
-import { matchExistingNodes, computeGhostLayout, tierColor } from '../../upstream/gitnexus-web/src/lib/ghost-layout.ts';
+import {
+  matchExistingNodes,
+  computeGhostLayout,
+  tierColor,
+  passesFilter,
+  derivedStatus,
+  DEFAULT_GHOST_FILTERS,
+} from '../../upstream/gitnexus-web/src/lib/ghost-layout.ts';
 
 describe('matchExistingNodes', () => {
   it('matches by suffix (no wildcards)', () => {
@@ -79,5 +86,111 @@ describe('tierColor', () => {
   it('returns gray for null or unknown', () => {
     expect(tierColor(null)).toBe('#6d6d6d');
     expect(tierColor('99.9')).toBe('#6d6d6d');
+  });
+});
+
+describe('derivedStatus', () => {
+  it('detects cancelled first', () => {
+    expect(
+      derivedStatus({ cancelledAt: { date: '2026-01-01' }, materializedAt: null }),
+    ).toBe('cancelled');
+  });
+  it('detects materialized when not cancelled', () => {
+    expect(
+      derivedStatus({ cancelledAt: null, materializedAt: { date: '2026-01-01' } }),
+    ).toBe('materialized');
+  });
+  it('falls back to planned', () => {
+    expect(derivedStatus({ cancelledAt: null, materializedAt: null })).toBe('planned');
+  });
+  it('cancelled wins over materialized when both are set', () => {
+    expect(
+      derivedStatus({
+        cancelledAt: { date: '2026-01-02' },
+        materializedAt: { date: '2026-01-01' },
+      }),
+    ).toBe('cancelled');
+  });
+});
+
+describe('passesFilter', () => {
+  const ghost = (status, tier) => ({
+    id: 'g',
+    title: 'g',
+    tier,
+    status,
+    expectedLinks: [],
+  });
+
+  it('hides everything when showGhosts is false', () => {
+    expect(
+      passesFilter(ghost('planned', '1.4'), {
+        showGhosts: false,
+        tiers: ['1', '2', '3'],
+        showCancelled: false,
+      }),
+    ).toBe(false);
+  });
+
+  it('hides materialized ghosts even when showGhosts is true', () => {
+    expect(
+      passesFilter(ghost('materialized', '1.4'), {
+        showGhosts: true,
+        tiers: ['1', '2', '3'],
+        showCancelled: true,
+      }),
+    ).toBe(false);
+  });
+
+  it('hides cancelled ghosts unless showCancelled is true', () => {
+    expect(
+      passesFilter(ghost('cancelled', '1.4'), {
+        showGhosts: true,
+        tiers: ['1', '2', '3'],
+        showCancelled: false,
+      }),
+    ).toBe(false);
+    expect(
+      passesFilter(ghost('cancelled', '1.4'), {
+        showGhosts: true,
+        tiers: ['1', '2', '3'],
+        showCancelled: true,
+      }),
+    ).toBe(true);
+  });
+
+  it('filters by tier major (drops 2.5 when tiers is [1, 3])', () => {
+    expect(
+      passesFilter(ghost('planned', '2.5'), {
+        showGhosts: true,
+        tiers: ['1', '3'],
+        showCancelled: false,
+      }),
+    ).toBe(false);
+    expect(
+      passesFilter(ghost('planned', '2.5'), {
+        showGhosts: true,
+        tiers: ['1', '2', '3'],
+        showCancelled: false,
+      }),
+    ).toBe(true);
+  });
+
+  it('keeps planned ghosts with a null tier (no tier filter applies)', () => {
+    expect(
+      passesFilter(ghost('planned', null), {
+        showGhosts: true,
+        tiers: ['1'],
+        showCancelled: false,
+      }),
+    ).toBe(true);
+  });
+});
+
+describe('DEFAULT_GHOST_FILTERS', () => {
+  it('starts off (showGhosts false) and includes all three major tiers', () => {
+    expect(DEFAULT_GHOST_FILTERS.showGhosts).toBe(false);
+    expect(DEFAULT_GHOST_FILTERS.showCancelled).toBe(false);
+    expect(DEFAULT_GHOST_FILTERS.tiers).toEqual(['1', '2', '3']);
   });
 });

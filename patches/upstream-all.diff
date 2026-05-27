@@ -19498,10 +19498,10 @@ index 6c660b0..937fd90 100644
  ═══════════════════════════════════════════════════════════════ */
 diff --git a/gitnexus-web/src/lib/ghost-layout.ts b/gitnexus-web/src/lib/ghost-layout.ts
 new file mode 100644
-index 0000000..0e29a29
+index 0000000..f6158f9
 --- /dev/null
 +++ b/gitnexus-web/src/lib/ghost-layout.ts
-@@ -0,0 +1,202 @@
+@@ -0,0 +1,252 @@
 +/**
 + * Pure functions for placing ghost nodes on the Sigma canvas.
 + * Reused from frontend only — no I/O, no Sigma deps.
@@ -19703,6 +19703,56 @@ index 0000000..0e29a29
 +  if (ratio < 1.0) return { opacity: 0.4, outlineColor: tc, alertLevel: 'mature' };
 +  if (ratio < 1.5) return { opacity: 0.3, outlineColor: '#e67e22', alertLevel: 'late' };
 +  return { opacity: 0.2, outlineColor: '#c0392b', alertLevel: 'critical' };
++}
++
++/* ═══════════════════════════════════════════════════════════════
++ * Filter + status helpers (Section C / Task 7)
++ *
++ * These mirror the CORE's derivedStatus rule so the frontend never
++ * has to round-trip to the backend just to know whether a ghost is
++ * "planned", "materialized" or "cancelled". `passesFilter` is the
++ * single gate consumed by `applyGhostLayer` in useSigma.
++ * ═══════════════════════════════════════════════════════════════ */
++
++export type GhostFilters = {
++  showGhosts: boolean;
++  /** Which major tiers ("1", "2", "3") are visible. Tier "1.4" matches "1". */
++  tiers: string[];
++  showCancelled: boolean;
++};
++
++export const DEFAULT_GHOST_FILTERS: GhostFilters = {
++  showGhosts: false,
++  tiers: ['1', '2', '3'],
++  showCancelled: false,
++};
++
++/**
++ * Mirrors the CORE's derivedStatus rule : cancelled > materialized > planned.
++ * Accepts the runtime shape (the full ghost) or a minimal object with the
++ * two timestamps. Returns `'planned'` when neither has fired.
++ */
++export function derivedStatus(g: {
++  materializedAt?: unknown;
++  cancelledAt?: unknown;
++}): 'planned' | 'materialized' | 'cancelled' {
++  if (g.cancelledAt) return 'cancelled';
++  if (g.materializedAt) return 'materialized';
++  return 'planned';
++}
++
++/**
++ * Returns true when the ghost should be drawn on the canvas under
++ * the current filter state. Used by `applyGhostLayer` to gate
++ * insertion into the graph.
++ */
++export function passesFilter(ghost: GhostInput, f: GhostFilters): boolean {
++  if (!f.showGhosts) return false;
++  // Materialized ghosts are doublons of real nodes — never draw them.
++  if (ghost.status === 'materialized') return false;
++  if (ghost.status === 'cancelled' && !f.showCancelled) return false;
++  if (ghost.tier && !f.tiers.includes(String(ghost.tier).split('.')[0])) return false;
++  return true;
 +}
 diff --git a/gitnexus-web/src/lib/ghost-node-program.ts b/gitnexus-web/src/lib/ghost-node-program.ts
 new file mode 100644
