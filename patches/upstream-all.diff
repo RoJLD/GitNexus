@@ -17812,6 +17812,104 @@ index 0000000..2b136a3
 +    </div>
 +  );
 +}
+diff --git a/gitnexus-web/src/components/audit/CleanupModal.tsx b/gitnexus-web/src/components/audit/CleanupModal.tsx
+new file mode 100644
+index 0000000..8487de6
+--- /dev/null
++++ b/gitnexus-web/src/components/audit/CleanupModal.tsx
+@@ -0,0 +1,92 @@
++import { useEffect, useState } from 'react';
++
++/**
++ * CleanupModal — opened from the 6th "Expired" card of AuditSummary
++ * (Audit Update 1 shipped the card ; this modal is Tier 3.x Cleanup).
++ *
++ * Fetches `POST /ghosts/cleanup-prompt?repo=` which returns the expired
++ * ghosts list + an LLM-ready prompt per ghost. v1 : the user clicks
++ * "Copy prompt", pastes it into their LLM (Claude / Cursor / etc.),
++ * applies the suggested ROADMAP.md edit manually, then re-runs
++ * `/ghosts/sync` to clear the expiry.
++ *
++ * Spec : docs/superpowers/specs/2026-05-26-roadmap-predictive-cleanup-and-connectors-design.md
++ */
++
++type ExpiredEntry = {
++  id: string;
++  title: string;
++  daysPastExpiry: number;
++  alertLevel: string;
++  prompt: string;
++};
++
++type Props = {
++  repo: string;
++  open: boolean;
++  onClose: () => void;
++};
++
++export default function CleanupModal({ repo, open, onClose }: Props) {
++  const [entries, setEntries] = useState<ExpiredEntry[] | null>(null);
++  const [error, setError] = useState<string | null>(null);
++  const [loading, setLoading] = useState(false);
++
++  useEffect(() => {
++    if (!open) return;
++    setLoading(true);
++    setError(null);
++    fetch(`/ghosts/cleanup-prompt?repo=${encodeURIComponent(repo)}`, { method: 'POST' })
++      .then(async (r) => {
++        if (!r.ok) throw new Error(`HTTP ${r.status}`);
++        return r.json();
++      })
++      .then((body) => setEntries(body.expired || []))
++      .catch((e) => setError(e.message))
++      .finally(() => setLoading(false));
++  }, [open, repo]);
++
++  if (!open) return null;
++
++  return (
++    <div className="cleanup-modal" data-testid="cleanup-modal" role="dialog">
++      <div className="modal-content">
++        <header>
++          <h2>Cleanup expired ghosts</h2>
++          <button type="button" onClick={onClose} aria-label="close">×</button>
++        </header>
++        {loading && <p>Loading…</p>}
++        {error && <p className="error">Error: {error}</p>}
++        {entries && entries.length === 0 && <p>No expired ghosts — your roadmap is clean.</p>}
++        {entries && entries.length > 0 && (
++          <ul className="expired-list">
++            {entries.map((e) => (
++              <li key={e.id} className={`alert-${e.alertLevel}`}>
++                <header>
++                  <strong>{e.title}</strong>
++                  <span className="badge">{e.daysPastExpiry}d past expiry</span>
++                </header>
++                <details>
++                  <summary>LLM cleanup prompt</summary>
++                  <pre>{e.prompt}</pre>
++                  <button
++                    type="button"
++                    onClick={() => navigator.clipboard?.writeText(e.prompt)}
++                  >
++                    Copy prompt
++                  </button>
++                </details>
++                <div className="actions">
++                  <button type="button" data-action="reaffirm">Reaffirm (extend expectedBy)</button>
++                  <button type="button" data-action="cancel">Cancel ghost</button>
++                  <button type="button" data-action="ship-as-other">Ship-as-other</button>
++                </div>
++                <p className="hint">v1: action buttons are advisory — apply the change to ROADMAP.md manually then run /ghosts/sync.</p>
++              </li>
++            ))}
++          </ul>
++        )}
++      </div>
++    </div>
++  );
++}
 diff --git a/gitnexus-web/src/components/audit/GhostTable.tsx b/gitnexus-web/src/components/audit/GhostTable.tsx
 new file mode 100644
 index 0000000..b34c402
