@@ -117,6 +117,89 @@ describe('GanttPanel', () => {
     expect(screen.getByText('Tier 2')).toBeInTheDocument();
   });
 
+  it('applies the ghostFilters prop (Tier filter excludes non-matching rows)', async () => {
+    _seedCacheForTests('filt-repo', {
+      syncedAt: '2026-05-26T00:00:00Z',
+      syncedCommit: 'abc',
+      ghosts: [
+        {
+          id: 'g1',
+          declared: {
+            id: 'g1',
+            tier: '1.4',
+            title: 'Tier1 ghost',
+            description: '',
+            status: 'planned',
+            expectedLinks: [],
+            dependsOn: [],
+          },
+          plannedAt: { commit: 'a', date: '2026-04-01' },
+          materializedAt: null,
+          cancelledAt: null,
+          links: [],
+        },
+        {
+          id: 'g2',
+          declared: {
+            id: 'g2',
+            tier: '2.3',
+            title: 'Tier2 ghost',
+            description: '',
+            status: 'planned',
+            expectedLinks: [],
+            dependsOn: [],
+          },
+          plannedAt: { commit: 'b', date: '2026-04-05' },
+          materializedAt: null,
+          cancelledAt: null,
+          links: [],
+        },
+      ],
+    });
+    render(
+      <GanttPanel
+        repo="filt-repo"
+        ghostFilters={{ showGhosts: true, tiers: ['1'], showCancelled: false }}
+      />,
+    );
+    await waitFor(() => expect(screen.getByText('Tier1 ghost')).toBeInTheDocument());
+    expect(screen.queryByText('Tier2 ghost')).not.toBeInTheDocument();
+  });
+
+  it('shows a "filtered out" message when filters exclude every ghost', async () => {
+    _seedCacheForTests('all-filt-repo', {
+      syncedAt: '2026-05-26T00:00:00Z',
+      syncedCommit: 'abc',
+      ghosts: [
+        {
+          id: 'g1',
+          declared: {
+            id: 'g1',
+            tier: '1.4',
+            title: 'Tier1 ghost',
+            description: '',
+            status: 'planned',
+            expectedLinks: [],
+            dependsOn: [],
+          },
+          plannedAt: { commit: 'a', date: '2026-04-01' },
+          materializedAt: null,
+          cancelledAt: null,
+          links: [],
+        },
+      ],
+    });
+    render(
+      <GanttPanel
+        repo="all-filt-repo"
+        ghostFilters={{ showGhosts: false, tiers: ['1', '2', '3'], showCancelled: false }}
+      />,
+    );
+    await waitFor(() =>
+      expect(screen.getByText(/no ghosts match the current filters/i)).toBeInTheDocument(),
+    );
+  });
+
   it('exposes a CSV export button', async () => {
     _seedCacheForTests('csv-repo', {
       syncedAt: '2026-05-26T00:00:00Z',

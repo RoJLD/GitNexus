@@ -12582,10 +12582,10 @@ index 98c20c6..162ab80 100644
              <h3 className="mb-3 text-xs font-medium tracking-wide text-text-secondary uppercase">
 diff --git a/gitnexus-web/src/components/GanttPanel.tsx b/gitnexus-web/src/components/GanttPanel.tsx
 new file mode 100644
-index 0000000..fca0d1a
+index 0000000..73252ac
 --- /dev/null
 +++ b/gitnexus-web/src/components/GanttPanel.tsx
-@@ -0,0 +1,263 @@
+@@ -0,0 +1,313 @@
 +/**
 + * GanttPanel — fetch /ghosts, compute Gantt layout, render SVG + CSV export.
 + *
@@ -12607,12 +12607,32 @@ index 0000000..fca0d1a
 +  type GhostInput,
 +} from '../lib/gantt-layout';
 +import { fetchGhosts, type GhostRuntime } from '../services/ghosts-client';
++import {
++  passesFilter,
++  derivedStatus,
++  DEFAULT_GHOST_FILTERS,
++  type GhostFilters,
++} from '../lib/ghost-layout';
 +import GanttAxis from './gantt/GanttAxis';
 +import GanttRow from './gantt/GanttRow';
 +
 +type Props = {
 +  repo: string;
 +  onGhostSelect?: (id: string) => void;
++  /**
++   * Optional filter state — shared with the Augmented graph layer so a
++   * single Tier / status toggle drives both views. When omitted, we
++   * fall back to DEFAULT_GHOST_FILTERS with `showGhosts: true` so the
++   * Gantt is visible by default (the Augmented graph default is hidden
++   * because it's an overlay; the Gantt is its own panel).
++   */
++  ghostFilters?: GhostFilters;
++};
++
++const GANTT_DEFAULT_FILTERS: GhostFilters = {
++  ...DEFAULT_GHOST_FILTERS,
++  showGhosts: true,
++  showCancelled: true,
 +};
 +
 +const LABEL_WIDTH = 200;
@@ -12695,10 +12715,15 @@ index 0000000..fca0d1a
 +
 +const GROUP_HEADER_HEIGHT = 22;
 +
-+export default function GanttPanel({ repo, onGhostSelect }: Props) {
++export default function GanttPanel({ repo, onGhostSelect, ghostFilters }: Props) {
 +  const [ghosts, setGhosts] = useState<GhostRuntime[] | null>(null);
 +  const [error, setError] = useState<string | null>(null);
 +  const [swimlanes, setSwimlanes] = useState(false);
++
++  // Use the caller's filters when provided, otherwise the Gantt-local
++  // default (showGhosts: true, showCancelled: true) so the panel is
++  // usable as a standalone view.
++  const effectiveFilters = ghostFilters ?? GANTT_DEFAULT_FILTERS;
 +
 +  useEffect(() => {
 +    let cancelled = false;
@@ -12721,9 +12746,28 @@ index 0000000..fca0d1a
 +    };
 +  }, [repo]);
 +
++  // Filter the runtime ghosts BEFORE projecting into layout inputs.
++  // Reuses `passesFilter` from ghost-layout so the Gantt agrees with
++  // the Augmented graph on what's visible (Tier/status gating).
++  const filteredRuntime = useMemo<GhostRuntime[]>(() => {
++    if (!ghosts) return [];
++    return ghosts.filter((g) =>
++      passesFilter(
++        {
++          id: g.id ?? '',
++          title: g.declared?.title ?? '',
++          tier: g.declared?.tier ?? null,
++          status: derivedStatus(g),
++          expectedLinks: g.declared?.expectedLinks ?? [],
++        },
++        effectiveFilters,
++      ),
++    );
++  }, [ghosts, effectiveFilters]);
++
 +  const inputs = useMemo<GhostInput[]>(
-+    () => (ghosts ? ghostsToInputs(ghosts) : []),
-+    [ghosts],
++    () => ghostsToInputs(filteredRuntime),
++    [filteredRuntime],
 +  );
 +
 +  if (error === 'not-synced') {
@@ -12736,7 +12780,13 @@ index 0000000..fca0d1a
 +    return <div className="gantt-panel">Loading gantt…</div>;
 +  }
 +  if (inputs.length === 0) {
-+    return <div className="gantt-panel">No ghosts found.</div>;
++    // Distinguish "no ghosts at all" from "all filtered out" so the user
++    // knows whether to sync the roadmap or relax their filters.
++    const message =
++      ghosts.length === 0
++        ? 'No ghosts found.'
++        : 'No ghosts match the current filters.';
++    return <div className="gantt-panel">{message}</div>;
 +  }
 +
 +  const now = new Date();
