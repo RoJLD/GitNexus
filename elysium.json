@@ -1,0 +1,11 @@
+{
+  "name": "GitNexus",
+  "brand": "Elysium",
+  "accent": "#7C5CFF",
+  "command": "powershell",
+  "args": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "start.ps1", "-Elysium"],
+  "cwd": ".",
+  "successUrl": "http://localhost:4173",
+  "countdownSec": 3,
+  "defaults": { "showTerminal": false, "closeOnEnd": true }
+}
