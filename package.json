@@ -1,0 +1,9 @@
+{
+  "name": "gitnexus-deployment",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "ghost:from-spec": "node scripts/ghost-from-spec.mjs",
+    "setup:hooks": "node scripts/install-brainstorm-hooks.mjs"
+  }
+}
