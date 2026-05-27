@@ -6,7 +6,7 @@
 **Parent** : [`2026-05-26-incremental-snapshots-design.md`](2026-05-26-incremental-snapshots-design.md) — phasing A/B/C
 **État Phase A** : ✅ livrée (auto-snapshot aux pics)
 **État Phase B** : ✅ livrée (PR-mode snapshot on-demand)
-**État Phase C** : 🔶 PoC livré (dump patch + endpoint + bench) — décision sur la suite (reconstruction) en attente
+**État Phase C** : ✅ cœur livré — dump patch + `/snapshot/incremental` + `/graph/at-commit` (reconstruction, structural fidelity 100%). Reste : baseline rebuild auto + cron on-push + intégration frontend (timeline → graph-at-commit).
 
 ---
 
@@ -15,6 +15,29 @@
 Endpoint `/snapshot/incremental` livré (commit `bdbc1e4a`) avec les 6
 filtres + flag `reuseDump`. Bench `scripts/poc-incremental-bench.mjs`
 tourné sur **10 commits réels d'hmm_studio × 6 combos = 60 runs, 0 erreur**.
+
+> **MAJ 2026-05-27 — reconstruction livrée (commit suivant)** :
+> `GET /graph/at-commit?repo=&commit=[&lazy=true]` implémenté
+> (`handleGraphAtCommitRoute` dans `docker-server-snapshot-incremental.mjs`).
+> Baseline = snapshot ancêtre le plus proche (`findNearestBaseline`),
+> replay des diffs via `applyDiff` (delete writeSet files → insert
+> subgraph → prune dangling rels). 409 + liste si diffs manquants,
+> `?lazy=true` les génère à la volée.
+>
+> **Fidelity validée** : reconstruction at c2ac699 (baseline 7ee40e4 +
+> 4 diffs replayed, 1.8s) vs full snapshot c2ac699 :
+>
+> | | Reconstructed | Full snapshot |
+> |---|---|---|
+> | Structural (File/Folder/Function/Class/Interface/Method/Section/Const/Variable/Property/Route) | **4387** | **4387** ✅ exact, label par label |
+> | Community + Process (globaux) | 266 | 256 (+10 stale) |
+> | Total | 4653 | 4643 |
+>
+> **Le graph structurel est reproduit à 100%**, et ce même avec une
+> chaîne à filtres mixtes (1 diff Lossless + 3 Standard). Seul écart :
+> les nodes globaux baseline-stale (§2.2, on ne recalcule pas Leiden
+> par commit — comportement attendu et documenté). Identity case
+> (chain=0) = baseline exact (4602/7843). **Phase C cœur = livré.**
 
 | Combo | p50 | p90 | max | Projection 1000 commits |
 |---|---|---|---|---|
