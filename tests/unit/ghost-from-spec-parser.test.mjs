@@ -1,5 +1,10 @@
 import { describe, it, expect } from 'vitest';
-import { deriveId, extractTitle } from '../../scripts/ghost-from-spec-parser.mjs';
+import {
+  deriveId,
+  extractTitle,
+  extractDescription,
+  extractTier,
+} from '../../scripts/ghost-from-spec-parser.mjs';
 
 describe('deriveId', () => {
   it('strips the "-design" / "-spec" suffix and date prefix to make a stable id', () => {
@@ -28,5 +33,44 @@ describe('extractTitle', () => {
 
   it('handles H1 with trailing emojis and whitespace', () => {
     expect(extractTitle('# My feature ✅  \n')).toBe('My feature ✅');
+  });
+});
+
+describe('extractDescription', () => {
+  const sample = [
+    '# Title', '', '## 1. Context', 'before goal', '',
+    '## 2. Goal', '', 'This is the goal paragraph that explains what we build.',
+    'It can span multiple lines but only the first non-blank paragraph counts.', '',
+    '## 3. Design', 'rest...',
+  ].join('\n');
+
+  it('extracts the first paragraph after "## 2. Goal"', () => {
+    const out = extractDescription(sample);
+    expect(out).toContain('the goal paragraph');
+    expect(out.length).toBeLessThanOrEqual(200);
+  });
+
+  it('truncates long descriptions to 200 chars', () => {
+    const long = '# T\n## 2. Goal\n\n' + 'x'.repeat(500);
+    expect(extractDescription(long).length).toBeLessThanOrEqual(200);
+  });
+
+  it('returns empty string when there is no Goal section', () => {
+    expect(extractDescription('# T\n\nbody\n')).toBe('');
+  });
+});
+
+describe('extractTier', () => {
+  it('finds the first Tier X.Y mention in the body', () => {
+    expect(extractTier('# T\n\nThis is Tier 2.3 stuff.')).toBe('2.3');
+    expect(extractTier('# T\n\nrelated to tier 1 (Tier 1.4)')).toBe('1.4');
+  });
+
+  it('returns null if no Tier mention', () => {
+    expect(extractTier('# T\n\nNo tier here.')).toBeNull();
+  });
+
+  it('matches multi-segment tiers', () => {
+    expect(extractTier('# T\n\nTier 2.5.b stuff')).toBe('2.5'); // major.minor only
   });
 });

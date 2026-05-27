@@ -22,3 +22,34 @@ export function extractTitle(md) {
   const title = line.replace(/^#\s+/, '').replace(TRAILING_DESIGN_RE, '').trim();
   return title || '(untitled spec)';
 }
+
+const GOAL_SECTION_RE = /^##\s+2\.\s+Goal\s*$/i;
+const NEXT_H2_RE = /^##\s+/;
+const TIER_RE = /Tier\s+(\d+(?:\.\d+)?)/i;
+
+export function extractDescription(md) {
+  if (!md) return '';
+  const lines = md.split('\n');
+  let inGoal = false;
+  let started = false;
+  const buf = [];
+  for (const line of lines) {
+    if (!inGoal) {
+      if (GOAL_SECTION_RE.test(line)) inGoal = true;
+      continue;
+    }
+    if (NEXT_H2_RE.test(line)) break;
+    const trimmed = line.trim();
+    if (!started && trimmed === '') continue;       // skip leading blanks
+    if (started && trimmed === '') break;            // first blank after content ends the paragraph
+    if (trimmed) { buf.push(trimmed); started = true; }
+  }
+  const joined = buf.join(' ').replace(/\s+/g, ' ').trim();
+  return joined.length > 200 ? joined.slice(0, 197) + '...' : joined;
+}
+
+export function extractTier(md) {
+  if (!md) return null;
+  const m = md.match(TIER_RE);
+  return m ? m[1] : null;
+}
