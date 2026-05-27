@@ -18690,10 +18690,10 @@ index 0000000..5c77c1a
 +}
 diff --git a/gitnexus-web/src/components/Timeline.tsx b/gitnexus-web/src/components/Timeline.tsx
 new file mode 100644
-index 0000000..bb568c2
+index 0000000..227d2aa
 --- /dev/null
 +++ b/gitnexus-web/src/components/Timeline.tsx
-@@ -0,0 +1,1099 @@
+@@ -0,0 +1,1185 @@
 +import { useEffect, useMemo, useRef, useState } from 'react';
 +import {
 +  Play,
@@ -18742,6 +18742,22 @@ index 0000000..bb568c2
 +const FRAME_DELAY_MS = 2000;
 +
 +export const Timeline = () => {
++  const appState = useAppState();
++  // Augmented Timeline (Tier 3.x, Task 4 + Task 5) — read state defensively
++  // so this file compiles even before Task 5 lands the new useAppState
++  // fields. After Task 5 ships, the casts collapse to no-ops at runtime.
++  const lockGhostsToHead: boolean =
++    (appState as unknown as { lockGhostsToHead?: boolean }).lockGhostsToHead ?? false;
++  const setLockGhostsToHead =
++    (appState as unknown as { setLockGhostsToHead?: (v: boolean) => void })
++      .setLockGhostsToHead ?? (() => {});
++  const animationActive: boolean =
++    (appState as unknown as { animationActive?: boolean }).animationActive ?? false;
++  const setAnimationActive =
++    (appState as unknown as { setAnimationActive?: (v: boolean) => void })
++      .setAnimationActive ?? (() => {});
++  const ghostFilters = appState.ghostFilters;
++  const setGhostFilters = appState.setGhostFilters;
 +  const {
 +    projectName,
 +    availableRepos,
@@ -19070,10 +19086,43 @@ index 0000000..bb568c2
 +    return () => window.removeEventListener('keydown', onKeyDown);
 +  }, [cursorA, cursorB, points, zoomWindow, graphMode, enterZoom, exitZoom, setGraphMode]);
 +
++  // Augmented Timeline — kick off Play in animation mode. Activates the
++  // ghost overlay if it's off, drops the lock so cursor < HEAD picks
++  // closest-prior, jumps to the earliest snapshot, then triggers Play.
++  // The `animationActive` flag tells GraphCanvas to schedule cross-fade
++  // transitions on materializing / cancelling ghosts.
++  const handleAnimateRoadmap = async () => {
++    if (points.length < 2) return;
++    if (!ghostFilters.showGhosts) {
++      setGhostFilters({ ...ghostFilters, showGhosts: true });
++    }
++    if (lockGhostsToHead) {
++      setLockGhostsToHead(false);
++    }
++    // Find the earliest snapshot to land on (oldest point). `points`
++    // is sorted ascending by date upstream, so points[0] is the earliest.
++    const earliest = points[0];
++    if (earliest) {
++      setCursorB(earliest.date);
++      if (earliest.name !== projectName) {
++        await switchRepo(earliest.name);
++      }
++    }
++    setAnimationActive(true);
++    // handlePlay toggles : guard to ensure we always start playing here.
++    if (!playing) {
++      // Defer to next tick so the state updates above settle first.
++      setTimeout(() => {
++        handlePlay();
++      }, 0);
++    }
++  };
++
 +  const handlePlay = async () => {
 +    if (playing) {
 +      playingRef.current = false;
 +      setPlaying(false);
++      setAnimationActive(false);
 +      return;
 +    }
 +    // Drop diff mode before playing — animating across a frozen union
@@ -19099,6 +19148,7 @@ index 0000000..bb568c2
 +    }
 +    playingRef.current = false;
 +    setPlaying(false);
++    setAnimationActive(false);
 +  };
 +
 +  // Hide the bar entirely when there's nothing to navigate. Zero or one
@@ -19178,6 +19228,42 @@ index 0000000..bb568c2
 +      >
 +        {playing ? <Pause className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />}
 +      </button>
++
++      {/* Animate roadmap (Augmented Timeline, Tier 3.x) — activates ghost
++          overlay, drops the head-lock, lands on the earliest snapshot,
++          triggers Play with the cross-fade animation flag on. Visible
++          whenever Play is, since the prereqs are the same (≥ 2 points). */}
++      <button
++        type="button"
++        data-testid="animate-roadmap-button"
++        onClick={handleAnimateRoadmap}
++        disabled={!!diffMode}
++        className={`flex shrink-0 cursor-pointer items-center gap-1 rounded-md border px-1.5 py-0.5 text-[10px] font-medium transition-all disabled:cursor-not-allowed disabled:opacity-40 ${
++          animationActive
++            ? 'border-fuchsia-500/40 bg-fuchsia-500/15 text-fuchsia-300'
++            : 'border-border-subtle bg-elevated text-text-secondary hover:bg-hover hover:text-text-primary'
++        }`}
++        title={
++          diffMode
++            ? 'Exit diff mode first'
++            : 'Animate the roadmap : start from earliest snapshot and play forward with predictive ghosts'
++        }
++      >
++        <span aria-hidden>🎬</span>
++        Animate roadmap
++      </button>
++
++      {/* Animation banner — visible only while the Animate flow is active.
++          Renders next to the action buttons so it stays inside the
++          Timeline row without disturbing layout. */}
++      {animationActive && (
++        <div
++          data-testid="animate-roadmap-banner"
++          className="anim-banner flex shrink-0 items-center gap-1 rounded-md border border-fuchsia-500/40 bg-fuchsia-500/15 px-1.5 py-0.5 text-[10px] font-medium text-fuchsia-300"
++        >
++          Animating roadmap…
++        </div>
++      )}
 +
 +      {/* Preload button — fetches every snapshot of the current base
 +          repo upfront so the Play loop swaps frames from memory
