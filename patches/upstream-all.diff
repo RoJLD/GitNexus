@@ -1,4 +1,4 @@
-﻿diff --git a/Dockerfile.web b/Dockerfile.web
+diff --git a/Dockerfile.web b/Dockerfile.web
 index b102a70..219e3b9 100644
 --- a/Dockerfile.web
 +++ b/Dockerfile.web
@@ -25566,6 +25566,124 @@ index 0000000..d01d2f8
 + * See docs/superpowers/specs/2026-05-27-timeline-zoom-cursors-design.md
 + */
 +export const diffBetweenSnapshots = computeGraphDiff;
+diff --git a/gitnexus-web/src/lib/layout-cache.ts b/gitnexus-web/src/lib/layout-cache.ts
+new file mode 100644
+index 0000000..7ddb50d
+--- /dev/null
++++ b/gitnexus-web/src/lib/layout-cache.ts
+@@ -0,0 +1,112 @@
++/**
++ * Layout persistence cache (FA2 positions per snapshot).
++ *
++ * Stores `graphology` node positions in `localStorage` keyed by a stable
++ * `cacheKey` (typically `<repoName>` or `<repoName>@<sha>` for snapshots).
++ *
++ * Used by `useSigma.setGraph` to skip the expensive FA2 + noverlap pass on
++ * revisited snapshots, and by `lib/layout-worker.ts` to pre-compute layouts
++ * in the background during `preloadAllSnapshots`.
++ *
++ * Schema versioned (`gitnexus:layout:v1:<cacheKey>`) so an entry written by
++ * a previous version is silently ignored, not crash-loaded.
++ */
++
++const STORAGE_PREFIX = 'gitnexus:layout:v1:';
++const SCHEMA_VERSION = 1 as const;
++
++export type CachedLayout = {
++  version: typeof SCHEMA_VERSION;
++  cacheKey: string;
++  computedAt: string;
++  nodeCount: number;
++  positions: Record<string, { x: number; y: number }>;
++};
++
++export function saveLayoutPositions(
++  cacheKey: string,
++  positions: Record<string, { x: number; y: number }>,
++): void {
++  if (!cacheKey || typeof window === 'undefined' || !window.localStorage) return;
++  const payload: CachedLayout = {
++    version: SCHEMA_VERSION,
++    cacheKey,
++    computedAt: new Date().toISOString(),
++    nodeCount: Object.keys(positions).length,
++    positions,
++  };
++  try {
++    window.localStorage.setItem(STORAGE_PREFIX + cacheKey, JSON.stringify(payload));
++  } catch (e) {
++    // QuotaExceededError or similar — best-effort, don't crash UI.
++    console.warn('[layout-cache] save failed for', cacheKey, e);
++  }
++}
++
++export function saveLayoutFromGraph(
++  cacheKey: string,
++  graph: {
++    forEachNode: (cb: (id: string, attrs: any) => void) => void;
++    order: number;
++  },
++): void {
++  const positions: Record<string, { x: number; y: number }> = {};
++  graph.forEachNode((id, attrs) => {
++    if (typeof attrs.x === 'number' && typeof attrs.y === 'number') {
++      positions[id] = { x: attrs.x, y: attrs.y };
++    }
++  });
++  saveLayoutPositions(cacheKey, positions);
++}
++
++export function loadLayout(cacheKey: string): CachedLayout | null {
++  if (!cacheKey || typeof window === 'undefined' || !window.localStorage) return null;
++  const raw = window.localStorage.getItem(STORAGE_PREFIX + cacheKey);
++  if (!raw) return null;
++  try {
++    const parsed = JSON.parse(raw);
++    if (parsed?.version !== SCHEMA_VERSION) return null;
++    if (typeof parsed.cacheKey !== 'string' || !parsed.positions) return null;
++    return parsed as CachedLayout;
++  } catch {
++    return null;
++  }
++}
++
++export function applyLayoutToGraph(
++  cached: CachedLayout,
++  graph: {
++    forEachNode: (cb: (id: string, attrs: any) => void) => void;
++    setNodeAttribute: (id: string, key: string, value: any) => void;
++    order: number;
++  },
++): { applied: number; missing: number } {
++  let applied = 0;
++  let missing = 0;
++  graph.forEachNode((id) => {
++    const p = cached.positions[id];
++    if (p) {
++      graph.setNodeAttribute(id, 'x', p.x);
++      graph.setNodeAttribute(id, 'y', p.y);
++      applied++;
++    } else {
++      missing++;
++    }
++  });
++  return { applied, missing };
++}
++
++export function clearLayout(cacheKey: string): void {
++  if (typeof window === 'undefined' || !window.localStorage) return;
++  window.localStorage.removeItem(STORAGE_PREFIX + cacheKey);
++}
++
++export function clearAllLayouts(): void {
++  if (typeof window === 'undefined' || !window.localStorage) return;
++  const keys: string[] = [];
++  for (let i = 0; i < window.localStorage.length; i++) {
++    const k = window.localStorage.key(i);
++    if (k?.startsWith(STORAGE_PREFIX)) keys.push(k);
++  }
++  for (const k of keys) window.localStorage.removeItem(k);
++}
 diff --git a/gitnexus-web/src/lib/lucide-icons.tsx b/gitnexus-web/src/lib/lucide-icons.tsx
 index 05676e5..8844aab 100644
 --- a/gitnexus-web/src/lib/lucide-icons.tsx

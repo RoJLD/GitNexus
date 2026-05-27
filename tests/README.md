@@ -68,6 +68,7 @@ Pré-requis local : Rancher Desktop running, **Node ≥ 22 LTS**. CI : `.github/
 | Clusters auto-derive | `unit/ghosts-clusters-auto-derive.test.mjs` | Union-Find sur `dependsOn` |
 | Cluster status | `unit/ghosts-clusters-status.test.mjs` | aggregate + synthesis + expired + override |
 | Cluster layout | `unit/cluster-layout.test.mjs` | convex hull + swimlanes + `pointInPolygon` |
+| Layout cache | `unit/layout-cache.test.mjs` | `saveLayoutPositions` + `loadLayout` round-trip + version guard + `applyLayoutToGraph` coverage + `clearLayout` + `clearAllLayouts` (5 cases) |
 
 ### Components React (unit)
 | Test | Fichier | Couvre |
