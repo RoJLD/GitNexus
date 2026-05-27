@@ -19457,6 +19457,111 @@ index 0000000..0e29a29
 +  if (ratio < 1.5) return { opacity: 0.3, outlineColor: '#e67e22', alertLevel: 'late' };
 +  return { opacity: 0.2, outlineColor: '#c0392b', alertLevel: 'critical' };
 +}
+diff --git a/gitnexus-web/src/lib/ghost-node-program.ts b/gitnexus-web/src/lib/ghost-node-program.ts
+new file mode 100644
+index 0000000..9301c0b
+--- /dev/null
++++ b/gitnexus-web/src/lib/ghost-node-program.ts
+@@ -0,0 +1,99 @@
++/**
++ * Custom Sigma node program for ghost nodes : dashed circular outline.
++ *
++ * Sigma 3.x ships `NodeCircleProgram` from `sigma/rendering`. Its WebGL
++ * fragment-shader override mechanism has shifted between minor versions
++ * and is not stable across the 3.0.x line we depend on (see plan note in
++ * docs/superpowers/plans/2026-05-26-roadmap-predictive-augmented-graph.md
++ * — "If the shader path is risky, use the fallback CSS approach").
++ *
++ * The chosen approach therefore is the documented fallback:
++ *
++ *   1. Register `GhostNodeProgram` as a thin extension of
++ *      `NodeCircleProgram` so Sigma routes ghost nodes through our class
++ *      — this gives us a stable type-discriminator (`type: 'ghost'`).
++ *   2. The dashed outline + alpha decay is then expressed via the
++ *      node attributes (`color` with embedded RGBA, `size`) and a
++ *      canvas-side overlay drawn in the parent component (see useSigma's
++ *      `applyGhostLayer` + `defaultDrawNodeHover`-style helper).
++ *
++ * If Sigma upstream stabilises a fragment-shader override hook in 3.1+
++ * we can switch back to the GLSL approach (see plan Task 5 step 2 for
++ * the original shader source).
++ */
++
++// Sigma 3.x exposes the canvas circle program at this stable public path.
++// Both the WebGL and the canvas variants accept the same constructor
++// signature; we extend the canvas one because (a) the ghost layer is
++// rendered with low frequency (refresh on filter change, not per-frame)
++// and (b) the WebGL fragment-shader override is not stable across 3.0.x
++// (see header).
++import { NodeCircleProgram } from 'sigma/rendering';
++import type { NodeDisplayData } from 'sigma/types';
++
++/**
++ * Visual constants — kept here so they can be tweaked without touching
++ * the consumer (`useSigma`). These mirror the design spec defaults.
++ */
++export const GHOST_DASH_SEGMENTS = 8;
++export const GHOST_DEFAULT_OUTLINE = '#7f8c8d';
++export const GHOST_FILL_ALPHA = 0.4;
++
++/**
++ * Extension of Sigma's `NodeCircleProgram` that flags ghost nodes for
++ * the renderer. The dashed look is achieved by the consumer drawing a
++ * dashed `arc` overlay on top of the base circle — keeping the program
++ * itself a no-op makes us robust to Sigma 3.x minor-version drift.
++ *
++ * Consumers register it via:
++ *
++ *   nodeProgramClasses: { ghost: GhostNodeProgram }
++ */
++export class GhostNodeProgram extends NodeCircleProgram {
++  // Tag the class so we can sanity-check at runtime if needed.
++  static readonly NODE_TYPE = 'ghost';
++}
++
++/**
++ * Helper invoked by the consumer (`useSigma`) to draw the dashed
++ * outline + reduced-opacity fill of a ghost node on the 2D overlay
++ * canvas. Pure function — no Sigma deps — so it stays test-friendly.
++ *
++ * `data` is the node-display data Sigma already projected to screen
++ * coordinates. `outlineColor` and `opacity` come from
++ * `computeGhostVisualState` in `ghost-layout.ts` (Update 1 — time
++ * decay).
++ */
++export function drawGhostNode(
++  ctx: CanvasRenderingContext2D,
++  data: NodeDisplayData & { ghostStatus?: string; ghostOutline?: string; ghostOpacity?: number },
++): void {
++  const radius = data.size ?? 6;
++  const x = data.x;
++  const y = data.y;
++  const outlineColor = data.ghostOutline ?? GHOST_DEFAULT_OUTLINE;
++  const fillAlpha = data.ghostOpacity ?? GHOST_FILL_ALPHA;
++
++  // Fill (semi-transparent disk in the node's base color).
++  ctx.save();
++  ctx.globalAlpha = fillAlpha;
++  ctx.fillStyle = data.color || outlineColor;
++  ctx.beginPath();
++  ctx.arc(x, y, radius, 0, Math.PI * 2);
++  ctx.fill();
++  ctx.restore();
++
++  // Dashed outline (8-segment stipple around the circle).
++  ctx.save();
++  ctx.strokeStyle = outlineColor;
++  ctx.lineWidth = 1.5;
++  // Compute dash length so we get GHOST_DASH_SEGMENTS dashes around
++  // the circumference, with equal gaps between them.
++  const circumference = 2 * Math.PI * radius;
++  const dashLen = circumference / (GHOST_DASH_SEGMENTS * 2);
++  ctx.setLineDash([dashLen, dashLen]);
++  ctx.beginPath();
++  ctx.arc(x, y, radius, 0, Math.PI * 2);
++  ctx.stroke();
++  ctx.restore();
++}
 diff --git a/gitnexus-web/src/lib/graph-diff.ts b/gitnexus-web/src/lib/graph-diff.ts
 new file mode 100644
 index 0000000..b1722fa
