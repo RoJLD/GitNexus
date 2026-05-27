@@ -77,6 +77,68 @@ index b102a70..308cf09 100644
  
  RUN chown -R node:node /app
  
+diff --git a/connectors/plane.mjs b/connectors/plane.mjs
+new file mode 100644
+index 0000000..69d006d
+--- /dev/null
++++ b/connectors/plane.mjs
+@@ -0,0 +1,56 @@
++// upstream/connectors/plane.mjs
++//
++// Plane REST API connector (v1) for the roadmap-predictive Connector
++// framework. Endpoint:
++//   GET {apiUrl}/api/v1/workspaces/{slug}/projects/{projectId}/issues/
++// Auth via X-API-Key header.
++
++const DEFAULT_PAGE_SIZE = 100;
++
++export const planeConnector = {
++  name: 'plane',
++  configKey: 'connectors.plane',
++
++  async fetchOpenWorkItems(config) {
++    return fetchPlaneIssues(config, { stateFilter: 'open' });
++  },
++
++  async fetchClosedWorkItems(config) {
++    return fetchPlaneIssues(config, { stateFilter: 'closed' });
++  },
++};
++
++async function fetchPlaneIssues(config, { stateFilter }) {
++  const { apiUrl, workspaceSlug, projectId, apiKey } = config;
++  if (!apiUrl || !workspaceSlug || !projectId) {
++    throw new Error('Plane connector requires apiUrl, workspaceSlug, projectId');
++  }
++  if (!apiKey) {
++    throw new Error('Plane connector requires PLANE_API_KEY env var (or config.apiKey)');
++  }
++  const url = `${apiUrl.replace(/\/$/, '')}/api/v1/workspaces/${workspaceSlug}/projects/${projectId}/issues/?per_page=${DEFAULT_PAGE_SIZE}`;
++  const res = await fetch(url, { headers: { 'X-API-Key': apiKey, 'Accept': 'application/json' } });
++  if (!res.ok) throw new Error(`Plane API ${res.status}: ${await res.text()}`);
++  const body = await res.json();
++  const issues = body.results || [];
++  return issues
++    .map(i => ({
++      id: i.id,
++      title: i.name,
++      description: stripHtml(i.description_html || ''),
++      state: stateNameToCategory(i.state_detail?.name || i.state || ''),
++      dueDate: i.target_date,
++      externalUrl: `${apiUrl}/${workspaceSlug}/projects/${projectId}/issues/${i.id}`,
++    }))
++    .filter(i => stateFilter === 'open' ? i.state === 'open' : i.state === 'closed');
++}
++
++function stripHtml(s) {
++  return String(s).replace(/<[^>]+>/g, '').trim();
++}
++
++function stateNameToCategory(name) {
++  const lc = String(name).toLowerCase();
++  if (/done|complete|closed|cancel/i.test(lc)) return 'closed';
++  return 'open';
++}
 diff --git a/docker-server-churn.mjs b/docker-server-churn.mjs
 new file mode 100644
 index 0000000..33f13d2
