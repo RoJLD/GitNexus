@@ -19251,10 +19251,10 @@ index 6c660b0..937fd90 100644
  ═══════════════════════════════════════════════════════════════ */
 diff --git a/gitnexus-web/src/lib/ghost-layout.ts b/gitnexus-web/src/lib/ghost-layout.ts
 new file mode 100644
-index 0000000..bcbdc3d
+index 0000000..446dfb2
 --- /dev/null
 +++ b/gitnexus-web/src/lib/ghost-layout.ts
-@@ -0,0 +1,113 @@
+@@ -0,0 +1,125 @@
 +/**
 + * Pure functions for placing ghost nodes on the Sigma canvas.
 + * Reused from frontend only — no I/O, no Sigma deps.
@@ -19367,6 +19367,18 @@ index 0000000..bcbdc3d
 +    }
 +  }
 +  return { ghostNodes, ghostEdges };
++}
++
++const TIER_COLORS: Record<string, string> = {
++  '1': '#5b9bd5',  // bleu
++  '2': '#e1aa55',  // ambre
++  '3': '#9b59b6',  // violet
++};
++
++export function tierColor(tier: string | null): string {
++  if (!tier) return '#6d6d6d';
++  const major = String(tier).split('.')[0];
++  return TIER_COLORS[major] ?? '#6d6d6d';
 +}
 diff --git a/gitnexus-web/src/lib/graph-diff.ts b/gitnexus-web/src/lib/graph-diff.ts
 new file mode 100644

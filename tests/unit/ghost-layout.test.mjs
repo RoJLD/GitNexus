@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { matchExistingNodes, computeGhostLayout } from '../../upstream/gitnexus-web/src/lib/ghost-layout.ts';
+import { matchExistingNodes, computeGhostLayout, tierColor } from '../../upstream/gitnexus-web/src/lib/ghost-layout.ts';
 
 describe('matchExistingNodes', () => {
   it('matches by suffix (no wildcards)', () => {
@@ -67,5 +67,17 @@ describe('computeGhostLayout', () => {
       existing,
     );
     expect(ghostNodes).toHaveLength(0);
+  });
+});
+
+describe('tierColor', () => {
+  it('returns the right color per major tier', () => {
+    expect(tierColor('1.4')).toBe('#5b9bd5');
+    expect(tierColor('2.3')).toBe('#e1aa55');
+    expect(tierColor('3.1')).toBe('#9b59b6');
+  });
+  it('returns gray for null or unknown', () => {
+    expect(tierColor(null)).toBe('#6d6d6d');
+    expect(tierColor('99.9')).toBe('#6d6d6d');
   });
 });
