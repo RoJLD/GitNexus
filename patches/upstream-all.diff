@@ -10101,10 +10101,10 @@ index 211bb65..49a1c7a 100644
      "@vitejs/plugin-react": "^5.1.4",
      "@vitest/coverage-v8": "^4.1.5",
 diff --git a/gitnexus-web/src/App.tsx b/gitnexus-web/src/App.tsx
-index 2ee3569..2673914 100644
+index 2ee3569..4292ecf 100644
 --- a/gitnexus-web/src/App.tsx
 +++ b/gitnexus-web/src/App.tsx
-@@ -1,9 +1,21 @@
+@@ -1,9 +1,22 @@
  import { useCallback, useEffect, useRef, useState } from 'react';
  import { AppStateProvider, useAppState } from './hooks/useAppState';
  import { DropZone } from './components/DropZone';
@@ -10117,6 +10117,7 @@ index 2ee3569..2673914 100644
 +import { WhatIfPanel } from './components/WhatIfPanel';
 +import { SimilarityPanel } from './components/SimilarityPanel';
 +import AuditPanel from './components/AuditPanel';
++import GanttPanel from './components/GanttPanel';
  import { LoadingOverlay } from './components/LoadingOverlay';
  import { Header } from './components/Header';
 +import { Timeline } from './components/Timeline';
@@ -10126,7 +10127,7 @@ index 2ee3569..2673914 100644
  import { RightPanel } from './components/RightPanel';
  import { SettingsPanel } from './components/SettingsPanel';
  import { StatusBar } from './components/StatusBar';
-@@ -29,6 +41,7 @@ const AppContent = () => {
+@@ -29,6 +42,7 @@ const AppContent = () => {
      setGraph,
      setProgress,
      setProjectName,
@@ -10134,7 +10135,7 @@ index 2ee3569..2673914 100644
      progress,
      isRightPanelOpen,
      isSettingsPanelOpen,
-@@ -45,10 +58,17 @@ const AppContent = () => {
+@@ -45,10 +59,21 @@ const AppContent = () => {
      setAvailableRepos,
      switchRepo,
      setCurrentRepo,
@@ -10149,10 +10150,14 @@ index 2ee3569..2673914 100644
 +  // we keep it out of useAppState to minimize the patch surface against
 +  // upstream. Toggled by the floating button at the bottom-right.
 +  const [auditPanelOpen, setAuditPanelOpen] = useState(false);
++  // Roadmap-predictive Gantt opérationnel view (Tier 3.x).
++  // Same rationale as auditPanelOpen — self-fetching against /ghosts,
++  // pure frontend, kept out of useAppState to minimize patch surface.
++  const [ganttOpen, setGanttOpen] = useState(false);
  
    const handleServerConnect = useCallback(
      async (result: ConnectResult): Promise<void> => {
-@@ -194,6 +214,21 @@ const AppContent = () => {
+@@ -194,6 +219,21 @@ const AppContent = () => {
      initializeAgent();
    }, [refreshLLMSettings, initializeAgent]);
  
@@ -10174,7 +10179,7 @@ index 2ee3569..2673914 100644
    // ── Server heartbeat: detect when server goes down while exploring ────────
    // Uses SSE (EventSource) for instant detection — no polling delay.
    // On disconnect: show a reconnecting banner instead of resetting to onboarding.
-@@ -250,22 +285,84 @@ const AppContent = () => {
+@@ -250,22 +290,84 @@ const AppContent = () => {
            // Retry once after 1s if the repo isn't found yet (server may still
            // be reinitializing after the worker completed).
            const url = serverBaseUrl ?? 'http://localhost:4747';
@@ -10260,7 +10265,7 @@ index 2ee3569..2673914 100644
                fetchRepos()
                  .then((repos) => setAvailableRepos(repos))
                  .catch(() => {});
-@@ -281,7 +378,83 @@ const AppContent = () => {
+@@ -281,7 +383,129 @@ const AppContent = () => {
  
          {/* Graph area - takes remaining space */}
          <div className="relative min-w-0 flex-1">
@@ -10342,10 +10347,56 @@ index 2ee3569..2673914 100644
 +              Audit
 +            </button>
 +          )}
++
++          {/* Roadmap-predictive Gantt panel — bottom-right overlay,
++              toggled by the floating "Gantt" button. Self-fetching
++              against /ghosts via ghosts-client. Pure frontend SVG.
++              Mutex w/ Audit on the same slot is informal — the user
++              can technically open both; the z-index ordering keeps
++              Gantt above. */}
++          {ganttOpen && projectName && (
++            <div className="pointer-events-auto absolute right-3 top-3 z-30 max-h-[80vh] w-[1140px] max-w-[95vw] overflow-auto rounded-lg border border-border-subtle bg-elevated p-3 shadow-lg">
++              <div className="mb-2 flex items-center justify-between">
++                <span className="text-xs font-semibold text-text-secondary">
++                  Roadmap Gantt — {projectName}
++                </span>
++                <button
++                  type="button"
++                  onClick={() => setGanttOpen(false)}
++                  className="text-text-secondary hover:text-text-primary"
++                  title="Close Gantt panel"
++                  aria-label="Close Gantt panel"
++                >
++                  ×
++                </button>
++              </div>
++              <GanttPanel repo={projectName} />
++            </div>
++          )}
++
++          {/* Floating "Gantt" toggle button — bottom-right corner,
++              stacked just above the Audit button. Opens the
++              GanttPanel overlay above. Hidden when no repo is
++              loaded. */}
++          {projectName && (
++            <button
++              type="button"
++              onClick={() => setGanttOpen((v) => !v)}
++              className={`pointer-events-auto absolute bottom-3 right-20 z-20 rounded-md border px-2.5 py-1 text-xs font-medium shadow-sm transition-colors ${
++                ganttOpen
++                  ? 'border-sky-500/40 bg-sky-500/15 text-sky-300'
++                  : 'border-border-subtle bg-elevated text-text-secondary hover:bg-hover hover:text-text-primary'
++              }`}
++              data-testid="gantt-panel-toggle"
++              title={ganttOpen ? 'Hide Gantt panel' : 'Show roadmap Gantt panel'}
++            >
++              Gantt
++            </button>
++          )}
  
            {/* Code References Panel (overlay) - does NOT resize the graph, it overlaps on top */}
            {isCodePanelOpen && (codeReferences.length > 0 || !!selectedNode) && (
-@@ -295,6 +468,16 @@ const AppContent = () => {
+@@ -295,6 +519,16 @@ const AppContent = () => {
          {isRightPanelOpen && <RightPanel />}
        </main>
  
