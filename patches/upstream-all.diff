@@ -19249,6 +19249,77 @@ index 6c660b0..937fd90 100644
  /* ═══════════════════════════════════════════════════════════════
     REDUCED MOTION — respect OS-level motion preferences (WCAG 2.3.3)
  ═══════════════════════════════════════════════════════════════ */
+diff --git a/gitnexus-web/src/lib/ghost-layout.ts b/gitnexus-web/src/lib/ghost-layout.ts
+new file mode 100644
+index 0000000..186b369
+--- /dev/null
++++ b/gitnexus-web/src/lib/ghost-layout.ts
+@@ -0,0 +1,65 @@
++/**
++ * Pure functions for placing ghost nodes on the Sigma canvas.
++ * Reused from frontend only — no I/O, no Sigma deps.
++ *
++ * See docs/superpowers/specs/2026-05-26-roadmap-predictive-augmented-graph-design.md
++ */
++
++export type ExpectedLink = { kind: 'path' | 'label'; value: string };
++
++export type GhostInput = {
++  id: string;
++  title: string;
++  tier: string | null;
++  status: 'planned' | 'materialized' | 'cancelled';
++  expectedLinks: ExpectedLink[];
++};
++
++export type ExistingNode = { id: string; x: number; y: number };
++
++export type GhostLayoutNode = {
++  id: string;             // prefixed with "ghost:" to avoid collision
++  ghostId: string;        // original ghost id
++  x: number;
++  y: number;
++  tier: string | null;
++  status: GhostInput['status'];
++  title: string;
++  anchored: boolean;
++};
++
++export type GhostLayoutEdge = {
++  source: string;
++  target: string;
++  tier: string | null;
++};
++
++function pathToRegex(pattern: string): RegExp {
++  let re = '';
++  for (let i = 0; i < pattern.length; i++) {
++    const c = pattern[i];
++    if (c === '*' && pattern[i + 1] === '*') { re += '.*'; i++; }
++    else if (c === '*') { re += '[^/]*'; }
++    else if (c === '?') { re += '[^/]'; }
++    else if (/[.+^${}()|[\]\\]/.test(c)) { re += '\\' + c; }
++    else { re += c; }
++  }
++  return new RegExp(re + '$');
++}
++
++export function matchExistingNodes(links: ExpectedLink[], nodeIds: string[]): string[] {
++  const out = new Set<string>();
++  for (const link of links) {
++    if (link.kind !== 'path') continue;
++    const hasWildcard = /[*?]/.test(link.value);
++    if (hasWildcard) {
++      const re = pathToRegex(link.value);
++      for (const id of nodeIds) if (re.test(id)) out.add(id);
++    } else {
++      for (const id of nodeIds) {
++        if (id.endsWith(link.value) || id.includes('/' + link.value)) out.add(id);
++      }
++    }
++  }
++  return [...out];
++}
 diff --git a/gitnexus-web/src/lib/graph-diff.ts b/gitnexus-web/src/lib/graph-diff.ts
 new file mode 100644
 index 0000000..b1722fa
