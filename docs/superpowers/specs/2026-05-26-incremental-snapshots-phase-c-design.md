@@ -1,11 +1,88 @@
 # Phase C — true per-commit incremental snapshots
 
 **Date** : 2026-05-26
-**Status** : design exploration (no code yet)
-**Auteur** : Robin DENIS (audit + design Claude Opus 4.7)
+**Status** : PoC livré + benché (endpoint `/snapshot/incremental`) — reste reconstruction + baseline rebuild
+**Auteur** : Robin DENIS (audit + design + PoC Claude Opus 4.7)
 **Parent** : [`2026-05-26-incremental-snapshots-design.md`](2026-05-26-incremental-snapshots-design.md) — phasing A/B/C
 **État Phase A** : ✅ livrée (auto-snapshot aux pics)
 **État Phase B** : ✅ livrée (PR-mode snapshot on-demand)
+**État Phase C** : 🔶 PoC livré (dump patch + endpoint + bench) — décision sur la suite (reconstruction) en attente
+
+---
+
+## §3.ter — Résultats du PoC bench (2026-05-27)
+
+Endpoint `/snapshot/incremental` livré (commit `bdbc1e4a`) avec les 6
+filtres + flag `reuseDump`. Bench `scripts/poc-incremental-bench.mjs`
+tourné sur **10 commits réels d'hmm_studio × 6 combos = 60 runs, 0 erreur**.
+
+| Combo | p50 | p90 | max | Projection 1000 commits |
+|---|---|---|---|---|
+| **Raw** (aucun filtre, no gzip) | 1024 KB | 1.95 MB | 1.95 MB | **999 MB** ❌ |
+| **Lossless-compressed** (gzip seul, garde tout) | 60 KB | 121 KB | 121 KB | **59 MB** ✅ |
+| **Safe** (gzip + dropGlobals + dropEmpty) | 40 KB | 97 KB | 97 KB | **39 MB** ✅ |
+| **Standard** (Safe + filterRelationships) | 40 KB | 97 KB | 97 KB | **39 MB** ✅ |
+| **Minimal** (Standard + includeLabels) | 20 KB | 50 KB | 50 KB | **20 MB** ✅ |
+| **Lite** (Minimal + includeRelationshipTypes) | 20 KB | 49 KB | 49 KB | **19.5 MB** ✅ |
+
+**Analyze wall time** : p90 = 53s/commit (les passes `reuse` = 0s, elles
+dominent le compte donc p50=0s).
+
+### Conclusions
+
+1. **gzip est le levier dominant** : Raw 1 MB → Lossless 60 KB = **17×**
+   à lui seul. C'est ~95% du gain. Tout le reste est marginal par-dessus.
+
+2. **`Safe` == `Standard`** : `filterRelationships:effectiveWriteSet` est
+   un **no-op**. gitnexus scope déjà le subgraph aux fichiers du writeset
+   (la BFS importers se fait en amont), donc filtrer les relationships
+   après coup ne retire rien. **Décision** : garder le param pour
+   forward-compat (si un jour le subgraph contient plus large) mais le
+   documenter comme inactif aujourd'hui. Le default `Standard` reste
+   valide — il est juste équivalent à `Safe`.
+
+3. **`includeLabels` (Minimal)** halve encore : 40 → 20 KB. Mais c'est
+   **lossy** (drop Variable/Const/Section/Interface). À réserver aux users
+   qui ne veulent que la structure macro (File/Function/Class/Method).
+
+4. **`includeRelationshipTypes` (Lite vs Minimal)** : ~3% de gain. Pas
+   worth la perte d'info (drop CONTAINS notamment). À déconseiller par
+   défaut.
+
+5. **Storage bien meilleur que craint.** Le brainstorm initial estimait
+   "1 GB pour 1000 commits, inacceptable". Réel avec gzip : **39 MB en
+   Standard, 59 MB en lossless**. La feasibility n'avait même pas besoin
+   des filtres lossy — gzip + dropGlobals suffit.
+
+### Default recommandé
+
+**`Standard`** (gzip + dropGlobals + dropEmptyFields) :
+- Lossless sauf les nodes globaux (Community/Process, réémis à chaque pass)
+- 39 MB / 1000 commits — linéaire, prédictible
+- Aucune perte de symbole réel
+
+`Minimal` proposé en opt-in pour les gros repos (>5000 commits) où 20 vs
+40 MB compte, au prix de perdre les Variable/Const/Section.
+
+### Coût compute du backfill
+
+- Par commit nécessitant un analyze : **~50s** (p90 53s)
+- Backfill 1000 commits : **~14h** (overnight one-time)
+- Après backfill : incrémental on-push (~50s/commit, acceptable en
+  background)
+- Le `reuseDump` (1ms) ne sert qu'au re-filtrage, pas au backfill initial
+
+### Décision sur la suite
+
+Le PoC valide la **génération + persistance** des diffs. Reste pour un
+Phase C complet :
+- **Reconstruction** `GET /api/graph?commit=<sha>` (baseline + replay) — §4.3
+- **Baseline rebuild** auto quand N commits dépassés — §4.4
+- **Cron / on-push** auto-génération — nice-to-have
+
+Ces 3 morceaux = ~6-9 jours estimés. À trancher : on continue maintenant,
+ou on parque le PoC (déjà utile : un user peut générer les diffs et les
+inspecter) jusqu'à un besoin réel de reconstruction ?
 
 ---
 
