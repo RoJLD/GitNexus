@@ -7248,10 +7248,10 @@ index 0000000..810a2bd
 +}
 diff --git a/docker-server-snapshot-incremental.mjs b/docker-server-snapshot-incremental.mjs
 new file mode 100644
-index 0000000..9811bb3
+index 0000000..0f715c1
 --- /dev/null
 +++ b/docker-server-snapshot-incremental.mjs
-@@ -0,0 +1,498 @@
+@@ -0,0 +1,778 @@
 +/**
 + * Incremental snapshot — Phase C of the incremental-snapshots design.
 + *
@@ -7302,10 +7302,10 @@ index 0000000..9811bb3
 + */
 +
 +import { spawn } from 'node:child_process';
-+import { readFile, writeFile, mkdir, stat, rm } from 'node:fs/promises';
++import { readFile, writeFile, mkdir, stat, rm, readdir } from 'node:fs/promises';
 +import { join, dirname, basename } from 'node:path';
-+import { gzipSync, brotliCompressSync } from 'node:zlib';
-+import { findRepoByName } from './docker-server-snapshots.mjs';
++import { gzipSync, brotliCompressSync, gunzipSync, brotliDecompressSync } from 'node:zlib';
++import { findRepoByName, SNAPSHOTS_ROOT, safeSnapshotKey } from './docker-server-snapshots.mjs';
 +
 +const SCHEMA_VERSION = 1;
 +const ANALYZE_TIMEOUT_MS = 10 * 60 * 1000;
@@ -7746,6 +7746,286 @@ index 0000000..9811bb3
 +export async function handleSnapshotIncrementalRoute(req, url, res, opts) {
 +  if (url.pathname === '/snapshot/incremental' && req.method === 'POST') {
 +    await handleSnapshotIncremental(url, req, res, opts);
++    return true;
++  }
++  return false;
++}
++
++// ════════════════════════════════════════════════════════════════════
++// Reconstruction: GET /graph/at-commit?repo=&commit=
++// Phase C step §4.3 — rebuild the graph at any commit by loading the
++// nearest baseline snapshot and replaying the per-commit diffs.
++// ════════════════════════════════════════════════════════════════════
++
++// Extract the owning file path from a node id. Mirrors the filter's
++// idTouchesFile logic so delete-by-file is consistent with what gitnexus
++// rewrites.
++//   File:<path> / Folder:<path>          → <path>
++//   Label:<path>:<name> (Function, …)    → <path>
++//   anything else (no parsable path)     → null
++function fileOfId(id) {
++  if (typeof id !== 'string') return null;
++  if (id.startsWith('File:') || id.startsWith('Folder:')) {
++    return id.slice(id.indexOf(':') + 1);
++  }
++  const firstColon = id.indexOf(':');
++  const secondColon = id.indexOf(':', firstColon + 1);
++  if (secondColon < 0) return null;
++  return id.slice(firstColon + 1, secondColon);
++}
++
++// Find the nearest snapshot that is an ancestor of targetSha, by commit
++// distance. Returns { sha, shortSha, snapshotName } or null.
++async function findNearestBaseline(repoPath, baseRepo, targetSha) {
++  const dir = join(SNAPSHOTS_ROOT, safeSnapshotKey(baseRepo));
++  let entries;
++  try {
++    entries = await readdir(dir, { withFileTypes: true });
++  } catch (err) {
++    if (err && err.code === 'ENOENT') return null;
++    throw err;
++  }
++  const candidates = [];
++  for (const e of entries) {
++    if (!e.isDirectory()) continue;
++    let commit;
++    try {
++      commit = JSON.parse(await readFile(join(dir, e.name, 'commit.json'), 'utf8'));
++    } catch {
++      continue;
++    }
++    const sha = commit.hash || e.name;
++    candidates.push({ sha, shortSha: e.name });
++  }
++  // Keep only ancestors of (or equal to) targetSha, measure distance.
++  let best = null;
++  for (const c of candidates) {
++    // is-ancestor exits 0 if c.sha is an ancestor of targetSha (or equal).
++    try {
++      await runCmd('git', ['-C', repoPath, 'merge-base', '--is-ancestor', c.sha, targetSha]);
++    } catch {
++      continue; // not an ancestor
++    }
++    let distance = 0;
++    try {
++      const out = await runCmd('git', ['-C', repoPath, 'rev-list', '--count', `${c.sha}..${targetSha}`]);
++      distance = Number(out) || 0;
++    } catch {
++      distance = Number.MAX_SAFE_INTEGER;
++    }
++    if (!best || distance < best.distance) {
++      best = { ...c, distance, snapshotName: `${baseRepo}@${c.shortSha}` };
++    }
++  }
++  return best;
++}
++
++async function loadSnapshotGraph(api, snapshotName) {
++  const resp = await fetch(`${api}/api/graph?repo=${encodeURIComponent(snapshotName)}`);
++  if (!resp.ok) throw new Error(`/api/graph for ${snapshotName} failed: HTTP ${resp.status}`);
++  const data = await resp.json();
++  return { nodes: data.nodes || [], relationships: data.relationships || [] };
++}
++
++// Read + decompress a persisted diff for a commit. Returns null if none.
++async function readDiff(repoPath, fullSha) {
++  const base = join(repoPath, '.gitnexus', 'incremental', fullSha);
++  for (const [ext, decode] of [
++    ['json.gz', (b) => gunzipSync(b)],
++    ['json.br', (b) => brotliDecompressSync(b)],
++    ['json', (b) => b],
++  ]) {
++    const path = `${base}.${ext}`;
++    try {
++      const buf = await readFile(path);
++      return JSON.parse(decode(buf).toString('utf8'));
++    } catch (err) {
++      if (err && err.code === 'ENOENT') continue;
++      throw err;
++    }
++  }
++  return null;
++}
++
++// Apply one diff to the in-memory graph maps. Faithful replay of
++// gitnexus' delete-then-insert: drop all nodes/rels belonging to files
++// in (effectiveWriteSet ∪ deleted), then insert the diff's subgraph,
++// then prune dangling relationships.
++function applyDiff(nodesMap, relsMap, diff) {
++  const meta = diff._meta || {};
++  const writeSet = new Set([
++    ...(meta.effectiveWriteSet || []),
++    ...((meta.hashDiff && meta.hashDiff.deleted) || []),
++  ]);
++
++  // 1. Delete nodes whose owning file is in the writeSet.
++  for (const [id] of nodesMap) {
++    const f = fileOfId(id);
++    if (f !== null && writeSet.has(f)) nodesMap.delete(id);
++  }
++  // 2. Delete relationships touching a writeSet file (either endpoint).
++  for (const [id, rel] of relsMap) {
++    const sf = fileOfId(rel.sourceId);
++    const tf = fileOfId(rel.targetId);
++    if ((sf !== null && writeSet.has(sf)) || (tf !== null && writeSet.has(tf))) {
++      relsMap.delete(id);
++    }
++  }
++  // 3. Insert the diff's nodes + relationships (post-commit state).
++  for (const n of diff.subgraph?.nodes || []) nodesMap.set(n.id, n);
++  for (const r of diff.subgraph?.relationships || []) relsMap.set(r.id, r);
++  // 4. Prune dangling relationships (endpoint no longer present).
++  for (const [id, rel] of relsMap) {
++    if (!nodesMap.has(rel.sourceId) || !nodesMap.has(rel.targetId)) {
++      relsMap.delete(id);
++    }
++  }
++}
++
++async function handleGraphAtCommit(url, req, res, opts) {
++  const repoName = url.searchParams.get('repo');
++  const commit = url.searchParams.get('commit');
++  const lazy = (url.searchParams.get('lazy') || '').toLowerCase() === 'true';
++
++  if (!repoName) {
++    res.writeHead(400, { 'Content-Type': 'application/json' });
++    res.end(JSON.stringify({ error: 'missing repo' }));
++    return;
++  }
++  if (!commit || !/^[0-9a-f]{4,64}$/i.test(commit)) {
++    res.writeHead(400, { 'Content-Type': 'application/json' });
++    res.end(JSON.stringify({ error: 'missing or malformed commit (4-64 hex chars)' }));
++    return;
++  }
++
++  const baseRepo = repoName.split('@')[0];
++  const live = await findRepoByName(baseRepo, opts.api);
++  if (!live) {
++    res.writeHead(404, { 'Content-Type': 'application/json' });
++    res.end(JSON.stringify({ error: `repo not found: ${baseRepo}` }));
++    return;
++  }
++  const repoPath = live.repoPath || live.path;
++
++  let targetSha;
++  try {
++    targetSha = await runCmd('git', ['-C', repoPath, 'rev-parse', '--verify', `${commit}^{commit}`]);
++  } catch (err) {
++    res.writeHead(404, { 'Content-Type': 'application/json' });
++    res.end(JSON.stringify({ error: `commit not found: ${commit} (${err.message})` }));
++    return;
++  }
++
++  // 1. Nearest baseline snapshot.
++  const baseline = await findNearestBaseline(repoPath, baseRepo, targetSha);
++  if (!baseline) {
++    res.writeHead(409, { 'Content-Type': 'application/json' });
++    res.end(JSON.stringify({
++      error: 'no snapshot is an ancestor of this commit — seed a baseline first',
++      hint: 'POST /snapshot?repo=<base>&commit=<older-sha> (or /snapshot/bulk) to create a baseline, then retry',
++    }));
++    return;
++  }
++
++  // 2. Replay chain (baseline exclusive → target inclusive, chronological).
++  let chain = [];
++  if (baseline.sha !== targetSha) {
++    const out = await runCmd('git', ['-C', repoPath, 'rev-list', '--reverse', `${baseline.sha}..${targetSha}`]);
++    chain = out.split('\n').map((s) => s.trim()).filter(Boolean);
++  }
++
++  // 3. Check which diffs exist.
++  const missing = [];
++  for (const sha of chain) {
++    const d = await readDiff(repoPath, sha);
++    if (!d) missing.push(sha);
++  }
++
++  if (missing.length > 0 && !lazy) {
++    res.writeHead(409, { 'Content-Type': 'application/json' });
++    res.end(JSON.stringify({
++      error: `${missing.length}/${chain.length} commits in the replay chain have no diff yet`,
++      baseline: { sha: baseline.sha, shortSha: baseline.shortSha, distance: baseline.distance },
++      missingDiffs: missing.map((s) => s.slice(0, 7)),
++      hint: 'POST /snapshot/incremental for each missing commit, or retry with ?lazy=true to generate them on the fly (slow: ~50s each)',
++    }));
++    return;
++  }
++
++  // 3b. Lazy: generate missing diffs on the fly via the same pipeline.
++  const tStart = Date.now();
++  let generated = 0;
++  if (missing.length > 0 && lazy) {
++    for (const sha of missing) {
++      // Reuse the worktree + analyze + filter + persist path by calling
++      // the handler's internals would be cleaner, but to keep this PoC
++      // simple we POST to ourselves on localhost.
++      const r = await fetch(
++        `http://127.0.0.1:${process.env.PORT || '4173'}/snapshot/incremental?repo=${encodeURIComponent(baseRepo)}&commit=${sha}`,
++        { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' },
++      );
++      if (!r.ok) {
++        res.writeHead(502, { 'Content-Type': 'application/json' });
++        res.end(JSON.stringify({ error: `lazy diff generation failed for ${sha.slice(0, 7)}: HTTP ${r.status}` }));
++        return;
++      }
++      generated++;
++    }
++  }
++
++  // 4. Load baseline graph + replay.
++  let graphArr;
++  try {
++    graphArr = await loadSnapshotGraph(opts.api, baseline.snapshotName);
++  } catch (err) {
++    res.writeHead(502, { 'Content-Type': 'application/json' });
++    res.end(JSON.stringify({ error: `baseline graph load failed: ${err.message}` }));
++    return;
++  }
++  const nodesMap = new Map(graphArr.nodes.map((n) => [n.id, n]));
++  const relsMap = new Map(graphArr.relationships.map((r) => [r.id, r]));
++  const baselineCounts = { nodes: nodesMap.size, relationships: relsMap.size };
++
++  const appliedFilters = new Set();
++  for (const sha of chain) {
++    const diff = await readDiff(repoPath, sha);
++    if (!diff) continue; // shouldn't happen post-lazy, but guard
++    applyDiff(nodesMap, relsMap, diff);
++    if (diff._meta?.filters) {
++      appliedFilters.add(JSON.stringify({
++        dropGlobalNodes: diff._meta.filters.dropGlobalNodes,
++        includeLabels: diff._meta.filters.includeLabels,
++        includeRelationshipTypes: diff._meta.filters.includeRelationshipTypes,
++      }));
++    }
++  }
++
++  res.writeHead(200, { 'Content-Type': 'application/json' });
++  res.end(JSON.stringify({
++    repo: baseRepo,
++    commit: targetSha,
++    shortSha: targetSha.slice(0, 7),
++    baseline: { sha: baseline.sha, shortSha: baseline.shortSha, snapshotName: baseline.snapshotName, distance: baseline.distance },
++    replay: {
++      commitsInChain: chain.length,
++      diffsApplied: chain.length - (missing.length - generated),
++      lazyGenerated: generated,
++      // If diffs were created with heterogeneous filters, the reconstruction
++      // is only as complete as the most-restrictive diff in the chain.
++      filterConsistency: appliedFilters.size <= 1 ? 'consistent' : 'MIXED — reconstruction fidelity varies across the chain',
++    },
++    baselineCounts,
++    reconstructedCounts: { nodes: nodesMap.size, relationships: relsMap.size },
++    reconstructMs: Date.now() - tStart,
++    // The reconstructed graph in /api/graph shape.
++    nodes: [...nodesMap.values()],
++    relationships: [...relsMap.values()],
++  }));
++}
++
++export async function handleGraphAtCommitRoute(req, url, res, opts) {
++  if (url.pathname === '/graph/at-commit' && req.method === 'GET') {
++    await handleGraphAtCommit(url, req, res, opts);
 +    return true;
 +  }
 +  return false;
@@ -8792,7 +9072,7 @@ index 0000000..c6a7798
 +  return false;
 +}
 diff --git a/docker-server.mjs b/docker-server.mjs
-index 8143eb4..56e2e73 100644
+index 8143eb4..6a1e9ac 100644
 --- a/docker-server.mjs
 +++ b/docker-server.mjs
 @@ -1,12 +1,61 @@
@@ -8824,7 +9104,7 @@ index 8143eb4..56e2e73 100644
 +import { handleCommitFootprintRoute } from './docker-server-commit-footprint.mjs';
 +import { handleSnapshotAutoRoute } from './docker-server-snapshot-auto.mjs';
 +import { handleSnapshotFromPrRoute } from './docker-server-snapshot-from-pr.mjs';
-+import { handleSnapshotIncrementalRoute } from './docker-server-snapshot-incremental.mjs';
++import { handleSnapshotIncrementalRoute, handleGraphAtCommitRoute } from './docker-server-snapshot-incremental.mjs';
 +import { handleGhostsRoute } from './docker-server-ghosts.mjs';
 +import { handleGhostAuditRoute } from './docker-server-ghost-audit.mjs';
 +import { handleGhostsCleanupRoute } from './docker-server-ghost-cleanup.mjs';
@@ -20467,6 +20747,56 @@ index 6c660b0..937fd90 100644
  /* ═══════════════════════════════════════════════════════════════
     REDUCED MOTION — respect OS-level motion preferences (WCAG 2.3.3)
  ═══════════════════════════════════════════════════════════════ */
+diff --git a/gitnexus-web/src/lib/gantt-layout.ts b/gitnexus-web/src/lib/gantt-layout.ts
+new file mode 100644
+index 0000000..66de19f
+--- /dev/null
++++ b/gitnexus-web/src/lib/gantt-layout.ts
+@@ -0,0 +1,44 @@
++/**
++ * Pure functions for the Gantt panel.
++ * Reads ghost runtime objects (from /ghosts), emits SVG-ready layout data.
++ *
++ * See docs/superpowers/specs/2026-05-26-roadmap-predictive-gantt-design.md
++ *
++ * Reuses tierColor / parseTargetDate / computeGhostVisualState from the
++ * Augmented graph module (`./ghost-layout`) — Update 1 wires time-decaying
++ * bar coloring through that shared engine.
++ */
++
++import { parseTargetDate, tierColor, computeGhostVisualState } from './ghost-layout';
++
++export { parseTargetDate, tierColor };
++
++const DAY = 86_400_000;
++
++export type GhostInput = {
++  plannedAt: { date: string } | null;
++  materializedAt: { date: string } | null;
++  cancelledAt: { date: string } | null;
++  declared: { plannedFor: string | null; tier?: string | null; title?: string; expectedBy?: string | null };
++  id?: string;
++};
++
++export function computeTimeWindow(ghosts: GhostInput[], opts: { now?: Date } = {}): { start: Date; end: Date } {
++  const now = opts.now ?? new Date();
++  const times: number[] = [];
++  for (const g of ghosts) {
++    if (g.plannedAt) times.push(new Date(g.plannedAt.date).getTime());
++    if (g.materializedAt) times.push(new Date(g.materializedAt.date).getTime());
++    if (g.cancelledAt) times.push(new Date(g.cancelledAt.date).getTime());
++    if (g.declared?.plannedFor) {
++      const t = parseTargetDate(g.declared.plannedFor);
++      if (t) times.push(t.getTime());
++    }
++  }
++  if (times.length === 0) {
++    return { start: new Date(now.getTime() - 30 * DAY), end: new Date(now.getTime() + 30 * DAY) };
++  }
++  const minT = Math.min(...times);
++  const maxT = Math.max(...times, now.getTime() + 90 * DAY);
++  return { start: new Date(minT - 7 * DAY), end: new Date(maxT) };
++}
 diff --git a/gitnexus-web/src/lib/ghost-layout.ts b/gitnexus-web/src/lib/ghost-layout.ts
 new file mode 100644
 index 0000000..f6158f9
