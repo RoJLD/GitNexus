@@ -243,6 +243,15 @@ export function rankSuspects(commitsInWindow) {
 
 Keep `locateRegression` and `rankCulprits` unchanged. NOTE: the Phase 1 `docker-server-regression.mjs` reads `cfg.seriesField`/`cfg.attrField`; the new `series` tag replaces `seriesField`. Task 3 updates the I/O to use `series`. For the entropy rows, `attrField` is retained (still used by the entropy-commits attribution path).
 
+**Also update the Phase 1 unit test** `tests/unit/regression-core.test.mjs`: its `METRIC_REGISTRY` block asserts `METRIC_REGISTRY.density.seriesField === 'density'` and `.modularity.seriesField === 'modularity'`. Since `seriesField` is replaced by `series`, change those two assertions to:
+
+```javascript
+    expect(METRIC_REGISTRY.density.series).toBe('entropy:density');
+    expect(METRIC_REGISTRY.modularity.series).toBe('entropy:modularity');
+```
+
+Leave the `attrField` assertions in that test unchanged (attrField is retained for entropy). Do NOT touch the `locateRegression`/`rankCulprits` test blocks.
+
 - [ ] **Step 4: Run to verify it passes**
 
 Run: `cd tests; npm run test:unit -- regression-suspects`
@@ -254,7 +263,7 @@ Expected: PASS or Node 21 crash — proceed. Also run `cd tests; npm run test:un
 node --check upstream/docker-server-regression-core.mjs
 powershell -NoProfile -Command "Set-Location 'c:\Users\rdenis\VScode\gitnexus\upstream'; & git add -N . ; \$diff = & git diff HEAD ; \$diff | Out-File -FilePath '..\patches\upstream-all.diff' -Encoding Unicode ; & git reset *> \$null"
 git reset HEAD tests/unit/cluster-layout.test.mjs 2>$null
-git add patches/upstream-all.diff tests/unit/regression-suspects.test.mjs
+git add patches/upstream-all.diff tests/unit/regression-suspects.test.mjs tests/unit/regression-core.test.mjs
 git commit -m "feat(regression): registry Phase 2 rows (ownership/dissonance/coupling) + rankSuspects + unit (Task 2)"
 ```
 
