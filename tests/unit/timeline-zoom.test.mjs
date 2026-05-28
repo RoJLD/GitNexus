@@ -4,6 +4,7 @@ import {
   mapDateToPosition,
   mapPositionToDate,
   snapToNearestSnapshot,
+  applyWheelZoom,
 } from '../../upstream/gitnexus-web/src/lib/timeline-zoom';
 
 describe('computeZoomWindow', () => {
@@ -106,5 +107,58 @@ describe('snapToNearestSnapshot', () => {
 
   it('returns null for empty snapshot list', () => {
     expect(snapToNearestSnapshot('2026-01-01T00:00:00Z', [])).toBeNull();
+  });
+});
+
+describe('applyWheelZoom', () => {
+  const full = { startISO: '2026-01-01T00:00:00.000Z', endISO: '2026-02-01T00:00:00.000Z' };
+
+  it('zoom in (deltaY<0) shrinks the span', () => {
+    const cur = { startISO: '2026-01-01T00:00:00.000Z', endISO: '2026-02-01T00:00:00.000Z' };
+    const out = applyWheelZoom(cur, '2026-01-16T00:00:00.000Z', -120, full);
+    const span = Date.parse(out.endISO) - Date.parse(out.startISO);
+    const curSpan = Date.parse(cur.endISO) - Date.parse(cur.startISO);
+    expect(span).toBeLessThan(curSpan);
+  });
+
+  it('zoom out (deltaY>0) grows the span', () => {
+    const cur = { startISO: '2026-01-10T00:00:00.000Z', endISO: '2026-01-20T00:00:00.000Z' };
+    const out = applyWheelZoom(cur, '2026-01-15T00:00:00.000Z', 120, full);
+    const span = Date.parse(out.endISO) - Date.parse(out.startISO);
+    const curSpan = Date.parse(cur.endISO) - Date.parse(cur.startISO);
+    expect(span).toBeGreaterThan(curSpan);
+  });
+
+  it('keeps the anchor at the same relative position when zooming in', () => {
+    const cur = { startISO: '2026-01-01T00:00:00.000Z', endISO: '2026-01-31T00:00:00.000Z' };
+    const anchor = '2026-01-08T00:00:00.000Z'; // ratio ~0.233
+    const ratioBefore = (Date.parse(anchor) - Date.parse(cur.startISO)) / (Date.parse(cur.endISO) - Date.parse(cur.startISO));
+    const out = applyWheelZoom(cur, anchor, -120, full);
+    const ratioAfter = (Date.parse(anchor) - Date.parse(out.startISO)) / (Date.parse(out.endISO) - Date.parse(out.startISO));
+    expect(ratioAfter).toBeCloseTo(ratioBefore, 5);
+  });
+
+  it('clamps the span to minSpanMs (no infinite zoom in)', () => {
+    const cur = { startISO: '2026-01-15T00:00:00.000Z', endISO: '2026-01-15T02:00:00.000Z' };
+    const out = applyWheelZoom(cur, '2026-01-15T01:00:00.000Z', -10000, full, { minSpanMs: 3_600_000 });
+    const span = Date.parse(out.endISO) - Date.parse(out.startISO);
+    expect(span).toBeGreaterThanOrEqual(3_600_000);
+  });
+
+  it('clamps to full span on aggressive zoom out and stays within fullRange', () => {
+    const cur = { startISO: '2026-01-14T00:00:00.000Z', endISO: '2026-01-16T00:00:00.000Z' };
+    const out = applyWheelZoom(cur, '2026-01-15T00:00:00.000Z', 10000, full);
+    const span = Date.parse(out.endISO) - Date.parse(out.startISO);
+    const fullSpan = Date.parse(full.endISO) - Date.parse(full.startISO);
+    expect(span).toBe(fullSpan);
+    expect(Date.parse(out.startISO)).toBeGreaterThanOrEqual(Date.parse(full.startISO));
+    expect(Date.parse(out.endISO)).toBeLessThanOrEqual(Date.parse(full.endISO));
+  });
+
+  it('shift-to-fit: a window pushed past the left edge is translated back inside', () => {
+    const cur = { startISO: '2026-01-02T00:00:00.000Z', endISO: '2026-01-06T00:00:00.000Z' };
+    const out = applyWheelZoom(cur, '2026-01-03T00:00:00.000Z', 200, full);
+    expect(Date.parse(out.startISO)).toBeGreaterThanOrEqual(Date.parse(full.startISO));
+    expect(Date.parse(out.endISO)).toBeLessThanOrEqual(Date.parse(full.endISO));
   });
 });
