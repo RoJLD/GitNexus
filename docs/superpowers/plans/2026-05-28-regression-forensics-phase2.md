@@ -405,7 +405,7 @@ In `docker-server-regression.mjs` `getSeries`, before the final `return []`, add
 ```javascript
   if (source === 'ownership') {
     const baseRepo = repo.split('@')[0];
-    const snaps = listSnapshotNamesAndDates(baseRepo);
+    const snaps = await listSnapshotNamesAndDates(baseRepo);
     const live = { name: baseRepo, sha: 'live', date: new Date().toISOString(), isLive: true };
     const points = [...snaps, live];
     const out = [];
@@ -472,7 +472,7 @@ In `docker-server-regression.mjs` `getSeries`, add:
 ```javascript
   if (source === 'coupling') {
     const baseRepo = repo.split('@')[0];
-    const snaps = listSnapshotNamesAndDates(baseRepo);
+    const snaps = await listSnapshotNamesAndDates(baseRepo);
     const live = { name: baseRepo, sha: 'live', date: new Date().toISOString(), isLive: true };
     const points = [...snaps, live];
     const out = [];
@@ -531,7 +531,7 @@ In `docker-server-regression.mjs` `getSeries`, add:
 ```javascript
   if (source === 'dissonance') {
     const baseRepo = repo.split('@')[0];
-    const snaps = listSnapshotNamesAndDates(baseRepo); // name = '<base>@<sha>'
+    const snaps = await listSnapshotNamesAndDates(baseRepo); // name = '<base>@<sha>'
     const live = { name: baseRepo, sha: 'live', date: new Date().toISOString(), isLive: true };
     const points = [...snaps, live];
     const out = [];
