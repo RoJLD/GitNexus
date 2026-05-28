@@ -900,6 +900,29 @@ abandonner l'acquis.
 
 ---
 
+## 🏢 Enterprise / commercial offering (upstream) — à évaluer vs notre fork
+
+> Liste annoncée par l'upstream gitnexus comme **offre enterprise** (SaaS
+> managé ou self-hosted) + usage commercial de l'OSS sous licence.
+> Capturée le 2026-05-28 pour **brainstorm ultérieur** : pour chaque item,
+> déterminer (1) si notre fork le couvre déjà — total/partiel/pas du tout,
+> (2) si on doit l'implémenter, (3) comment aller plus loin que l'upstream.
+> Les pointeurs "overlap ?" ci-dessous sont des **hypothèses de départ**
+> non vérifiées, pas des conclusions.
+
+| Feature enterprise (upstream) | Overlap ? (hypothèse à vérifier) | Décision |
+|---|---|---|
+| **PR Review** — blast-radius automatique sur les pull requests | Partiel ? On a impact analysis (MCP `gitnexus_impact`) + `/snapshot/from-pr` (Tier 36) + diff coloring. Manque : le hook PR automatique + le rendu "review". | À brainstormer |
+| **Auto-updating Code Wiki** — doc toujours à jour (Code Wiki aussi en OSS) | Pas évident chez nous. Le Code Wiki OSS est upstream ; on ne l'a pas patché/exposé. | À brainstormer |
+| **Auto-reindexing** — knowledge graph rafraîchi automatiquement | Partiel ? On a auto-snapshot aux pics (Tier 35) + watches/cron (Tier 2bis.3). Pas de re-index continu du graphe live. | À brainstormer |
+| **Multi-repo support** — graphe unifié cross-repos | Partiel/fort ? On a cross-repo coupling (Tier 1.2), growth/cross, similarity (Tier 2.5), galaxy view (Tier 2.6). Pas un *seul graphe* fusionné, plutôt des analytics cross-repo. | À brainstormer |
+| **OCaml support** — couverture langage additionnelle | Non. Couverture langage = upstream ; rien d'OCaml-spécifique dans le fork. | À brainstormer |
+| **Priority feature/language support** — demande de langages/features | N/A en tant que feature (c'est du service commercial). | Hors-scope feature |
+| **(Upcoming) Auto regression forensics** | Overlap conceptuel avec Tier 3.5 (modèle prédictif de bugs) + Tier 3.2 (mutation tracking) + commit-level entropy delta (Tier 2bis.2). | À brainstormer |
+| **(Upcoming) End-to-end test generation** | Pas chez nous. Nouveau chantier. | À brainstormer |
+
+---
+
 ## 🗑️ Idées qui ne deviennent pas leur propre feature
 
 Pour éviter la prolifération de "noms marketing" qui font miroiter sans
