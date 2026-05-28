@@ -98,4 +98,36 @@ test.describe('Timeline zoom + cursor diff (Phase 1)', () => {
     await expect(cursorA).toHaveAttribute('aria-valuemin', '0');
     await expect(cursorB).toHaveAttribute('aria-valuemin', '0');
   });
+
+  test('mousewheel zooms in (mini-map appears, tlZoom=1) and out (exits)', async ({ page }) => {
+    // Locate the timeline track via the cursor slider's position.
+    const cursorA = page.locator('[role="slider"][aria-label="Cursor A"]');
+    await expect(cursorA).toBeVisible();
+    const box = await cursorA.boundingBox();
+    expect(box).not.toBeNull();
+    if (!box) return;
+
+    // Wheel UP (deltaY<0) over the middle of the timeline → zoom in.
+    const cx = box.x + 150;
+    const cy = box.y;
+    await page.mouse.move(cx, cy);
+    for (let i = 0; i < 3; i++) {
+      await page.mouse.wheel(0, -120);
+      await page.waitForTimeout(60);
+    }
+    // After the settle debounce, zoom is committed: mini-map visible + URL param.
+    await page.waitForTimeout(600);
+    await expect(page.getByRole('region', { name: /mini-map/i })).toBeVisible();
+    expect(page.url()).toMatch(/tlZoom=1/);
+
+    // Wheel DOWN (deltaY>0) hard → zoom out fully → exits.
+    await page.mouse.move(cx, cy);
+    for (let i = 0; i < 6; i++) {
+      await page.mouse.wheel(0, 240);
+      await page.waitForTimeout(60);
+    }
+    await page.waitForTimeout(600);
+    await expect(page.getByRole('region', { name: /mini-map/i })).not.toBeVisible();
+    expect(page.url()).not.toMatch(/tlZoom=1/);
+  });
 });
