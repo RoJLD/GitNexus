@@ -74,6 +74,34 @@ So any project under that folder is reachable from inside gitnexus.
 `reindex.ps1` always passes `force: true` — useful when the index is stale
 (after a non-trivial code change) and you want a fresh analysis.
 
+## Code Wiki
+
+GitNexus can generate an auto-documentation **Code Wiki** from a repo's
+knowledge graph. In this deployment it shows up as a **Wiki** panel in the web
+UI (a "Wiki" button in the header), with a **Regenerate** button and optional
+automatic regeneration.
+
+Generation runs **server-side** (a small `wiki-worker` in the `gitnexus`
+container spawns the `gitnexus wiki` CLI), so it needs an **LLM API key**. Set
+it in a local `.env` (gitignored) next to `docker-compose.yml`:
+
+```
+GITNEXUS_API_KEY=sk-...
+GITNEXUS_MODEL=gpt-4o-mini          # optional
+GITNEXUS_LLM_BASE_URL=https://...   # optional (OpenAI-compatible endpoint)
+```
+
+The stack boots fine without a key — the Wiki panel just reports an error
+until one is set. The repo must have been analyzed first (the wiki reads the
+graph). To auto-regenerate on a schedule, add to that repo's `.gitnexus.json`:
+
+```json
+{ "wiki": { "autoEvery": "24h" } }
+```
+
+`autoEvery` accepts `"<n>h"` / `"<n>d"` or `"off"` (default). The existing
+watches cron triggers due regenerations.
+
 ## Where things live
 
 | What                               | Path                                                          |

@@ -36,6 +36,13 @@ services:
     container_name: gitnexus
     environment:
       HF_HOME: /data/hf-cache
+      # Code Wiki generation runs server-side (the wiki-worker spawns the
+      # `gitnexus wiki` CLI headlessly). It needs an LLM key. Set these in a
+      # local .env (gitignored) — the stack still boots without them; the Wiki
+      # panel just surfaces an error until a key is present. See README "Code Wiki".
+      GITNEXUS_API_KEY: ${GITNEXUS_API_KEY:-}
+      GITNEXUS_MODEL: ${GITNEXUS_MODEL:-}
+      GITNEXUS_LLM_BASE_URL: ${GITNEXUS_LLM_BASE_URL:-}
     ports:
       - "4747:4747"
     volumes:
