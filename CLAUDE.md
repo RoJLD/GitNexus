@@ -208,6 +208,8 @@ curl -s -o /dev/null -w "entropy/commits: HTTP %{http_code}\n" \
 # to see it ran.
 curl -s -o /dev/null -w "watches: HTTP %{http_code}\n" \
   "http://localhost:4173/watches"
+# (Tier 59) Watch webhooks are auto-enriched with the /regression culprit at
+# fire-time; GET /watches `state` now carries `lastCulprit` (null until a fire).
 
 # SysML export (Tier 3.x bonus — pure read-only, no side effects)
 curl -s -o /dev/null -w "sysml-export: HTTP %{http_code}\n" \

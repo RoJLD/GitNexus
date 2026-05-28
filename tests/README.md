@@ -63,6 +63,7 @@ Pré-requis local : Rancher Desktop running, **Node ≥ 22 LTS**. CI : `.github/
 | Auto-reindex — decision pure fn | `unit/auto-reindex.test.mjs` | shouldReindex (disabled/no-sha/first-sight/unchanged/changed — 6 cases) |
 | Regression forensics — core pure fns | `unit/regression-core.test.mjs` | METRIC_REGISTRY directions + locateRegression (rise/fall/flat/null/short) + rankCulprits (up/down/empty — 10 cases) |
 | Regression forensics Phase 2 — suspects + registry | `unit/regression-suspects.test.mjs` | rankSuspects (filesTouched desc + date tiebreak + empty) + Phase 2 registry rows (series/attribution/worseDirection) |
+| Auto regression forensics — pure helpers | `unit/auto-regression-forensics.test.mjs` | mapWatchToRegressionMetric (entropy strip / identity / unmapped→null) + buildWebhookPayload (culprit line + regression field + files fallback — 7 cases) |
 | Temporal filter — pure client fns | `unit/temporal-filter-modes.test.mjs` | computeStrictFilter + computeNormalFilter (intersection + union) |
 | Temporal filter — backend core | `unit/nodes-alive-between-core.test.mjs` | filterSnapshotsInWindow + unionSnapshotNodeIds |
 | Temporal filter — useAppState slice | `unit/use-app-state-temporal-filter.test.tsx` | 4 modes + localStorage persist + restore |
