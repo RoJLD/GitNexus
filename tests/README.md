@@ -70,6 +70,7 @@ Pré-requis local : Rancher Desktop running, **Node ≥ 22 LTS**. CI : `.github/
 | Cluster layout | `unit/cluster-layout.test.mjs` | convex hull + swimlanes + `pointInPolygon` |
 | Layout cache | `unit/layout-cache.test.mjs` | `saveLayoutPositions` + `loadLayout` round-trip + version guard + `applyLayoutToGraph` coverage + `clearLayout` + `clearAllLayouts` (5 cases) |
 | Lifespan windowed — pure fn | `unit/lifespan-windowed-core.test.mjs` | computeWindowedBuckets (4 buckets + ephemeral filter, 5 cases) |
+| Timeline URL — pure fns | `unit/timeline-url.test.mjs` | serializeTimelineToParams + parseTimelineParams (clean-URL set/remove, defaults, validation, round-trip — 9 cases) |
 
 ### Components React (unit)
 | Test | Fichier | Couvre |
@@ -157,6 +158,7 @@ Pré-requis local : Rancher Desktop running, **Node ≥ 22 LTS**. CI : `.github/
 | E2E cluster halos | `e2e/specs/06-cluster-halos.spec.ts` | toggle + halo + tooltip |
 | E2E Augmented Timeline | `e2e/specs/07-augmented-timeline.spec.ts` | Scrub cursorB with ghosts ON (skip if no snapshots) + Animate roadmap button shows banner |
 | Lifespan windowed | `e2e/specs/lifespan-windowed.spec.ts` | Header + badge toggle on filter mode change (3 cases) |
+| Timeline URL persistence | `e2e/specs/timeline-url-persistence.spec.ts` | write tl* params (filter+compare) + reload restore + clear on default + zoom param write/clear (4 cases) |
 
 ## Tests désactivés / connus fragiles
 
