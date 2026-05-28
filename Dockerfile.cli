@@ -49,4 +49,14 @@ RUN node /app/gitnexus/scripts/patch-lbug-staleness.mjs
 COPY --chown=node:node scripts/patch-incremental-dump.mjs /app/gitnexus/scripts/patch-incremental-dump.mjs
 RUN node /app/gitnexus/scripts/patch-incremental-dump.mjs
 
+# Code Wiki generation worker (our addition) — runs next to the API server,
+# spawns the public `gitnexus wiki` CLI on demand. See docs/superpowers/specs/
+# 2026-05-28-code-wiki-web-ui-design.md.
+COPY --chown=node:node wiki-worker.mjs /app/wiki-worker.mjs
+
 USER node
+
+# Override the base image's serve CMD to also run the wiki worker. The worker
+# runs in the background and is non-fatal: if it dies, the API server (exec'd
+# as the main process) keeps the container's health intact.
+CMD ["sh", "-c", "node /app/wiki-worker.mjs & exec node /app/gitnexus/dist/cli/index.js serve --host 0.0.0.0 --port 4747"]
