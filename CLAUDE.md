@@ -244,6 +244,12 @@ curl -s -o /dev/null -w "wiki/status: HTTP %{http_code}\n" \
 curl -s -o /dev/null -w "auto-reindex: HTTP %{http_code}\n" \
   "http://localhost:4173/auto-reindex"
 
+# Regression forensics (Tier 57) — locate a metric regression + culprit commit.
+# 200 with { regressed, worstCommit, runnersUp }; 400 on unknown metric. Reuses
+# /entropy + /entropy/commits + /commit/footprint. MCP tool gitnexus_regression (21e).
+curl -s -o /dev/null -w "regression: HTTP %{http_code}\n" \
+  "http://localhost:4173/regression?repo=hmm_studio&metric=density"
+
 # MCP sidecar — stdio JSON-RPC against the live stack. Exercises the
 # wrapper layer that exposes our analytics to Claude Code / Cursor.
 node mcp-server/smoke.mjs

@@ -61,6 +61,7 @@ Pré-requis local : Rancher Desktop running, **Node ≥ 22 LTS**. CI : `.github/
 | Timeline zoom — intra-repo graph diff | `unit/graph-diff-between-snapshots.test.mjs` | diffBetweenSnapshots alias + edges by triple + empty snapshots (5 cases) |
 | Code Wiki — schedule pure fns | `unit/wiki-schedule.test.mjs` | parseAutoEvery (h/d/off/malformed) + isWikiRegenDue (never/elapsed/not-elapsed/broken — 12 cases) |
 | Auto-reindex — decision pure fn | `unit/auto-reindex.test.mjs` | shouldReindex (disabled/no-sha/first-sight/unchanged/changed — 6 cases) |
+| Regression forensics — core pure fns | `unit/regression-core.test.mjs` | METRIC_REGISTRY directions + locateRegression (rise/fall/flat/null/short) + rankCulprits (up/down/empty — 10 cases) |
 | Temporal filter — pure client fns | `unit/temporal-filter-modes.test.mjs` | computeStrictFilter + computeNormalFilter (intersection + union) |
 | Temporal filter — backend core | `unit/nodes-alive-between-core.test.mjs` | filterSnapshotsInWindow + unionSnapshotNodeIds |
 | Temporal filter — useAppState slice | `unit/use-app-state-temporal-filter.test.tsx` | 4 modes + localStorage persist + restore |
@@ -127,6 +128,7 @@ Pré-requis local : Rancher Desktop running, **Node ≥ 22 LTS**. CI : `.github/
 | Lifespan windowed | `integration/endpoints/lifespan-windowed.test.mjs` | GET 200 global + 200 windowed + 400 partial params + 400 invalid range + alias resolution (5 cases) |
 | Code Wiki endpoints | `integration/endpoints/wiki.test.mjs` | `/wiki` 200-html-or-404 + missing-repo 400 + `/wiki/status` 200-or-502 shape + `/wiki/generate` 202/409/404/502 proxy |
 | Auto-reindex endpoint | `integration/endpoints/auto-reindex.test.mjs` | `GET /auto-reindex` 200 + per-repo shape (enabled/dueNow/headSha) + `?repo=` filter |
+| Regression endpoint | `integration/endpoints/regression.test.mjs` | `GET /regression` density + modularity 200 (verdict shape) + unknown-metric 400 + missing-repo 400 |
 | Entropy | `integration/endpoints/entropy.test.mjs` | `/entropy` schema + range + golden |
 | Ownership | `integration/endpoints/ownership.test.mjs` | `/ownership` bus factor + golden |
 | Dissonance | `integration/endpoints/dissonance.test.mjs` | `/dissonance` schema + range + golden |
