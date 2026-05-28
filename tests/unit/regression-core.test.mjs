@@ -4,10 +4,10 @@ import { METRIC_REGISTRY, locateRegression, rankCulprits } from '../../upstream/
 describe('METRIC_REGISTRY', () => {
   it('density worsens upward, modularity downward', () => {
     expect(METRIC_REGISTRY.density.worseDirection).toBe('up');
-    expect(METRIC_REGISTRY.density.seriesField).toBe('density');
+    expect(METRIC_REGISTRY.density.series).toBe('entropy:density');
     expect(METRIC_REGISTRY.density.attrField).toBe('attributedDensityDelta');
     expect(METRIC_REGISTRY.modularity.worseDirection).toBe('down');
-    expect(METRIC_REGISTRY.modularity.seriesField).toBe('modularity');
+    expect(METRIC_REGISTRY.modularity.series).toBe('entropy:modularity');
     expect(METRIC_REGISTRY.modularity.attrField).toBe('attributedModularityDelta');
   });
 });
