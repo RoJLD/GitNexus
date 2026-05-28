@@ -236,6 +236,14 @@ curl -s -o /dev/null -w "wiki: HTTP %{http_code}\n" \
 curl -s -o /dev/null -w "wiki/status: HTTP %{http_code}\n" \
   "http://localhost:4173/wiki/status?repo=hmm_studio"
 
+# Auto-reindexing (Tier 56) — read-only per-repo state. 200 even when no repo
+# has auto_reindex enabled (entries carry enabled:false). Opt-in per repo via
+# .gitnexus.json > auto_reindex.onCommit; the watches cron detects a HEAD SHA
+# change and POSTs an incremental /api/analyze. No new process (runs in the
+# web container's cron).
+curl -s -o /dev/null -w "auto-reindex: HTTP %{http_code}\n" \
+  "http://localhost:4173/auto-reindex"
+
 # MCP sidecar — stdio JSON-RPC against the live stack. Exercises the
 # wrapper layer that exposes our analytics to Claude Code / Cursor.
 node mcp-server/smoke.mjs
