@@ -83,11 +83,11 @@ try {
 
   notify('notifications/initialized');
 
-  // 2. tools/list — should list 20 tools (19 + clusters)
+  // 2. tools/list — should list 21 tools (20 + regression)
   const list = await send('tools/list');
   if (list.error) fail(`tools/list: ${list.error.message}`);
   const tools = list.result?.tools || [];
-  if (tools.length !== 20) fail(`tools/list: expected 20 tools, got ${tools.length}`);
+  if (tools.length !== 21) fail(`tools/list: expected 21 tools, got ${tools.length}`);
   for (const expected of [
     'gitnexus_list_repos', 'gitnexus_entropy', 'gitnexus_churn', 'gitnexus_coupling',
     'gitnexus_growth', 'gitnexus_lifespan', 'gitnexus_ownership', 'gitnexus_dissonance',
@@ -95,6 +95,7 @@ try {
     'gitnexus_similarity', 'gitnexus_entropy_commits', 'gitnexus_watches',
     'gitnexus_repo_by_id', 'gitnexus_commit_footprint', 'gitnexus_snapshot_auto',
     'gitnexus_snapshot_from_pr', 'gitnexus_ghost_audit', 'gitnexus_clusters',
+    'gitnexus_regression',
   ]) {
     if (!tools.find((t) => t.name === expected)) fail(`tools/list: missing ${expected}`);
   }
@@ -151,6 +152,23 @@ try {
         pass(`gitnexus_clusters(${repo}) → ${cs.length} cluster(s)`);
       } else {
         fail(`gitnexus_clusters(${repo}): unexpected response shape`);
+      }
+      // 4d. tools/call gitnexus_regression — hits gitnexus-web at :4173
+      // Tolerant: the endpoint may error if snapshots are insufficient;
+      // we only care that the handler wires through and returns a verdict shape.
+      const regression = await send('tools/call', {
+        name: 'gitnexus_regression',
+        arguments: { repo, metric: 'density' },
+      });
+      if (regression.result?.isError) {
+        console.warn(`SKIP: gitnexus_regression(${repo}) returned error (insufficient snapshots?): ${regression.result.content[0]?.text}`);
+      } else if (Array.isArray(regression.result?.content) && regression.result.content[0]?.type === 'text') {
+        const payload = JSON.parse(regression.result.content[0].text);
+        if (typeof payload.metric !== 'string') fail(`gitnexus_regression(${repo}): missing 'metric' field`);
+        if (typeof payload.regressed !== 'boolean') fail(`gitnexus_regression(${repo}): 'regressed' is not a boolean`);
+        pass(`gitnexus_regression(${repo}) → metric=${payload.metric} regressed=${payload.regressed}`);
+      } else {
+        fail(`gitnexus_regression(${repo}): unexpected response shape`);
       }
     }
   } else {

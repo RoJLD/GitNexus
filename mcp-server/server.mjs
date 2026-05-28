@@ -24,6 +24,7 @@
  *   gitnexus_coupling_cross    — cross-repo temporal coupling
  *   gitnexus_growth_cross      — cross-repo node-count timeline
  *   gitnexus_similarity        — identity vector + cube 2×2×2 + galaxy XY
+ *   gitnexus_regression        — regression-forensics verdict for a metric window
  *
  * Transport: stdio (JSON-RPC 2.0 line-delimited).
  * Protocol: MCP 2024-11-05 (matches @modelcontextprotocol/sdk@1.0.0
@@ -394,6 +395,28 @@ const TOOLS = [
       const data = await callWeb('/clusters', params);
       const summary = formatClustersSummary(data);
       return { ok: true, summary, data };
+    },
+  },
+  {
+    name: 'gitnexus_regression',
+    description: 'Locate a structural-metric regression in a window and identify the culprit commit + implicated files. Reuses entropy attribution. metric: density|modularity.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        repo: { type: 'string' },
+        metric: { type: 'string', enum: ['density', 'modularity'], default: 'density', description: 'Metric to analyse. Default: density.' },
+        from: { type: 'string', description: 'Window start. SHA or ISO date. Optional.' },
+        to: { type: 'string', description: 'Window end. SHA or ISO date. Optional.' },
+      },
+      required: ['repo'],
+      additionalProperties: false,
+    },
+    handler: ({ repo, metric, from, to }) => {
+      const params = { repo };
+      if (metric !== undefined && metric !== '') params.metric = metric;
+      if (from !== undefined && from !== '') params.from = from;
+      if (to !== undefined && to !== '') params.to = to;
+      return callWeb('/regression', params);
     },
   },
 ];
