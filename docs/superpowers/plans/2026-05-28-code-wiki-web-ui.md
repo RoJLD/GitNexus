@@ -37,8 +37,8 @@ powershell -NoProfile -Command "Set-Location 'c:\Users\rdenis\VScode\gitnexus\up
 | Path | Rôle | Tâche |
 |---|---|---|
 | `upstream/gitnexus-web/src/lib/wiki-schedule.ts` | NEW — pure fn `isWikiRegenDue` | T2 |
-| `upstream/wiki-worker.mjs` | NEW — conteneur server : HTTP :4748, spawn CLI, status | T3 |
-| `upstream/Dockerfile.cli` | MOD — COPY worker + wrapper d'entrypoint (2 process) | T4 |
+| `wiki-worker.mjs` (**repo ROOT**, top-level tracked, NOT in `upstream/`, NOT in the patch) | NEW — conteneur server : HTTP :4748, spawn CLI, status | T3 |
+| `Dockerfile.cli` (**repo ROOT**, top-level tracked) | MOD — COPY worker + CMD wrapper (2 process) | T4 |
 | `upstream/docker-server-wiki.mjs` | NEW — conteneur web : serve + proxy + status | T5 |
 | `upstream/docker-server.mjs` | MOD — monte handleWikiRoute | T5 |
 | `upstream/Dockerfile.web` | MOD — COPY docker-server-wiki.mjs | T5 |
@@ -55,9 +55,16 @@ powershell -NoProfile -Command "Set-Location 'c:\Users\rdenis\VScode\gitnexus\up
 
 ---
 
-## Task 1: Verify shared volume (BLOCKING gate, no code)
+## Task 1: Verify shared volume (BLOCKING gate, no code) — ✅ VERIFIED 2026-05-28
 
-The web container must read `.gitnexus/wiki/` **written by** the server container. If they don't share the repo-data path, the whole feature can't serve. Verify before writing any code.
+**RESULT (already done by the controller):** Gate PASSES. Both services in `docker-compose.yml` mount `${PROJECTS_ROOT}:/data/projects` **RW**. Each repo's `.gitnexus/wiki/` lives at `/data/projects/<repo>/.gitnexus/wiki/` — the **same path in both containers** — so `gitnexus-web` can read the HTML written by the `gitnexus` server container. No compose change needed for the volume.
+
+**Architecture corrections discovered (apply to T3/T4/T11):**
+- The `gitnexus` (server) service builds with **`context: .` + `dockerfile: Dockerfile.cli`** → the **ROOT** `Dockerfile.cli` (`FROM ghcr.io/abhigyanpatwari/gitnexus:1.6.5`, CLI + `core/wiki` in the base image, `gitnexus` on PATH, inherits the base `serve` CMD). NOT `upstream/Dockerfile.cli`.
+- Therefore `wiki-worker.mjs` lives at the **repo ROOT** (top-level tracked file, committed directly — not in `upstream/`, not in the patch), so it's in the `.` build context.
+- The compose **service name is `gitnexus`** (not `gitnexus-server`) → the web container reaches the worker at `http://gitnexus:4748`. Build command: `docker compose build gitnexus gitnexus-web`.
+
+The original verification steps below are retained for the record.
 
 - [ ] **Step 1: Read the compose volumes**
 
@@ -191,13 +198,13 @@ git commit -m "feat(wiki): isWikiRegenDue + parseAutoEvery pure fns + 12 unit ca
 ## Task 3: `wiki-worker.mjs` (server container HTTP trigger)
 
 **Files:**
-- Create: `upstream/wiki-worker.mjs`
+- Create: `wiki-worker.mjs` (**repo ROOT** — top-level tracked file, committed directly, NOT under `upstream/`, NOT via the patch)
 
-This runs INSIDE the `gitnexus-server` container (where `/usr/local/bin/gitnexus` + the data volume live). Zero-dep Node, mirrors our docker-server style.
+This runs INSIDE the `gitnexus` server container (where `/usr/local/bin/gitnexus` + the data volume live). It must be at the repo root so the `Dockerfile.cli` build context (`.`) can COPY it. Zero-dep Node, mirrors our docker-server style.
 
 - [ ] **Step 1: Write the worker**
 
-Create `upstream/wiki-worker.mjs`:
+Create `wiki-worker.mjs` at the repo root:
 
 ```javascript
 #!/usr/bin/env node
@@ -310,60 +317,48 @@ server.listen(PORT, '0.0.0.0', () => {
 
 - [ ] **Step 2: Syntax-check**
 
-Run: `node --check upstream/wiki-worker.mjs`
+Run: `node --check wiki-worker.mjs`
 Expected: no output (valid). (This only checks syntax, not runtime — runtime is validated in Task 11's docker build.)
 
-- [ ] **Step 3: Regen patches + commit**
+- [ ] **Step 3: Commit (top-level tracked file — NO patch regen, it's not under `upstream/`)**
 
 ```
-powershell -NoProfile -Command "Set-Location 'c:\Users\rdenis\VScode\gitnexus\upstream'; & git add -N . ; \$diff = & git diff HEAD ; \$diff | Out-File -FilePath '..\patches\upstream-all.diff' -Encoding Unicode ; & git reset *> \$null"
-git reset HEAD tests/unit/cluster-layout.test.mjs 2>$null
-git add patches/upstream-all.diff
+git add wiki-worker.mjs
 git commit -m "feat(wiki): wiki-worker.mjs — HTTP trigger spawns gitnexus wiki CLI (Task 3)"
 ```
 
 ---
 
-## Task 4: `Dockerfile.cli` — COPY worker + run alongside API server
+## Task 4: `Dockerfile.cli` (repo ROOT) — COPY worker + run alongside API server
 
 **Files:**
-- Modify: `upstream/Dockerfile.cli`
+- Modify: `Dockerfile.cli` (**repo ROOT**, top-level tracked file — committed directly, NOT via patch)
 
-- [ ] **Step 1: COPY the worker into the runtime stage**
+Context: the ROOT `Dockerfile.cli` is `FROM ghcr.io/abhigyanpatwari/gitnexus:1.6.5`, applies two patch scripts (`scripts/patch-lbug-staleness.mjs`, `scripts/patch-incremental-dump.mjs`), and ends with `USER node`. It has **no explicit CMD** — it inherits the base image's `CMD ["node", "gitnexus/dist/cli/index.js", "serve", "--host", "0.0.0.0", "--port", "4747"]` (WORKDIR `/app`, `gitnexus` binary symlinked on PATH).
 
-In `upstream/Dockerfile.cli`, in the **runtime** stage (after the existing `COPY --from=builder ... ./gitnexus/dist` block, around line 55-59), add:
+- [ ] **Step 1: COPY the worker**
+
+In the ROOT `Dockerfile.cli`, add a COPY for the worker. Place it among the other `COPY --chown=node:node scripts/...` lines (while still `USER root`, before the final `USER node`), mirroring their style. The build context is `.` (repo root), so the source path is `wiki-worker.mjs`:
 
 ```dockerfile
 # Code Wiki generation worker (our addition) — runs next to the API server.
-COPY --chown=node:node wiki-worker.mjs ./wiki-worker.mjs
+COPY --chown=node:node wiki-worker.mjs /app/wiki-worker.mjs
 ```
 
-(Note: `wiki-worker.mjs` is at the build-context root — same place the Dockerfile is. Confirm the compose build context for `gitnexus-server` includes it; if the context is `upstream/`, the path is `wiki-worker.mjs`.)
+- [ ] **Step 2: Add the CMD wrapper (override the inherited serve CMD to run both)**
 
-- [ ] **Step 2: Replace the CMD to run both processes**
-
-The current final line is:
-
-```dockerfile
-CMD ["node", "gitnexus/dist/cli/index.js", "serve", "--host", "0.0.0.0", "--port", "4747"]
-```
-
-Replace it with a shell form that backgrounds the worker (non-fatal) and execs the API server as the main process (so signals/health target the API server):
+After the final `USER node` line, add an explicit CMD that backgrounds the worker (non-fatal) and execs the API server as the main process (so signals/health target the API server):
 
 ```dockerfile
 # Run the wiki worker in the background (non-fatal: if it dies the API server
-# stays up as the container's main process), then exec the API server.
-CMD ["sh", "-c", "node /app/wiki-worker.mjs & exec node gitnexus/dist/cli/index.js serve --host 0.0.0.0 --port 4747"]
+# stays up as the container's main process), then exec the inherited API server.
+CMD ["sh", "-c", "node /app/wiki-worker.mjs & exec node /app/gitnexus/dist/cli/index.js serve --host 0.0.0.0 --port 4747"]
 ```
 
-- [ ] **Step 3: Commit (Dockerfile.cli is a top-level tracked file, no patch regen)**
-
-Note: `upstream/Dockerfile.cli` — check whether it's tracked at top level or only via the patch. Run `git status upstream/Dockerfile.cli`. The repo `.gitignore`s `upstream/` EXCEPT specific files; if `Dockerfile.cli` shows as ignored, it goes through the patch regen instead. **Most likely** `upstream/` is fully gitignored and ALL upstream edits go through `patches/upstream-all.diff`. So regen + commit the patch:
+- [ ] **Step 3: Commit (top-level tracked file — NO patch regen)**
 
 ```
-powershell -NoProfile -Command "Set-Location 'c:\Users\rdenis\VScode\gitnexus\upstream'; & git add -N . ; \$diff = & git diff HEAD ; \$diff | Out-File -FilePath '..\patches\upstream-all.diff' -Encoding Unicode ; & git reset *> \$null"
-git reset HEAD tests/unit/cluster-layout.test.mjs 2>$null
-git add patches/upstream-all.diff
+git add Dockerfile.cli
 git commit -m "feat(wiki): Dockerfile.cli runs wiki-worker alongside API server (Task 4)"
 ```
 
@@ -881,10 +876,10 @@ git commit -m "test(wiki): integration (serve/status/generate proxy) + e2e (pane
 Run (this is the real validation — the feature touches 2 Dockerfiles + compose):
 
 ```
-docker compose build gitnexus-server gitnexus-web
+docker compose build gitnexus gitnexus-web
 ```
 
-Expected: both build exit 0. If `gitnexus-server` fails on the new CMD/COPY, fix before proceeding. Then a quick up + curl smoke:
+(The server service is named `gitnexus`, the web service `gitnexus-web`.) Expected: both build exit 0. If `gitnexus` fails on the new CMD/COPY, fix before proceeding. Then a quick up + curl smoke:
 
 ```
 docker compose up -d
@@ -897,7 +892,7 @@ curl -s -o /dev/null -w "wiki: HTTP %{http_code}\n" "http://localhost:4173/wiki?
 curl -s -o /dev/null -w "wiki/status: HTTP %{http_code}\n" "http://localhost:4173/wiki/status?repo=hmm_studio"
 ```
 
-Expected: `/wiki` → 200 or 404; `/wiki/status` → 200. If `/wiki/status` is 502, the worker isn't running — check the `gitnexus-server` logs (`docker logs gitnexus-server | grep wiki-worker`) and the Dockerfile.cli CMD.
+Expected: `/wiki` → 200 or 404; `/wiki/status` → 200. If `/wiki/status` is 502, the worker isn't running — check the server logs (`docker logs gitnexus | grep wiki-worker`) and the root `Dockerfile.cli` CMD.
 
 - [ ] **Step 2: Update CLAUDE.md smoke loop**
 
