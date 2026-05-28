@@ -905,22 +905,24 @@ abandonner l'acquis.
 
 > Liste annoncée par l'upstream gitnexus comme **offre enterprise** (SaaS
 > managé ou self-hosted) + usage commercial de l'OSS sous licence.
-> Capturée le 2026-05-28 pour **brainstorm ultérieur** : pour chaque item,
-> déterminer (1) si notre fork le couvre déjà — total/partiel/pas du tout,
-> (2) si on doit l'implémenter, (3) comment aller plus loin que l'upstream.
-> Les pointeurs "overlap ?" ci-dessous sont des **hypothèses de départ**
-> non vérifiées, pas des conclusions.
+> Capturée le 2026-05-28, **évaluée le 2026-05-28** contre le code réel
+> (recherche dans `upstream/` core + nos `docker-server-*.mjs` + `mcp-server/`
+> + INVENTORY/ROADMAP). Les verdicts ci-dessous sont **vérifiés** (preuves
+> par chemin de fichier), plus des hypothèses. Légende : 🟡 partiel /
+> 🔴 absent / ⚪ N/A.
 
-| Feature enterprise (upstream) | Overlap ? (hypothèse à vérifier) | Décision |
+| Feature enterprise (upstream) | Verdict vérifié + preuve | Aller plus loin |
 |---|---|---|
-| **PR Review** — blast-radius automatique sur les pull requests | Partiel ? On a impact analysis (MCP `gitnexus_impact`) + `/snapshot/from-pr` (Tier 36) + diff coloring. Manque : le hook PR automatique + le rendu "review". | À brainstormer |
-| **Auto-updating Code Wiki** — doc toujours à jour (Code Wiki aussi en OSS) | Pas évident chez nous. Le Code Wiki OSS est upstream ; on ne l'a pas patché/exposé. | À brainstormer |
-| **Auto-reindexing** — knowledge graph rafraîchi automatiquement | Partiel ? On a auto-snapshot aux pics (Tier 35) + watches/cron (Tier 2bis.3). Pas de re-index continu du graphe live. | À brainstormer |
-| **Multi-repo support** — graphe unifié cross-repos | Partiel/fort ? On a cross-repo coupling (Tier 1.2), growth/cross, similarity (Tier 2.5), galaxy view (Tier 2.6). Pas un *seul graphe* fusionné, plutôt des analytics cross-repo. | À brainstormer |
-| **OCaml support** — couverture langage additionnelle | Non. Couverture langage = upstream ; rien d'OCaml-spécifique dans le fork. | À brainstormer |
-| **Priority feature/language support** — demande de langages/features | N/A en tant que feature (c'est du service commercial). | Hors-scope feature |
-| **(Upcoming) Auto regression forensics** | Overlap conceptuel avec Tier 3.5 (modèle prédictif de bugs) + Tier 3.2 (mutation tracking) + commit-level entropy delta (Tier 2bis.2). | À brainstormer |
-| **(Upcoming) End-to-end test generation** | Pas chez nous. Nouveau chantier. | À brainstormer |
+| **PR Review** — blast-radius sur les PR | 🟡 **Partiel — primitives oui, automatisation non.** Primitive impact présente (`gitnexus_impact`, blast radius call-graph, `upstream/gitnexus/src/core/group/cross-impact.ts`). On a ajouté `/snapshot/from-pr` (`upstream/docker-server-snapshot-from-pr.mjs`, on-demand, résout 2 refs → diffUrl) + MCP `gitnexus_snapshot_from_pr`. **Pas** de webhook forge, pas d'auto-trigger, pas de review postée. Tier 3.6 (CI check) planifié non livré. | Couche d'intégration : API GitHub/GitLab + budget gate + commentaire de review posté, sur nos primitives existantes. |
+| **Auto-updating Code Wiki** — doc toujours à jour | 🟡 **Partiel — existe upstream en CLI seulement.** `gitnexus wiki` pleinement implémenté côté core (`upstream/gitnexus/src/core/wiki/` : generator, graph-queries, llm-client, html-viewer ; CLI `upstream/gitnexus/src/cli/wiki.ts`), mais **CLI-only** → écrit `.gitnexus/wiki/index.html` ou un gist. **Zéro** route/panel wiki dans `gitnexus-web`. Pas "auto-updating". | Wirer le wiki existant dans notre UI web (panel/route) + auto-régénération via notre cron/watches. ← **prochain brainstorm**. |
+| **Auto-reindexing** — graph rafraîchi automatiquement | 🟡 **Partiel — analytics oui, graphe non.** Re-analyse incrémentale existe mais **manuelle** (`gitnexus analyze` ; `upstream/gitnexus/src/core/run-analyze.ts` + `incremental/`). Pas de watcher/daemon/git-hook. Nos `/snapshot/auto` (Tier 35) + watches cron (Tier 2bis.3) rafraîchissent *analytics/snapshots*, pas le graphe de code. | Étendre le cron watches pour déclencher un `analyze` incrémental sur changement git. Infra déjà là. |
+| **Multi-repo support** — graphe unifié | 🟡 **Partiel — analytics cross-repo oui, graphe fusionné non.** `/coupling/cross`, `/growth/cross`, `/similarity`, galaxy view (1 point/repo). **Pas** de Sigma unique fusionnant les nodes de repo A+B avec arêtes entre eux — graphes restent séparés (diff overlay seulement). Tier 3.3 Conway = ce territoire, bloqué. | Vrai graphe fusionné (arêtes cross-repo via symboles/imports partagés). Gros chantier, fort effort. |
+| **OCaml support** — couverture langage | 🔴 **Absent.** Upstream supporte **16** langages (`upstream/gitnexus-shared/src/languages.ts` : JS, TS, Python, Java, C, C++, C#, Go, Ruby, Rust, PHP, Kotlin, Swift, Dart, Vue, COBOL). OCaml nulle part. Le fork n'ajoute aucun langage. | Implémenter un `LanguageProvider` OCaml (tree-sitter) — travail core upstream, mieux contribué en amont. Niche. |
+| **Priority feature/language support** | ⚪ **N/A** — offre de service commercial, pas une feature logicielle. | Rien à construire. |
+| **(Upcoming) Auto regression forensics** | 🔴 **Absent (primitives adjacentes livrées).** Tier 3.5 (bugs prédictifs) planifié/bloqué (besoin de labels, R&D ML). Livré & adjacent : commit-entropy delta (`docker-server-entropy-commits.mjs`, attribution structurelle par commit) + `/graph/at-commit` (archéologie). Aucun n'est de la forensics causale. | MVP type bisect : corréler une régression de métrique (pic entropy/coupling) au commit introducteur, via l'attribution déjà livrée. Faisable sans ML. |
+| **(Upcoming) End-to-end test generation** | 🔴 **Absent, non planifié.** Aucune mention INVENTORY/ROADMAP. | Net-new, LLM-lourd, gros scope, ROI proche faible. |
+
+**Lecture (impact/effort)** : les 3 items 🟡 sont les meilleurs leviers (on possède le difficile, le gap est une fine couche) — (1) **Code Wiki en UI + auto-update** (meilleur ratio, brainstorm en cours), (2) **Auto-reindexing du graphe** (étendre le cron), (3) **PR Review automation** (Tier 3.6, mais tire l'API forge + auth). Les 🔴 sont soit de gros chantiers (graphe multi-repo), soit core/niche (OCaml), soit R&D (regression forensics), soit hors-scope (E2E gen, priority support).
 
 ---
 
