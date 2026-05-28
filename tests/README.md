@@ -59,6 +59,7 @@ Pré-requis local : Rancher Desktop running, **Node ≥ 22 LTS**. CI : `.github/
 | Timeline zoom — pure date/position fns | `unit/timeline-zoom.test.mjs` | computeZoomWindow + mapDateToPosition + mapPositionToDate + snapToNearestSnapshot + applyWheelZoom (anchor-preserving, clamp min span / full range, shift-to-fit — 24 cases) |
 | Timeline zoom — useAppState slice | `unit/use-app-state-timeline.test.tsx` | cursorA/B + zoomWindow + graphMode init + auto-swap + mutual exclusion (8 cases) |
 | Timeline zoom — intra-repo graph diff | `unit/graph-diff-between-snapshots.test.mjs` | diffBetweenSnapshots alias + edges by triple + empty snapshots (5 cases) |
+| Code Wiki — schedule pure fns | `unit/wiki-schedule.test.mjs` | parseAutoEvery (h/d/off/malformed) + isWikiRegenDue (never/elapsed/not-elapsed/broken — 12 cases) |
 | Temporal filter — pure client fns | `unit/temporal-filter-modes.test.mjs` | computeStrictFilter + computeNormalFilter (intersection + union) |
 | Temporal filter — backend core | `unit/nodes-alive-between-core.test.mjs` | filterSnapshotsInWindow + unionSnapshotNodeIds |
 | Temporal filter — useAppState slice | `unit/use-app-state-temporal-filter.test.tsx` | 4 modes + localStorage persist + restore |
@@ -123,6 +124,7 @@ Pré-requis local : Rancher Desktop running, **Node ≥ 22 LTS**. CI : `.github/
 | Growth cross | `integration/endpoints/growth-cross.test.mjs` | `/growth/cross?repos=` |
 | Lifespan | `integration/endpoints/lifespan.test.mjs` | `/lifespan` buckets + golden |
 | Lifespan windowed | `integration/endpoints/lifespan-windowed.test.mjs` | GET 200 global + 200 windowed + 400 partial params + 400 invalid range + alias resolution (5 cases) |
+| Code Wiki endpoints | `integration/endpoints/wiki.test.mjs` | `/wiki` 200-html-or-404 + missing-repo 400 + `/wiki/status` 200-or-502 shape + `/wiki/generate` 202/409/404/502 proxy |
 | Entropy | `integration/endpoints/entropy.test.mjs` | `/entropy` schema + range + golden |
 | Ownership | `integration/endpoints/ownership.test.mjs` | `/ownership` bus factor + golden |
 | Dissonance | `integration/endpoints/dissonance.test.mjs` | `/dissonance` schema + range + golden |
@@ -159,6 +161,7 @@ Pré-requis local : Rancher Desktop running, **Node ≥ 22 LTS**. CI : `.github/
 | E2E Augmented Timeline | `e2e/specs/07-augmented-timeline.spec.ts` | Scrub cursorB with ghosts ON (skip if no snapshots) + Animate roadmap button shows banner |
 | Lifespan windowed | `e2e/specs/lifespan-windowed.spec.ts` | Header + badge toggle on filter mode change (3 cases) |
 | Timeline URL persistence | `e2e/specs/timeline-url-persistence.spec.ts` | write tl* params (filter+compare) + reload restore + clear on default + zoom param write/clear (4 cases) |
+| Code Wiki panel | `e2e/specs/wiki-panel.spec.ts` | open Wiki panel (iframe or empty-state) + Regenerate fires POST /wiki/generate (2 cases) |
 
 ## Tests désactivés / connus fragiles
 

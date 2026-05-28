@@ -225,6 +225,17 @@ curl -s -o /dev/null -w "nodes/alive-between: HTTP %{http_code}\n" \
 curl -s -o /dev/null -w "lifespan windowed: HTTP %{http_code}\n" \
   "http://localhost:4173/lifespan?repo=hmm_studio&from=oldest&to=live"
 
+# Code Wiki (Tier 55) — /wiki serves the generated HTML and may 404 if the wiki
+# was never generated (fine — we check routing). /wiki/status proxies the
+# wiki-worker (2nd process in the gitnexus container, internal :4748) and
+# should be 200; a 502 means the worker is down (check
+# `docker logs gitnexus | grep wiki-worker`). Generation needs a server-side
+# LLM key (GITNEXUS_API_KEY on the gitnexus service).
+curl -s -o /dev/null -w "wiki: HTTP %{http_code}\n" \
+  "http://localhost:4173/wiki?repo=hmm_studio"
+curl -s -o /dev/null -w "wiki/status: HTTP %{http_code}\n" \
+  "http://localhost:4173/wiki/status?repo=hmm_studio"
+
 # MCP sidecar — stdio JSON-RPC against the live stack. Exercises the
 # wrapper layer that exposes our analytics to Claude Code / Cursor.
 node mcp-server/smoke.mjs
