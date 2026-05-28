@@ -62,4 +62,22 @@ test.describe('Timeline URL persistence', () => {
     await page.waitForTimeout(1000);
     expect(page.url()).not.toMatch(/tlZoom=/);
   });
+
+  test('zoom + cursors restore after reload (deferred-zoom path)', async ({ page }) => {
+    // Zoom writes tlZoom=1 plus the resolved cursor shortHashes (tlA/tlB).
+    await page.click('button:has-text("Zoom to window")');
+    await page.waitForTimeout(1500);
+    expect(page.url()).toMatch(/tlZoom=1/);
+    expect(page.url()).toMatch(/tlA=/);
+    expect(page.url()).toMatch(/tlB=/);
+
+    await page.reload();
+    await page.waitForSelector('[data-cursor="A"]', { timeout: 30_000 });
+    await page.waitForSelector('[data-cursor="B"]', { timeout: 30_000 });
+    await page.waitForTimeout(1500);
+
+    // Deferred-zoom effect should have re-entered zoom once cursors landed.
+    await expect(page.locator('button:has-text("Zoom out")')).toBeVisible();
+    expect(page.url()).toMatch(/tlZoom=1/);
+  });
 });
