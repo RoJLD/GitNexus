@@ -255,6 +255,12 @@ curl -s -o /dev/null -w "regression: HTTP %{http_code}\n" \
 curl -s -o /dev/null -w "regression ownership: HTTP %{http_code}\n" \
   "http://localhost:4173/regression?repo=hmm_studio&metric=ownership.busFactor"
 
+# Commit lister (timeline Commits mode — commit-level time-travel, Plan 1/3) —
+# read-only git log feeding the per-commit timeline navigation. Newest-first,
+# capé (max défaut 200). Params: ?repo=&from=&to=&max=.
+curl -s -o /dev/null -w "commits: HTTP %{http_code}\n" \
+  "http://localhost:4173/commits?repo=hmm_studio&max=50"
+
 # MCP sidecar — stdio JSON-RPC against the live stack. Exercises the
 # wrapper layer that exposes our analytics to Claude Code / Cursor.
 node mcp-server/smoke.mjs
