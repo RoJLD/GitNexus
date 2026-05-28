@@ -33,4 +33,8 @@ describe('isSafeRef', () => {
     expect(isSafeRef('a; rm -rf /')).toBe(false);
     expect(isSafeRef(null)).toBe(false);
   });
+  it('rejects range syntax (we want a single ref, not a range)', () => {
+    expect(isSafeRef('HEAD~5..main')).toBe(false);
+    expect(isSafeRef('main...origin/main')).toBe(false);
+  });
 });

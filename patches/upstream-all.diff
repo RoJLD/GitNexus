@@ -834,10 +834,10 @@ index 0000000..22952d6
 +}
 diff --git a/docker-server-commits.mjs b/docker-server-commits.mjs
 new file mode 100644
-index 0000000..6648c8e
+index 0000000..dd0accf
 --- /dev/null
 +++ b/docker-server-commits.mjs
-@@ -0,0 +1,96 @@
+@@ -0,0 +1,102 @@
 +/**
 + * Commit lister — GET /commits?repo=&from=&to=&max=
 + *
@@ -861,7 +861,8 @@ index 0000000..6648c8e
 +    typeof ref === 'string' &&
 +    ref.length > 0 &&
 +    !ref.startsWith('-') &&
-+    /^[A-Za-z0-9._/~^@-]+$/.test(ref)
++    /^[A-Za-z0-9._/~^@-]+$/.test(ref) &&
++    !ref.includes('..') // pas de syntaxe de range (HEAD~5..main) — on veut un ref simple
 +  );
 +}
 +
@@ -910,12 +911,17 @@ index 0000000..6648c8e
 +  try {
 +    out = await runCmd('git', ['-C', repoPath, 'log', `--format=${COMMIT_FMT}`, '-n', String(max), to, '--']);
 +  } catch (err) {
-+    res.writeHead(404, { 'Content-Type': 'application/json' });
++    // Repo trouvé + refs validés à ce stade : un échec git est inattendu (ex.
++    // repoPath pas un vrai repo git) → erreur interne, pas un 404.
++    res.writeHead(500, { 'Content-Type': 'application/json' });
 +    res.end(JSON.stringify({ error: `git log failed: ${err.message}` }));
 +    return;
 +  }
 +
 +  let commits = parseCommitLines(out);
++  // Capturer le cap AVANT le slice `from` : sinon le slice peut faire
++  // repasser truncated à false alors que git a bien atteint le plafond.
++  const truncated = commits.length >= max;
 +  if (from) {
 +    const idx = commits.findIndex(
 +      (c) => c.hash === from || c.hash.startsWith(from) || c.shortHash === from,
@@ -924,7 +930,7 @@ index 0000000..6648c8e
 +  }
 +
 +  res.writeHead(200, { 'Content-Type': 'application/json' });
-+  res.end(JSON.stringify({ repo: baseRepo, to, commits, truncated: commits.length >= max }));
++  res.end(JSON.stringify({ repo: baseRepo, to, commits, truncated }));
 +}
 +
 +export async function handleCommitsRoute(req, url, res, opts) {
