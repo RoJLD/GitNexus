@@ -250,6 +250,11 @@ curl -s -o /dev/null -w "auto-reindex: HTTP %{http_code}\n" \
 curl -s -o /dev/null -w "regression: HTTP %{http_code}\n" \
   "http://localhost:4173/regression?repo=hmm_studio&metric=density"
 
+# Regression forensics Phase 2 (Tier 58) — suspects-mode metric (ownership).
+# /regression now covers 6 scalaires (entropy + ownership/dissonance/coupling).
+curl -s -o /dev/null -w "regression ownership: HTTP %{http_code}\n" \
+  "http://localhost:4173/regression?repo=hmm_studio&metric=ownership.busFactor"
+
 # MCP sidecar — stdio JSON-RPC against the live stack. Exercises the
 # wrapper layer that exposes our analytics to Claude Code / Cursor.
 node mcp-server/smoke.mjs
@@ -290,7 +295,7 @@ gitnexus/
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **gitnexus** (1929 symbols, 2361 relationships, 41 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **gitnexus** (2359 symbols, 2835 relationships, 42 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
 
