@@ -128,3 +128,31 @@ design initial §3.3 (notées pour l'historique) :
 composant écrits, exécution différée jusqu'à Node 22.
 
 **Reste** : Plan 3 (C — pré-chauffage des diffs on-push + on-era-entry).
+
+---
+
+## Update 2026-05-29 — Plan 3 (C) livré ; chantier commit-level time-travel COMPLET
+
+**Plan 3 (C — pré-chauffage des diffs)** livré : `docker-server-prewarm.mjs`.
+- **On-push** : la cron `watches` appelle `maybePrewarmRepo` par repo (opt-in
+  `.gitnexus.json > incremental.preWarm` + `preWarmCommits`, défaut 50). Génère
+  les diffs manquants des N derniers commits via `/snapshot/incremental`, avec
+  un **cap par tick** (`PREWARM_PER_TICK`, défaut 5) + garde anti-overlap
+  (`_inflight`) pour éviter une backfill de 50×~50s d'un coup — ça s'étale sur
+  les ticks.
+- **On-era** : `POST /snapshot/prewarm?repo=&max=` (fire-and-forget, 202
+  `{queued}`) déclenché par `Timeline.tsx` à l'entrée du mode Commits sur la
+  plage chargée. `GET /snapshot/prewarm?repo=&max=` → `{total, warm, cold}`
+  (état, read-only — sert le smoke + un éventuel indicateur).
+- Même cache `.gitnexus/incremental/<sha>.json.gz` consommé par
+  `/graph/at-commit`. `diffExists` (stat) skippe les diffs déjà présents (pas
+  de re-analyze).
+
+**Déviation mineure vs §3.4** : pas d'indicateur UI dédié pour le pré-chauffage
+(fire-and-forget ; le bénéfice est des clics plus rapides). Le `GET` pollable
+existe si on veut en ajouter un plus tard.
+
+**Le chantier commit-level time-travel (A + B + C) est désormais complet.**
+
+**Vérification** : build Docker (compile gate) + smoke (`GET` 200 / `POST` 202)
++ tests d'intégration différés (Node 21 < 22).

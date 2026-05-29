@@ -276,6 +276,15 @@ curl -s -o /dev/null -w "baseline-seed (missing args): HTTP %{http_code}\n" \
 curl -s -o /dev/null -w "snapshot/promote (missing args): HTTP %{http_code}\n" \
   -X POST "http://localhost:4173/snapshot/promote"
 
+# Diff pre-warming (commit-level time-travel, Plan 3/3 — pièce C). GET = état
+# { total, warm, cold } des N derniers commits ; POST = lance le pré-chauffage
+# en fond (202 { queued }). On-push : cron watches (opt-in .gitnexus.json >
+# incremental.preWarm). On-era : le mode Commits POST à l'entrée.
+curl -s -o /dev/null -w "prewarm GET: HTTP %{http_code}\n" \
+  "http://localhost:4173/snapshot/prewarm?repo=hmm_studio&max=10"
+curl -s -o /dev/null -w "prewarm POST: HTTP %{http_code}\n" \
+  -X POST "http://localhost:4173/snapshot/prewarm?repo=hmm_studio&max=3"
+
 # MCP sidecar — stdio JSON-RPC against the live stack. Exercises the
 # wrapper layer that exposes our analytics to Claude Code / Cursor.
 node mcp-server/smoke.mjs
