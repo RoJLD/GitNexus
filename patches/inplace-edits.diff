@@ -1583,7 +1583,7 @@ index 98c20c6..50a414e 100644
            <div className="mt-6 border-t border-border-subtle pt-4">
              <h3 className="mb-3 text-xs font-medium tracking-wide text-text-secondary uppercase">
 diff --git a/gitnexus-web/src/components/GraphCanvas.tsx b/gitnexus-web/src/components/GraphCanvas.tsx
-index e34fd43..5a492c8 100644
+index e34fd43..5667332 100644
 --- a/gitnexus-web/src/components/GraphCanvas.tsx
 +++ b/gitnexus-web/src/components/GraphCanvas.tsx
 @@ -1,4 +1,4 @@
@@ -1600,7 +1600,11 @@ index e34fd43..5a492c8 100644
  } from '@/lib/lucide-icons';
  import { useSigma } from '../hooks/useSigma';
  import { useAppState } from '../hooks/useAppState';
-@@ -21,12 +22,33 @@ import {
+@@ -18,15 +19,37 @@ import {
+   SigmaNodeAttributes,
+   SigmaEdgeAttributes,
+ } from '../lib/graph-adapter';
++import { groupGraphToGraphology } from '../lib/group-graph-adapter';
  import type { GraphNode } from 'gitnexus-shared';
  import { QueryFAB } from './QueryFAB';
  import Graph from 'graphology';
@@ -1634,7 +1638,7 @@ index e34fd43..5a492c8 100644
    const {
      graph,
      setSelectedNode,
-@@ -46,9 +68,63 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -46,9 +69,66 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
      clearAICitationHighlights,
      clearBlastRadius,
      animatedNodes,
@@ -1650,6 +1654,9 @@ index e34fd43..5a492c8 100644
 +    availableRepos,
 +    cursorB,
 +    temporalFilteredNodeIds,
++    groupGraphActive,
++    groupGraphData,
++    exitGroupGraph,
 +  } = appState;
 +  // Layout cache bridge (Task 5). Read defensively so this file compiles
 +  // against pre-layout-cache builds.
@@ -1699,7 +1706,7 @@ index e34fd43..5a492c8 100644
    const effectiveHighlightedNodeIds = useMemo(() => {
      if (!isAIHighlightsEnabled) return highlightedNodeIds;
      const next = new Set(highlightedNodeIds);
-@@ -82,6 +158,23 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -82,6 +162,23 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
  
    const handleNodeClick = useCallback(
      (nodeId: string) => {
@@ -1723,7 +1730,7 @@ index e34fd43..5a492c8 100644
        if (!graph) return;
        const node = nodeById.get(nodeId);
        if (node) {
-@@ -89,6 +182,7 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -89,6 +186,7 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
          openCodePanel();
        }
      },
@@ -1731,7 +1738,7 @@ index e34fd43..5a492c8 100644
      [graph, nodeById, setSelectedNode, openCodePanel],
    );
  
-@@ -130,6 +224,7 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -130,6 +228,7 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
      containerRef,
      sigmaRef,
      setGraph: setSigmaGraph,
@@ -1739,7 +1746,7 @@ index e34fd43..5a492c8 100644
      zoomIn,
      zoomOut,
      resetZoom,
-@@ -139,6 +234,12 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -139,6 +238,12 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
      stopLayout,
      selectedNode: sigmaSelectedNode,
      setSelectedNode: setSigmaSelectedNode,
@@ -1752,7 +1759,7 @@ index e34fd43..5a492c8 100644
    } = useSigma({
      onNodeClick: handleNodeClick,
      onNodeHover: handleNodeHover,
-@@ -147,6 +248,10 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -147,6 +252,10 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
      blastRadiusNodeIds: effectiveBlastRadiusNodeIds,
      animatedNodes: effectiveAnimatedNodes,
      visibleEdgeTypes,
@@ -1763,7 +1770,15 @@ index e34fd43..5a492c8 100644
    });
  
    // Expose focusNode to parent via ref
-@@ -189,8 +294,20 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -170,6 +279,7 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+ 
+   // Update Sigma graph when KnowledgeGraph changes
+   useEffect(() => {
++    if (groupGraphActive) return;
+     if (!graph) return;
+ 
+     // Build communityMemberships map from MEMBER_OF relationships
+@@ -189,8 +299,27 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
      });
  
      const sigmaGraph = knowledgeGraphToGraphology(graph, communityMemberships);
@@ -1772,7 +1787,14 @@ index e34fd43..5a492c8 100644
 +    // projectName already encodes the snapshot suffix (e.g.
 +    // `hmm_studio@c2ac699`) so it doubles as the layout cache key.
 +    setSigmaGraph(sigmaGraph, { cacheKey: projectName || undefined });
-+  }, [graph, nodeById, setSigmaGraph, projectName]);
++  }, [graph, nodeById, setSigmaGraph, projectName, groupGraphActive]);
++
++  // Group graph — load merged multi-repo graph when groupGraphActive flips on
++  useEffect(() => {
++    if (!groupGraphActive || !groupGraphData) return;
++    const g = groupGraphToGraphology(groupGraphData);
++    setSigmaGraph(g, { cacheKey: `group:${groupGraphData.group}` });
++  }, [groupGraphActive, groupGraphData, setSigmaGraph]);
 +
 +  // Expose useSigma.recomputeLayout up to useAppState so the Header
 +  // "Recompute layout" button can fire it. The action lives on
@@ -1786,7 +1808,7 @@ index e34fd43..5a492c8 100644
  
    // Update node visibility when filters change
    useEffect(() => {
-@@ -205,6 +322,198 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -205,6 +334,198 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
      // eslint-disable-next-line react-hooks/exhaustive-deps -- sigmaRef identity never changes
    }, [visibleLabels, depthFilter, appSelectedNode]);
  
@@ -1985,7 +2007,7 @@ index e34fd43..5a492c8 100644
    // Sync app selected node with sigma
    useEffect(() => {
      if (appSelectedNode) {
-@@ -249,6 +558,130 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -249,6 +570,130 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
          className="sigma-container h-full w-full cursor-grab active:cursor-grabbing"
        />
  
@@ -2116,12 +2138,46 @@ index e34fd43..5a492c8 100644
        {/* Hovered node tooltip - only show when NOT selected */}
        {hoveredNodeName && !sigmaSelectedNode && (
          <div className="pointer-events-none absolute top-4 left-1/2 z-20 -translate-x-1/2 animate-fade-in rounded-lg border border-border-subtle bg-elevated/95 px-3 py-1.5 backdrop-blur-sm">
-@@ -350,8 +783,16 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -350,8 +795,50 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
        {/* Query FAB */}
        <QueryFAB />
  
 -      {/* AI Highlights toggle - Top Right */}
 -      <div className="absolute top-4 right-4 z-20">
++      {/* Group graph legend + back button (Task 7) */}
++      {groupGraphActive && groupGraphData && (
++        <>
++          <div
++            className="pointer-events-auto absolute left-3 top-3 z-30 rounded-lg border border-border-subtle bg-elevated p-3 text-xs shadow-lg"
++            data-testid="group-graph-legend"
++          >
++            <div className="mb-2 font-semibold text-text-primary">Group: {groupGraphData.group}</div>
++            {groupGraphData.repos.map((r) => (
++              <div key={r.name} className="flex items-center gap-1.5 py-0.5">
++                <span
++                  className="inline-block h-2.5 w-2.5 rounded-full"
++                  style={{ backgroundColor: r.color }}
++                />
++                <span className="text-text-secondary">{r.name}</span>
++              </div>
++            ))}
++            <div className="mt-2 flex items-center gap-1.5 py-0.5">
++              <span className="inline-block h-0.5 w-3" style={{ backgroundColor: '#fbbf24' }} />
++              <span className="text-text-muted">cross-repo ({groupGraphData.crossRepoEdgeCount})</span>
++            </div>
++            {groupGraphData.capped && <div className="mt-1 text-amber-400">node cap applied</div>}
++          </div>
++          <button
++            type="button"
++            onClick={() => exitGroupGraph()}
++            className="pointer-events-auto absolute right-3 top-16 z-30 rounded-md border border-border-subtle bg-elevated px-2.5 py-1 text-xs font-medium text-text-secondary shadow-sm transition-colors hover:bg-hover hover:text-text-primary"
++            data-testid="group-graph-back"
++          >
++            ← Back to single repo
++          </button>
++        </>
++      )}
++
 +      {/* Top Right: 2D/3D toggle + AI Highlights */}
 +      <div className="absolute top-4 right-4 z-20 flex items-center gap-2">
 +        <button
@@ -3498,7 +3554,7 @@ index 49862a9..5c552dd 100644
   * Create a Graph RAG agent
   */
 diff --git a/gitnexus-web/src/hooks/useAppState.tsx b/gitnexus-web/src/hooks/useAppState.tsx
-index 25c5776..5862e7b 100644
+index 25c5776..d36d771 100644
 --- a/gitnexus-web/src/hooks/useAppState.tsx
 +++ b/gitnexus-web/src/hooks/useAppState.tsx
 @@ -8,7 +8,12 @@ import {
@@ -3573,7 +3629,7 @@ index 25c5776..5862e7b 100644
    isAgentReady: boolean;
    isAgentInitializing: boolean;
    agentError: string | null;
-@@ -192,6 +221,484 @@ interface AppState {
+@@ -192,6 +221,486 @@ interface AppState {
    clearAICodeReferences: () => void;
    clearCodeReferences: () => void;
    codeReferenceFocus: CodeReferenceFocus | null;
@@ -3768,7 +3824,9 @@ index 25c5776..5862e7b 100644
 +  atCommitNeedsBaseline: boolean;
 +  seedingBaseline: boolean;
 +  seedPhase: string | null;
-+  seedBaseline: (sha: string) => Promise<void>;
++  // baselineSha = where to seed the hidden baseline (window-oldest, #4);
++  // retrySha = the commit to reconstruct after the seed (defaults to baselineSha).
++  seedBaseline: (baselineSha: string, retrySha?: string) => Promise<void>;
 +
 +  // Semantic labels (ROADMAP Tier 2.1). LLM-generated human-readable
 +  // labels for each detected Community. Auto-loaded from server cache
@@ -4058,7 +4116,7 @@ index 25c5776..5862e7b 100644
  }
  
  const AppStateContext = createContext<AppState | null>(null);
-@@ -205,6 +712,10 @@ export const AppStateProvider = ({ children }: { children: ReactNode }) => (
+@@ -205,6 +714,10 @@ export const AppStateProvider = ({ children }: { children: ReactNode }) => (
  const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
    // View state
    const [viewMode, setViewMode] = useState<ViewMode>('onboarding');
@@ -4069,7 +4127,7 @@ index 25c5776..5862e7b 100644
  
    const {
      graph,
-@@ -329,6 +840,7 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
+@@ -329,6 +842,7 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
    // LLM/Agent state
    const [llmSettings, setLLMSettings] = useState<LLMSettings>(loadSettings);
    const [isSettingsPanelOpen, setSettingsPanelOpen] = useState(false);
@@ -4077,7 +4135,7 @@ index 25c5776..5862e7b 100644
    const [isAgentReady, setIsAgentReady] = useState(false);
    const [isAgentInitializing, setIsAgentInitializing] = useState(false);
    const [agentError, setAgentError] = useState<string | null>(null);
-@@ -343,6 +855,179 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
+@@ -343,6 +857,179 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
    const [isCodePanelOpen, setCodePanelOpen] = useState(false);
    const [codeReferenceFocus, setCodeReferenceFocus] = useState<CodeReferenceFocus | null>(null);
  
@@ -4257,7 +4315,7 @@ index 25c5776..5862e7b 100644
    // Map of normalized file path → node ID for graph-based lookups
    const fileNodeByPath = useMemo(() => {
      if (!graph) return new Map<string, string>();
-@@ -1029,6 +1714,66 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
+@@ -1029,6 +1716,66 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
      async (repoName: string) => {
        if (!serverBaseUrl) return;
  
@@ -4324,7 +4382,7 @@ index 25c5776..5862e7b 100644
        setProgress({
          phase: 'extracting',
          percent: 0,
-@@ -1105,6 +1850,13 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
+@@ -1105,6 +1852,13 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
          for (const node of result.nodes) newGraph.addNode(node);
          for (const rel of result.relationships) newGraph.addRelationship(rel);
          setGraph(newGraph);
@@ -4338,7 +4396,7 @@ index 25c5776..5862e7b 100644
        } catch (err: unknown) {
          console.error('Repo switch failed:', err);
          setProgress({
-@@ -1207,9 +1959,1217 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
+@@ -1207,9 +1961,1217 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
      setCodeReferenceFocus(null);
    }, []);
  
@@ -5354,7 +5412,7 @@ index 25c5776..5862e7b 100644
 +  // Seed un baseline caché en arrière-plan (analyze complet) puis retente la
 +  // reconstruction au même commit. Statut poll-é toutes les 2s.
 +  const seedBaseline = useCallback(
-+    async (sha: string) => {
++    async (baselineSha: string, retrySha?: string) => {
 +      if (!projectName) return;
 +      const baseRepo = projectName.split('@')[0];
 +      seedAbortRef.current = false;
@@ -5362,7 +5420,7 @@ index 25c5776..5862e7b 100644
 +      setSeedPhase('starting');
 +      try {
 +        const resp = await fetch(
-+          `/snapshot/baseline-seed?repo=${encodeURIComponent(baseRepo)}&commit=${encodeURIComponent(sha)}`,
++          `/snapshot/baseline-seed?repo=${encodeURIComponent(baseRepo)}&commit=${encodeURIComponent(baselineSha)}`,
 +          { method: 'POST' },
 +        );
 +        if (!resp.ok) throw new Error(`seed failed: HTTP ${resp.status}`);
@@ -5388,7 +5446,7 @@ index 25c5776..5862e7b 100644
 +        if (!done) throw new Error('seed timed out (~6 min)');
 +        // loadGraphAtCommit gère atCommitNeedsBaseline (reset au début, re-set
 +        // si encore 409) — pas besoin de le toucher ici.
-+        await loadGraphAtCommit(sha);
++        await loadGraphAtCommit(retrySha ?? baselineSha);
 +      } catch (err) {
 +        if (!seedAbortRef.current) {
 +          setAtCommitError(err instanceof Error ? err.message : 'baseline seed failed');
@@ -5556,7 +5614,7 @@ index 25c5776..5862e7b 100644
      graph,
      setGraph,
      selectedNode,
-@@ -1271,6 +3231,8 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
+@@ -1271,6 +3233,8 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
      updateLLMSettings,
      isSettingsPanelOpen,
      setSettingsPanelOpen,
@@ -5565,7 +5623,7 @@ index 25c5776..5862e7b 100644
      isAgentReady,
      isAgentInitializing,
      agentError,
-@@ -1293,6 +3255,170 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
+@@ -1293,6 +3257,170 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
      clearAICodeReferences,
      clearCodeReferences,
      codeReferenceFocus,

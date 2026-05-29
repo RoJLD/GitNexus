@@ -108,6 +108,30 @@ describe('Timeline — Commits mode', () => {
     const dots = await screen.findAllByTestId('commit-dot');
     fireEvent.click(dots[0]); // sets clickedCommit = 'h_new'
     fireEvent.click(await screen.findByTestId('seed-baseline-btn'));
-    expect(currentState.seedBaseline).toHaveBeenCalledWith('h_new');
+    // #4: baseline anchored at the window's oldest commit (h_old), reconstruct
+    // the clicked one (h_new). commits are newest-first → oldest is last.
+    expect(currentState.seedBaseline).toHaveBeenCalledWith('h_old', 'h_new');
+  });
+
+  it('density-caps commit dots + shows hint + prewarm chip when over MAX_COMMIT_DOTS', async () => {
+    const many = Array.from({ length: 130 }, (_, i) => ({
+      hash: `h${i}`, shortHash: `h${i}`, message: `c${i}`, author: 'a',
+      date: new Date(Date.UTC(2026, 0, 1) + i * 86400000).toISOString(),
+    }));
+    globalThis.fetch = vi.fn(async (url) => {
+      const u = String(url);
+      if (u.startsWith('/snapshots')) return { ok: true, json: async () => ({ snapshots: [
+        { name: 'demo@a', key: 'demo@a', commit: { shortHash: 'a', message: 'm', author: 'a', date: '2026-01-01T00:00:00Z' } },
+        { name: 'demo@b', key: 'demo@b', commit: { shortHash: 'b', message: 'm', author: 'a', date: '2026-06-01T00:00:00Z' } },
+      ] }) };
+      if (u.startsWith('/commits')) return { ok: true, json: async () => ({ commits: many, truncated: false }) };
+      if (u.startsWith('/snapshot/prewarm')) return { ok: true, json: async () => ({ total: 130, warm: 40, cold: 90 }) };
+      return { ok: true, json: async () => ({}) };
+    });
+    render(<Timeline />);
+    fireEvent.click(await screen.findByTestId('navmode-commits'));
+    await waitFor(() => expect(screen.getByTestId('commit-density-hint')).toBeInTheDocument());
+    expect(screen.getAllByTestId('commit-dot').length).toBeLessThanOrEqual(60);
+    await waitFor(() => expect(screen.getByTestId('prewarm-status').textContent).toMatch(/40\/130/));
   });
 });

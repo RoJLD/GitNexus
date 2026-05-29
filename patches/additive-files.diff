@@ -17666,10 +17666,10 @@ index 0000000..3842afc
 +}
 diff --git a/gitnexus-web/src/components/Timeline.tsx b/gitnexus-web/src/components/Timeline.tsx
 new file mode 100644
-index 0000000..6749c53
+index 0000000..ff14572
 --- /dev/null
 +++ b/gitnexus-web/src/components/Timeline.tsx
-@@ -0,0 +1,1473 @@
+@@ -0,0 +1,1570 @@
 +import { useEffect, useMemo, useRef, useState } from 'react';
 +import {
 +  Play,
@@ -17850,6 +17850,8 @@ index 0000000..6749c53
 +  >([]);
 +  const [commitsLoading, setCommitsLoading] = useState(false);
 +  const [commitsError, setCommitsError] = useState<string | null>(null);
++  // Pre-warm progress (#6): { warm, total } of the last N commits' diffs.
++  const [prewarm, setPrewarm] = useState<{ warm: number; total: number } | null>(null);
 +
 +  // Mini-map collapsed state — Phase 1 timeline-zoom-cursors Task 7.
 +  // Visible only when zoomWindow is set (otherwise the timeline IS the
@@ -17942,6 +17944,37 @@ index 0000000..6749c53
 +    };
 +  }, [navMode, baseRepo, availableRepos]);
 +
++  // Pre-warm progress (#6): poll GET /snapshot/prewarm while in Commits mode.
++  // Light cadence (5s) only while cold diffs remain; stops when all warm.
++  useEffect(() => {
++    if (navMode !== 'commits' || !baseRepo) {
++      setPrewarm(null);
++      return;
++    }
++    let cancelled = false;
++    let timer: ReturnType<typeof setTimeout> | null = null;
++    const poll = async () => {
++      try {
++        const r = await fetch(`/snapshot/prewarm?repo=${encodeURIComponent(baseRepo)}&max=200`, {
++          cache: 'no-store',
++        });
++        if (r.ok) {
++          const d = await r.json();
++          if (cancelled) return;
++          setPrewarm({ warm: d.warm ?? 0, total: d.total ?? 0 });
++          if ((d.cold ?? 0) > 0) timer = setTimeout(poll, 5000);
++        }
++      } catch {
++        /* best-effort */
++      }
++    };
++    poll();
++    return () => {
++      cancelled = true;
++      if (timer) clearTimeout(timer);
++    };
++  }, [navMode, baseRepo, commits]);
++
 +  // Combine snapshots + live entry, sorted oldest → newest so the leftmost
 +  // dot is the earliest point we can travel to.
 +  const points: SnapshotPoint[] = useMemo(() => {
@@ -17974,6 +18007,37 @@ index 0000000..6749c53
 +    if (wheelWindow) return { a: wheelWindow.startISO, b: wheelWindow.endISO };
 +    return zoomWindow;
 +  }, [wheelWindow, zoomWindow]);
++
++  // Commit-mode density (#1+#2): restrict commit dots to the effective zoom
++  // window and even-space them; over a cap, evenly sample so they stay
++  // clickable (wheel-zoom narrows the window → reveals the rest). commits
++  // are newest-first.
++  const MAX_COMMIT_DOTS = 60;
++  const windowedCommits = useMemo(() => {
++    if (commits.length === 0) return commits;
++    const win = effectiveWindow ?? { a: commits[commits.length - 1].date, b: commits[0].date };
++    const aMs = Date.parse(win.a);
++    const bMs = Date.parse(win.b);
++    return commits.filter((c) => {
++      const t = Date.parse(c.date);
++      return t >= aMs && t <= bMs;
++    });
++  }, [commits, effectiveWindow]);
++  const commitOverflow = windowedCommits.length > MAX_COMMIT_DOTS;
++  const renderedCommits = useMemo(() => {
++    if (!commitOverflow) return windowedCommits;
++    const stepN = (windowedCommits.length - 1) / (MAX_COMMIT_DOTS - 1);
++    const picked: typeof windowedCommits = [];
++    const seen = new Set<string>();
++    for (let i = 0; i < MAX_COMMIT_DOTS; i++) {
++      const c = windowedCommits[Math.round(i * stepN)];
++      if (c && !seen.has(c.hash)) {
++        seen.add(c.hash);
++        picked.push(c);
++      }
++    }
++    return picked;
++  }, [windowedCommits, commitOverflow]);
 +
 +  // When zoomWindow is set, only render points inside [a, b]. The filtered
 +  // list is what we display + position over the full bar width. Cursors A/B
@@ -18348,7 +18412,7 @@ index 0000000..6749c53
 +      )}
 +
 +      {/* Main timeline row (Title + play + mode buttons + Zoom + bar + active info) */}
-+      <div className="flex items-center gap-3 px-4 py-2">
++      <div className="flex flex-wrap items-center gap-3 px-4 py-2">
 +      {/* Title + play */}
 +      <button
 +        type="button"
@@ -18494,6 +18558,21 @@ index 0000000..6749c53
 +          Commits{commitsLoading ? '…' : ''}
 +        </button>
 +      </div>
++
++      {/* Pre-warm progress chip (#6) — diffs chauds des derniers commits. */}
++      {navMode === 'commits' && prewarm && prewarm.total > 0 && (
++        <span
++          data-testid="prewarm-status"
++          className={`shrink-0 rounded px-1.5 py-0.5 text-[9px] font-medium ${
++            prewarm.warm >= prewarm.total
++              ? 'bg-emerald-500/15 text-emerald-300'
++              : 'bg-amber-500/15 text-amber-300'
++          }`}
++          title="Diffs incrémentaux pré-chauffés (clic instantané) sur les derniers commits"
++        >
++          {prewarm.warm}/{prewarm.total} chauds
++        </span>
++      )}
 +
 +      {/* Structural-health badge — silently hides when we have <2 points
 +          so we don't show a misleading "trend" without a baseline. */}
@@ -18954,7 +19033,10 @@ index 0000000..6749c53
 +      </label>
 +
 +      {/* The bar itself: line + dots + 2 cursors A/B */}
-+      <div ref={timelineBarRef} className="relative h-8 flex-1">
++      <div
++        ref={timelineBarRef}
++        className={`relative h-8 ${navMode === 'commits' ? 'w-full basis-full' : 'flex-1'}`}
++      >
 +        <div className="absolute top-1/2 right-0 left-0 h-px -translate-y-1/2 bg-border-default" />
 +
 +        {/* Cursor A (blue) — Phase 1 timeline-zoom-cursors */}
@@ -19030,10 +19112,10 @@ index 0000000..6749c53
 +          );
 +        })}
 +
-+        {navMode === 'commits' && commits.map((c, i) => {
++        {navMode === 'commits' && renderedCommits.map((c, i) => {
 +          const isActive = atCommitActive && atCommitSha === c.hash;
 +          // commits newest-first → on place le plus récent à droite (100%).
-+          const left = commits.length === 1 ? 50 : (1 - i / (commits.length - 1)) * 100;
++          const left = renderedCommits.length === 1 ? 50 : (1 - i / (renderedCommits.length - 1)) * 100;
 +          return (
 +            <button
 +              key={c.hash}
@@ -19054,6 +19136,15 @@ index 0000000..6749c53
 +            />
 +          );
 +        })}
++
++        {navMode === 'commits' && commitOverflow && (
++          <div
++            data-testid="commit-density-hint"
++            className="pointer-events-none absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 rounded bg-deep/80 px-1.5 py-0.5 text-[9px] text-text-muted"
++          >
++            {windowedCommits.length} commits · molette pour zoomer
++          </div>
++        )}
 +      </div>
 +
 +      {/* Right side: short summary of the active point */}
@@ -19106,7 +19197,13 @@ index 0000000..6749c53
 +          <button
 +            type="button"
 +            data-testid="seed-baseline-btn"
-+            onClick={() => clickedCommit && seedBaseline(clickedCommit)}
++            onClick={() => {
++              // #4: anchor the baseline at the window's oldest commit so the
++              // whole visible window becomes navigable from one seed; then
++              // reconstruct the commit the user actually clicked.
++              const oldest = windowedCommits[windowedCommits.length - 1];
++              if (clickedCommit && oldest) seedBaseline(oldest.hash, clickedCommit);
++            }}
 +            className="rounded border border-violet-500/40 bg-violet-500/15 px-1.5 py-0.5 font-medium text-violet-200 transition-all hover:bg-violet-500/25"
 +          >
 +            Seed baseline (~3-5 min, en fond)
@@ -21913,6 +22010,70 @@ index 0000000..d01d2f8
 + * See docs/superpowers/specs/2026-05-27-timeline-zoom-cursors-design.md
 + */
 +export const diffBetweenSnapshots = computeGraphDiff;
+diff --git a/gitnexus-web/src/lib/group-graph-adapter.ts b/gitnexus-web/src/lib/group-graph-adapter.ts
+new file mode 100644
+index 0000000..4100064
+--- /dev/null
++++ b/gitnexus-web/src/lib/group-graph-adapter.ts
+@@ -0,0 +1,58 @@
++import Graph from 'graphology';
++import type { SigmaNodeAttributes, SigmaEdgeAttributes } from './graph-adapter';
++import type { GroupGraphData } from '../hooks/useAppState';
++
++const CROSS_EDGE_COLOR = '#fbbf24';
++const INTRA_EDGE_COLOR = '#2a2a3a';
++
++/**
++ * Build a graphology graph for the merged multi-repo view. Nodes are file-level
++ * and pre-colored per repo by the backend; cross-repo edges are styled distinctly.
++ * Initial positions are seeded by repo sector; useSigma's setGraph runs ForceAtlas2
++ * which converges them into connectivity-based clusters (repos cluster, cross-repo
++ * edges bridge them).
++ */
++export function groupGraphToGraphology(
++  data: GroupGraphData,
++): Graph<SigmaNodeAttributes, SigmaEdgeAttributes> {
++  const graph = new Graph<SigmaNodeAttributes, SigmaEdgeAttributes>();
++  const nodes = data.nodes || [];
++  const total = Math.max(1, nodes.length);
++  const repoOrder = new Map<string, number>();
++  (data.repos || []).forEach((r, i) => repoOrder.set(r.name, i));
++  const repoCount = Math.max(1, (data.repos || []).length);
++  const radius = Math.sqrt(total) * 30;
++
++  let i = 0;
++  for (const node of nodes) {
++    if (graph.hasNode(node.id)) continue;
++    const sector = (repoOrder.get(node.repo) ?? 0) / repoCount;
++    const angle = sector * 2 * Math.PI + (i % 50) * 0.05;
++    const r = radius * (0.5 + ((i % 50) / 50) * 0.5);
++    graph.addNode(node.id, {
++      x: Math.cos(angle) * r,
++      y: Math.sin(angle) * r,
++      size: 4,
++      color: node.color || '#94a3b8',
++      label: node.label,
++      nodeType: 'File',
++      filePath: node.filePath,
++      mass: 3,
++    });
++    i++;
++  }
++
++  for (const e of data.edges || []) {
++    if (!graph.hasNode(e.source) || !graph.hasNode(e.target)) continue;
++    if (e.source === e.target) continue;
++    if (graph.hasEdge(e.source, e.target)) continue;
++    graph.addEdge(e.source, e.target, {
++      size: e.crossRepo ? 3 : 1,
++      color: e.crossRepo ? CROSS_EDGE_COLOR : INTRA_EDGE_COLOR,
++      relationType: e.crossRepo ? 'CROSS_REPO' : 'INTRA_REPO',
++      type: 'curved',
++      zIndex: e.crossRepo ? 2 : 1,
++    });
++  }
++  return graph;
++}
 diff --git a/gitnexus-web/src/lib/layout-cache.ts b/gitnexus-web/src/lib/layout-cache.ts
 new file mode 100644
 index 0000000..978f853

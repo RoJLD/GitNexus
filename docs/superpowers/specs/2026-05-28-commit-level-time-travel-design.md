@@ -156,3 +156,75 @@ existe si on veut en ajouter un plus tard.
 
 **Vérification** : build Docker (compile gate) + smoke (`GET` 200 / `POST` 202)
 + tests d'intégration différés (Node 21 < 22).
+
+---
+
+## Update 2026-05-29 — Itération post-vérif : densité, fenêtre, ancre-era, feedback pré-chauffage
+
+La **vérification navigateur** (Playwright) du mode Commits a confirmé A/B/C
+fonctionnels mais a révélé un accroc UX (densité) + des coins MVP. Cette
+itération pousse 4 items (#1, #2, #4, #6 de l'inventaire post-vérif).
+
+### #1 + #2 — Dots-commits passés dans la machinerie de zoom (densité + fenêtre)
+
+**Problème** : en mode Commits, les ≤200 commits chargés sont rendus comme dots
+sur toute la barre, **indépendamment** du zoom/curseurs → chevauchement,
+mé-clic (Playwright a dû `force`). Le `visiblePoints`/wheel-zoom existant ne
+s'applique qu'aux snapshots.
+
+**Réalité découverte à la 2e vérif navigateur (livré)** : le cap (60) +
+filtrage-fenêtre étaient nécessaires mais **insuffisants** — la cause racine est
+que la **barre de scrub partage sa ligne avec une grosse barre d'outils**
+(~16 contrôles) qui déborde la largeur → la barre était écrasée à ~50px (dots à
+0 px d'écart, voire hors-écran), **incliquables quel que soit leur nombre**.
+**Fix complémentaire livré** : `flex-wrap` sur la ligne timeline + la barre passe
+en **pleine largeur sur sa propre ligne en mode Commits** (`w-full basis-full`).
+Vérifié : 60 dots à ~32 px d'écart, cliquables **sans `force`**. Le "+N cluster"
+évoqué ci-dessous a été simplifié en cap+échantillonnage (le wheel-zoom EST le
+mécanisme de drill-down).
+
+**Décision** : router les dots-commits par la **même fenêtre [cursorA, cursorB]**
+que les snapshots —
+- filtrer `commits` par date à la fenêtre effective (comme `visiblePoints`),
+- les espacer sur la barre filtrée (comme `positionFor`),
+- **zoomer (molette) les éclaircit** naturellement (réutilise le pipeline
+  zoom/curseurs déjà câblé — lecture seule de `cursorA/cursorB/zoomWindow`),
+- garde d'**espacement minimal** : si la fenêtre contient encore trop de
+  commits pour la largeur, regrouper le surplus en dot **"+N"** (clic → zoom
+  sur ce sous-segment) plutôt que d'empiler des dots incliquables.
+
+Livre #1 (densité) **et** #2 ("borné à la fenêtre visible") ensemble. Filtrage
+client-side sur le set déjà fetché (pas de refetch tant que la fenêtre ⊆ 200
+derniers ; au-delà, refetch `/commits?from=&to=`).
+
+### #4 — Ancre du baseline = plus vieux commit de la fenêtre (pas le commit cliqué)
+
+**Problème** : `seedBaseline(sha)` seede un baseline **au commit cliqué**
+(snapshot exact, distance 0). Ce commit-là devient reconstructible, mais ses
+voisins re-déclenchent seed/lazy → cliquer dans une era reste coûteux.
+
+**Décision** : seeder le baseline au **plus vieux commit de la fenêtre visible**
+(bord gauche `[cursorA]`). Alors **toute la fenêtre** = baseline(oldest) + replay
+des diffs vers l'avant → navigable d'un **seul seed** (combiné au pré-chauffage
+on-era de la pièce C qui chauffe la fenêtre). Colle au modèle "era".
+
+**Alternatives écartées** : *commit cliqué* (= MVP actuel, ne couvre pas les
+voisins) ; *1er commit du repo* (replay de milliers de diffs → lent + storage).
+
+### #6 — Feedback de pré-chauffage (surfacer l'état warm/cold)
+
+**Problème** : le pré-chauffage est fire-and-forget ; `GET /snapshot/prewarm`
+`{total,warm,cold}` n'est pas affiché → l'utilisateur ne sait pas quand le scrub
+devient instantané.
+
+**Décision** : petit indicateur dans le mode Commits (près du toggle) — `"{warm}/{total}
+chauds"` — alimenté par un poll de `GET /snapshot/prewarm` (à l'entrée + après
+le fire on-era + cadence légère pendant le chauffage). Pur frontend (backend
+déjà prêt).
+
+### Hors scope de cette itération
+- #3 (curseurs A/B + Compare A↔B + Play **sur les commits**) — reste snapshots-only.
+- #5 (fidélité mixed-filters au-delà du badge), #7 (cadence cron 5/tick).
+- #8 (**tests host bloqués Node 21 < 22**) — reste le plus gros trou de
+  vérification ; cette itération sera vérifiée comme les précédentes (build
+  Docker + smoke + Playwright).
