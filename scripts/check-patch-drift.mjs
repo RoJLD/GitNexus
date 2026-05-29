@@ -22,6 +22,7 @@ export function compareDiffFileSets(committed, live) {
   return { missing, extra, drifted: missing.length > 0 || extra.length > 0 };
 }
 
+// git diff émet du LF ; on neutralise un .diff sauvé en CRLF. BOM non géré (les patches/ sont LF sans BOM).
 export function normalizeDiff(text) {
   return text.replace(/\r\n/g, '\n');
 }
@@ -29,13 +30,25 @@ export function normalizeDiff(text) {
 function main() {
   const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
   const up = resolve(repoRoot, 'upstream');
-  execFileSync('git', ['add', '-N', '.'], { cwd: up });
   let drifted = false;
   try {
+    execFileSync('git', ['add', '-N', '.'], { cwd: up });
     for (const [filter, file] of [['A', 'additive-files.diff'], ['M', 'inplace-edits.diff']]) {
       const liveText = execFileSync('git', ['diff', 'HEAD', `--diff-filter=${filter}`], { cwd: up, encoding: 'utf8' });
-      const committedText = readFileSync(resolve(repoRoot, 'patches', file), 'utf8');
-      const setCmp = compareDiffFileSets(filesInDiff(committedText), filesInDiff(liveText));
+      let committedText;
+      try {
+        committedText = readFileSync(resolve(repoRoot, 'patches', file), 'utf8');
+      } catch (e) {
+        if (e.code === 'ENOENT') {
+          console.error(`patches/${file} introuvable — régénérer depuis upstream/.`);
+          drifted = true;
+          continue;
+        }
+        throw e;
+      }
+      const liveFiles = filesInDiff(liveText);
+      const committedFiles = filesInDiff(committedText);
+      const setCmp = compareDiffFileSets(committedFiles, liveFiles);
       const contentDrift = normalizeDiff(liveText) !== normalizeDiff(committedText);
       if (setCmp.drifted || contentDrift) {
         drifted = true;
@@ -44,7 +57,7 @@ function main() {
         setCmp.extra.forEach((f) => console.error(`  - ${f} (dans le diff commité, disparu d'upstream/)`));
         if (!setCmp.drifted && contentDrift) console.error('  (même ensemble de fichiers, mais contenu divergent)');
       } else {
-        console.log(`${file}: OK (${filesInDiff(liveText).size} fichiers)`);
+        console.log(`${file}: OK (${liveFiles.size} fichiers)`);
       }
     }
   } finally {

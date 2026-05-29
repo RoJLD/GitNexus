@@ -53,4 +53,7 @@ describe('normalizeDiff', () => {
   it('normalise les fins de ligne CRLF → LF', () => {
     expect(normalizeDiff('a\r\nb\r\n')).toBe('a\nb\n');
   });
+  it('laisse le texte LF inchangé', () => {
+    expect(normalizeDiff('a\nb\n')).toBe('a\nb\n');
+  });
 });
