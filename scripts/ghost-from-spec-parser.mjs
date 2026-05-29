@@ -25,7 +25,7 @@ export function extractTitle(md) {
 
 const GOAL_SECTION_RE = /^##\s+2\.\s+Goal\s*$/i;
 const NEXT_H2_RE = /^##\s+/;
-const TIER_RE = /Tier\s+(\d+(?:\.\d+)?)/i;
+const TIER_RE = /Tier\s+(\d+\.\d+)/i;
 
 export function extractDescription(md) {
   if (!md) return '';
