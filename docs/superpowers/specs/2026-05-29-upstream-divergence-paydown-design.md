@@ -174,3 +174,24 @@ phase 2, cf. §5).
 - **Script de bump (§3.3) correct** s'il produit un rapport lisible
   fichier-par-fichier sur un dry-run, sans jamais écrire dans notre
   dépôt.
+
+## Update 2026-05-29 — Réalité d'implémentation (Phase 1 livrée)
+
+- **Split réel : 99 fichiers additifs / 17 in-place** (la valeur « 97 » du §1 était
+  légèrement périmée — `docker-server-prewarm.mjs` était dans le clone mais absent
+  du diff commité ; la régénération l'a capté, +1 ; le shim `docker-server-routes.mjs`
+  ajoute le second).
+- **Réduction `docker-server.mjs` partielle, pas « 563→1 » :** seul le *câblage de
+  routes* (chaîne de dispatch + 33 imports + cron) est sorti dans le shim additif
+  `docker-server-routes.mjs`. Les handlers inline `handleExport`/`handleImport`/`/listdir`
+  (routes utilitaires couplées au module) restent in-place par design. `docker-server.mjs`
+  reste donc un fichier in-place (footprint réduit, pas nul).
+- **La « queue » frontend du §3.2 n'a PAS été convertie** en overlays additifs : les
+  édits React ne deviennent pas additifs sans éditer un site d'import upstream. Renvoyé
+  à la phase 2 (cf. open question §5).
+- **Donnée Phase 2 (dry-run contre `main`, `patches/bump-dry-run-main.md`) :**
+  107 clean / 0 conflict / 9 fail. Les 9 fichiers à re-merger à la main pour un bump
+  vers `main` : docker-server.mjs, gitnexus-web/package.json + package-lock.json,
+  composants DropZone/GraphCanvas/Header/RepoAnalyzer, core/llm/agent.ts,
+  hooks/useAppState.tsx + useSigma.ts, lib/lucide-icons.tsx. (Les ~5 autres in-place,
+  dont App.tsx et FileTreePanel.tsx, s'appliquent clean.)

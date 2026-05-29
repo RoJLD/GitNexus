@@ -116,7 +116,19 @@ Fichiers à la racine du repo, qui rendent le setup reproductible sur poste Wind
 **Pourquoi une image dérivée** : `:1.6.3` upstream ship avec 2 bugs connus dans son `Dockerfile.cli` (mkdir `hf-cache` sans `node:node` → EACCES, et oubli de `gitnexus/scripts/` → DuckDB FTS+VECTOR non installés). Notre layer fixe les deux.
 
 ### B.2 Time-travel + analytics
-**Implémentation : patches sur upstream** (clone gitignoré, deltas sérialisés dans [patches/upstream-all.diff](patches/upstream-all.diff) — taille re-générée à chaque feature).
+**Implémentation : patches sur upstream** (clone gitignoré, deltas sérialisés dans deux fichiers diff — voir ci-dessous).
+
+#### B.2.0 Organisation des patches (Phase 1, 2026-05-29)
+Le diff monolithique unique a été supprimé et remplacé par deux artefacts distincts :
+
+| Fichier | Contenu | Risque de conflit au bump |
+|---|---|---|
+| [`patches/additive-files.diff`](patches/additive-files.diff) | ~99 fichiers neufs que nous possédons entièrement (tous les `docker-server-*.mjs`, les composants React additifs, les pure-function libs, les scripts, etc.) | **Nul** — ce sont des fichiers créés par nous, upstream ne les touche pas |
+| [`patches/inplace-edits.diff`](patches/inplace-edits.diff) | 17 fichiers upstream modifiés en place (`docker-server.mjs`, `Dockerfile.web`, `App.tsx`, `useAppState.tsx`, `useSigma.ts`, `GraphCanvas.tsx`, `package.json`, `package-lock.json`, etc.) | **Toute la surface** — ces fichiers peuvent diverger à chaque bump |
+
+**Shim `docker-server-routes.mjs` (additif)** : le câblage de routes (chaîne de dispatch + imports + lancement du cron) qui résidait en place dans `docker-server.mjs` a été extrait dans un fichier neuf `upstream/docker-server-routes.mjs` (exports `registerGitnexusRoutes` + `startGitnexusCron`). `docker-server.mjs` reste un fichier in-place mais son footprint est réduit — seuls les handlers utilitaires inline (`handleExport`/`handleImport`/`/listdir`) y demeurent par design.
+
+**Outil de bump `scripts/bump-upstream.mjs`** : `node scripts/bump-upstream.mjs <tag-ou-branche>` clone l'upstream cible dans un répertoire jetable, applique `additive-files.diff` (doit être propre, sinon erreur), tente `inplace-edits.diff` avec `git apply --3way`, et écrit un rapport par fichier dans `patches/bump-dry-run-<target>.md` (résultat : clean / conflict / fail). First run contre `main` : résultat dans [`patches/bump-dry-run-main.md`](patches/bump-dry-run-main.md) — 107 clean / 0 conflict / 9 fail (les 9 fichiers in-place qui nécessiteront un re-merge manuel pour un bump vers `main`). La décision sur le format de cohabitation (rester en diff plat scindé vs migrer vers subtree/submodule) est différée à la Phase 2 — voir spec [`docs/superpowers/specs/2026-05-29-upstream-divergence-paydown-design.md`](docs/superpowers/specs/2026-05-29-upstream-divergence-paydown-design.md).
 
 #### Endpoints backend (ajoutés à `docker-server.mjs`)
 | Endpoint | Fonction |
@@ -288,7 +300,11 @@ Pure frontend extension de la Timeline existante — aucune route serveur, réut
 | [ROADMAP.md](ROADMAP.md) | Tier 1 + 2 (1.2/1.3/2.1/2.2) ✅ livrés, 2.3/2.4 pending, Tier 3 reste à valider |
 | [CLAUDE.md](CLAUDE.md) | Règles pour l'agent : maintenir ROADMAP + INVENTORY à chaque feature, rebuild after upstream edits |
 | [../CLAUDE.md](../CLAUDE.md) | Règle workspace : tests CI/CD si module en a déjà |
-| [patches/README.md](patches/README.md) | Comment ré-appliquer les patches sur un clone frais |
+| [patches/README.md](patches/README.md) | Comment ré-appliquer les patches sur un clone frais + procédure de bump dry-run |
+| [patches/additive-files.diff](patches/additive-files.diff) | ~99 fichiers neufs que nous possédons (risque de conflit nul) |
+| [patches/inplace-edits.diff](patches/inplace-edits.diff) | 17 édits in-place de fichiers upstream (vraie surface de conflit au bump) |
+| [patches/bump-dry-run-main.md](patches/bump-dry-run-main.md) | Rapport du premier dry-run de bump contre `main` (107 clean / 0 conflict / 9 fail) |
+| [scripts/bump-upstream.mjs](scripts/bump-upstream.mjs) | Outil de bump dry-run : clone la cible, applique les deux diffs, écrit le rapport |
 | [patches/example-gitnexus-domains.json](patches/example-gitnexus-domains.json) | Template pour la feature Dissonance |
 | [patches/example-gitnexus-policy.json](patches/example-gitnexus-policy.json) | Template policy par-repo pour la feature Cross-repo similarity (isolation_required, allow_merge_with) |
 | [vscode-extension/README.md](vscode-extension/README.md) | Setup + scope de l'extension VSCode (Tier 2.4) |
