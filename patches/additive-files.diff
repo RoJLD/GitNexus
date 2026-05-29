@@ -996,10 +996,10 @@ index 0000000..dd0accf
 +}
 diff --git a/docker-server-config.mjs b/docker-server-config.mjs
 new file mode 100644
-index 0000000..f863688
+index 0000000..2a0ee46
 --- /dev/null
 +++ b/docker-server-config.mjs
-@@ -0,0 +1,333 @@
+@@ -0,0 +1,335 @@
 +/**
 + * Unified per-repo configuration parser — ROADMAP Tier 2bis.4.
 + *
@@ -1190,9 +1190,11 @@ index 0000000..f863688
 +export function parseIncrementalConfig(parsed) {
 +  const i = parsed?.incremental;
 +  const n = Number(i?.preWarmCommits);
++  const k = Number(i?.preWarmPerTick);
 +  return {
 +    preWarm: !!(i && i.preWarm),
 +    preWarmCommits: Number.isFinite(n) ? Math.max(1, Math.min(500, n)) : 50,
++    preWarmPerTick: Number.isFinite(k) ? Math.max(1, Math.min(100, k)) : 10,
 +  };
 +}
 +
@@ -1215,7 +1217,7 @@ index 0000000..f863688
 + */
 +export async function getConfig(repoPath) {
 +  if (!repoPath) {
-+    return { domains: null, policy: null, budgets: null, watches: null, wiki: { autoEvery: 'off' }, auto_reindex: { onCommit: false }, incremental: { preWarm: false, preWarmCommits: 50 }, _sources: {} };
++    return { domains: null, policy: null, budgets: null, watches: null, wiki: { autoEvery: 'off' }, auto_reindex: { onCommit: false }, incremental: { preWarm: false, preWarmCommits: 50, preWarmPerTick: 10 }, _sources: {} };
 +  }
 +
 +  // Read all three candidates in parallel — they're tiny and most
@@ -1233,7 +1235,7 @@ index 0000000..f863688
 +  let autoSnapshot = null;
 +  let wiki = { autoEvery: 'off' };
 +  let autoReindex = { onCommit: false };
-+  let incremental = { preWarm: false, preWarmCommits: 50 };
++  let incremental = { preWarm: false, preWarmCommits: 50, preWarmPerTick: 10 };
 +  const sources = { domains: null, policy: null };
 +
 +  if (unified.exists) {
@@ -6333,10 +6335,10 @@ index 0000000..4e8a5d3
 +}
 diff --git a/docker-server-prewarm.mjs b/docker-server-prewarm.mjs
 new file mode 100644
-index 0000000..d2619ee
+index 0000000..79f7463
 --- /dev/null
 +++ b/docker-server-prewarm.mjs
-@@ -0,0 +1,162 @@
+@@ -0,0 +1,163 @@
 +/**
 + * Diff pre-warming (commit-level time-travel section 3.4).
 + *
@@ -6431,7 +6433,8 @@ index 0000000..d2619ee
 +  if (!cfg?.incremental?.preWarm) return;
 +  const shas = await lastCommits(repoPath, cfg.incremental.preWarmCommits || 50);
 +  if (shas.length === 0) return;
-+  const res = await prewarmShas(repo.name, repoPath, shas, PER_TICK_CAP);
++  const cap = cfg.incremental.preWarmPerTick || PER_TICK_CAP;
++  const res = await prewarmShas(repo.name, repoPath, shas, cap);
 +  if (res.warmed > 0) {
 +    process.stderr.write(`[prewarm] ${repo.name}: warmed ${res.warmed}, skipped ${res.skipped}, cold ${res.cold}\n`);
 +  }
@@ -9167,10 +9170,10 @@ index 0000000..810a2bd
 +}
 diff --git a/docker-server-snapshot-incremental.mjs b/docker-server-snapshot-incremental.mjs
 new file mode 100644
-index 0000000..4bb0a15
+index 0000000..f141612
 --- /dev/null
 +++ b/docker-server-snapshot-incremental.mjs
-@@ -0,0 +1,779 @@
+@@ -0,0 +1,790 @@
 +/**
 + * Incremental snapshot — Phase C of the incremental-snapshots design.
 + *
@@ -9906,17 +9909,26 @@ index 0000000..4bb0a15
 +  const relsMap = new Map(graphArr.relationships.map((r) => [r.id, r]));
 +  const baselineCounts = { nodes: nodesMap.size, relationships: relsMap.size };
 +
++  // Known label / rel-type vocab so we can report what a restrictive
++  // includeLabels / includeRelationshipTypes filter dropped (#5).
++  const KNOWN_LABELS = ['File', 'Folder', 'Function', 'Class', 'Interface', 'Method', 'Section', 'Const', 'Variable', 'Property', 'Route'];
++  const KNOWN_REL_TYPES = ['CALLS', 'IMPORTS', 'DEFINES', 'CONTAINS', 'REFERENCES', 'EXTENDS', 'IMPLEMENTS'];
 +  const appliedFilters = new Set();
++  const droppedLabels = new Set();
++  const droppedRelTypes = new Set();
 +  for (const sha of chain) {
 +    const diff = await readDiff(repoPath, sha);
 +    if (!diff) continue; // shouldn't happen post-lazy, but guard
 +    applyDiff(nodesMap, relsMap, diff);
-+    if (diff._meta?.filters) {
++    const f = diff._meta?.filters;
++    if (f) {
 +      appliedFilters.add(JSON.stringify({
-+        dropGlobalNodes: diff._meta.filters.dropGlobalNodes,
-+        includeLabels: diff._meta.filters.includeLabels,
-+        includeRelationshipTypes: diff._meta.filters.includeRelationshipTypes,
++        dropGlobalNodes: f.dropGlobalNodes,
++        includeLabels: f.includeLabels,
++        includeRelationshipTypes: f.includeRelationshipTypes,
 +      }));
++      if (Array.isArray(f.includeLabels)) for (const l of KNOWN_LABELS) if (!f.includeLabels.includes(l)) droppedLabels.add(l);
++      if (Array.isArray(f.includeRelationshipTypes)) for (const t of KNOWN_REL_TYPES) if (!f.includeRelationshipTypes.includes(t)) droppedRelTypes.add(t);
 +    }
 +  }
 +
@@ -9933,6 +9945,8 @@ index 0000000..4bb0a15
 +      // If diffs were created with heterogeneous filters, the reconstruction
 +      // is only as complete as the most-restrictive diff in the chain.
 +      filterConsistency: appliedFilters.size <= 1 ? 'consistent' : 'MIXED — reconstruction fidelity varies across the chain',
++      droppedLabels: [...droppedLabels],
++      droppedRelTypes: [...droppedRelTypes],
 +    },
 +    baselineCounts,
 +    reconstructedCounts: { nodes: nodesMap.size, relationships: relsMap.size },
@@ -13289,10 +13303,10 @@ index 0000000..07a59b5
 +};
 diff --git a/gitnexus-web/src/components/EntropyCommitTimeline.tsx b/gitnexus-web/src/components/EntropyCommitTimeline.tsx
 new file mode 100644
-index 0000000..4b7e75a
+index 0000000..d863cbc
 --- /dev/null
 +++ b/gitnexus-web/src/components/EntropyCommitTimeline.tsx
-@@ -0,0 +1,607 @@
+@@ -0,0 +1,612 @@
 +import { useMemo, useState } from 'react';
 +import {
 +  X,
@@ -13853,6 +13867,11 @@ index 0000000..4b7e75a
 +                {atCommitMeta.filterConsistency !== 'consistent' && (
 +                  <span className="ml-1 text-amber-300" title="The replayed diffs were captured under different filter chains; structural fidelity holds but counts may vary.">
 +                    · mixed filters
++                  </span>
++                )}
++                {atCommitMeta.droppedLabels && atCommitMeta.droppedLabels.length > 0 && (
++                  <span className="ml-1 text-amber-300" title="Ces labels ont été exclus par les filtres de la chaîne de diffs rejouée — la reconstruction ne les contient pas.">
++                    · omet : {atCommitMeta.droppedLabels.join(', ')}
 +                  </span>
 +                )}
 +              </>
@@ -17666,10 +17685,10 @@ index 0000000..3842afc
 +}
 diff --git a/gitnexus-web/src/components/Timeline.tsx b/gitnexus-web/src/components/Timeline.tsx
 new file mode 100644
-index 0000000..ff14572
+index 0000000..e103a40
 --- /dev/null
 +++ b/gitnexus-web/src/components/Timeline.tsx
-@@ -0,0 +1,1570 @@
+@@ -0,0 +1,1622 @@
 +import { useEffect, useMemo, useRef, useState } from 'react';
 +import {
 +  Play,
@@ -17821,6 +17840,8 @@ index 0000000..ff14572
 +    seedingBaseline,
 +    seedPhase,
 +    seedBaseline,
++    // Compare A↔B on commits (#3)
++    compareCommits,
 +  } = useAppState();
 +  const [snapshots, setSnapshots] = useState<
 +    Array<{
@@ -18038,6 +18059,23 @@ index 0000000..ff14572
 +    }
 +    return picked;
 +  }, [windowedCommits, commitOverflow]);
++
++  // Map a cursor date → nearest commit in the window (#3): cursors A/B double
++  // as window bounds AND Compare/Play endpoints in Commits mode.
++  const commitNearest = (iso: string | null) => {
++    if (!iso || windowedCommits.length === 0) return null;
++    const t = Date.parse(iso);
++    let best = windowedCommits[0];
++    let bestD = Infinity;
++    for (const c of windowedCommits) {
++      const d = Math.abs(Date.parse(c.date) - t);
++      if (d < bestD) {
++        bestD = d;
++        best = c;
++      }
++    }
++    return best;
++  };
 +
 +  // When zoomWindow is set, only render points inside [a, b]. The filtered
 +  // list is what we display + position over the full bar width. Cursors A/B
@@ -18329,6 +18367,26 @@ index 0000000..ff14572
 +      playingRef.current = false;
 +      setPlaying(false);
 +      setAnimationActive(false);
++      return;
++    }
++    // #3: Play across commits (oldest → newest) in Commits mode, via
++    // reconstruction. Leans on pre-warm — a cold commit just takes longer.
++    if (navMode === 'commits') {
++      if (diffMode) await exitDiffMode();
++      playingRef.current = true;
++      setPlaying(true);
++      const seq = [...windowedCommits].reverse(); // newest-first → oldest→newest
++      for (const c of seq) {
++        if (!playingRef.current) break;
++        await loadGraphAtCommit(c.hash);
++        const t0 = Date.now();
++        while (Date.now() - t0 < FRAME_DELAY_MS) {
++          if (!playingRef.current) break;
++          await new Promise((r) => setTimeout(r, 100));
++        }
++      }
++      playingRef.current = false;
++      setPlaying(false);
 +      return;
 +    }
 +    // Drop diff mode before playing — animating across a frozen union
@@ -18991,7 +19049,20 @@ index 0000000..ff14572
 +          state here — the visual diff overlay is the App-level effect's job. */}
 +      <button
 +        type="button"
-+        onClick={() => setGraphMode(graphMode === 'diff' ? 'single' : 'diff')}
++        onClick={() => {
++          if (navMode === 'commits') {
++            // #3: Compare A↔B between the commits nearest cursors A and B.
++            if (diffMode) {
++              exitDiffMode();
++              return;
++            }
++            const a = commitNearest(cursorA);
++            const b = commitNearest(cursorB);
++            if (a && b && a.hash !== b.hash) compareCommits(a.hash, b.hash);
++            return;
++          }
++          setGraphMode(graphMode === 'diff' ? 'single' : 'diff');
++        }}
 +        disabled={!cursorA || !cursorB}
 +        className={`flex shrink-0 cursor-pointer items-center gap-1 rounded-md border px-1.5 py-1 text-[10px] transition-all disabled:cursor-not-allowed disabled:opacity-40 ${
 +          graphMode === 'diff'
@@ -19006,7 +19077,7 @@ index 0000000..ff14572
 +              : 'Compare A↔B — show diff between snapshots at cursors (Shift+D)'
 +        }
 +      >
-+        {graphMode === 'diff' ? 'Exit compare' : 'Compare A↔B'}
++        {(navMode === 'commits' ? !!diffMode : graphMode === 'diff') ? 'Exit compare' : 'Compare A↔B'}
 +      </button>
 +
 +      {/* Temporal filter dropdown — Phase 2 Item #1.

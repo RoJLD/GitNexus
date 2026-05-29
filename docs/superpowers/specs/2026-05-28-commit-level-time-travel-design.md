@@ -228,3 +228,75 @@ déjà prêt).
 - #8 (**tests host bloqués Node 21 < 22**) — reste le plus gros trou de
   vérification ; cette itération sera vérifiée comme les précédentes (build
   Docker + smoke + Playwright).
+
+---
+
+## Update 2026-05-29 (suite) — Itération #3 / #5 / #7
+
+Après la densité (#1#2#4#6, livrée + vérifiée), on pousse les 3 coins MVP
+restants identifiés à la vérif.
+
+### #7 — Cadence de pré-chauffage configurable (petit)
+
+**Problème** : `PER_TICK_CAP` (env `PREWARM_PER_TICK`, défaut 5) limite le cron à
+5 diffs/tick (~5 min) → backfill d'une grosse era = beaucoup de ticks.
+
+**Décision** : exposer **`.gitnexus.json > incremental.preWarmPerTick`** (défaut
+remonté à **10**, borné [1, 100]) consommé par `maybePrewarmRepo` (priorité :
+config > env > défaut). Pure config + 1 ligne d'usage. Pas de boucle dédiée
+(l'on-era POST cap=max couvre déjà le "tout chauffer maintenant").
+
+### #5 — Fidélité mixed-filters : dire CE QUI manque (moyen)
+
+**Problème** : la reconstruction calcule `filterConsistency` ('consistent' |
+'MIXED') et le front affiche un simple badge "mixed filters" — sans dire quels
+symboles manquent.
+
+**Décision** : `GET /graph/at-commit` retourne, en plus, l'**union des labels /
+types de relations exclus** sur la chaîne de diffs rejouée
+(`droppedLabels: string[]`, `droppedRelTypes: string[]`) — dérivée des
+`_meta.filters.includeLabels` / `includeRelationshipTypes` de chaque diff (un
+`includeLabels` non-null signifie "tout le reste est dropé" → on accumule le
+complément observé). Le bandeau de reconstruction liste alors explicitement
+"reconstruction omet : Variable, Const…" au lieu d'un badge opaque. Backend
+(`docker-server-snapshot-incremental.mjs`) + bandeau front
+(`EntropyCommitTimeline` + chip Timeline). Pas de 422 (on informe, on ne bloque
+pas — moins frustrant ; l'utilisateur voit la lossy et décide).
+
+### #3 — Curseurs A/B + Compare A↔B + Play **sur les commits** (gros)
+
+**Problème** : curseurs, Compare A↔B (`graphMode:'diff'`) et Play ne marchent que
+sur les **snapshots** (`points` + `switchRepo`). En mode Commits, A/B ne servent
+qu'à borner la fenêtre (#2).
+
+**Décision — unifier A/B comme bornes de fenêtre ET endpoints de Compare** (résout
+le conflit de sémantique que #2 a introduit) :
+- **Curseurs** : en mode Commits, le drag des triangles A/B **snappe aux commits**
+  (date du commit le plus proche dans `windowedCommits`) au lieu des snapshots.
+  A/B = bornes de la fenêtre **et** points de comparaison — même objet, pas de
+  conflit.
+- **Compare A↔B** : nouvelle action `compareCommits(shaA, shaB)` dans `useAppState`
+  qui reconstruit le graphe à A **et** à B (`/graph/at-commit` ×2), calcule
+  `computeGraphDiff(graphA, graphB)` (réutilise le lib `graph-diff` existant) et
+  pose `diffData` + `diffMode` (labels "A @<shaA>" / "B @<shaB>" pour le
+  DiffBanner). Le toggle "Compare A↔B" route vers `compareCommits(cursorA→commit,
+  cursorB→commit)` en mode Commits (vs `enterDiffMode` snapshot sinon).
+- **Play** : en mode Commits, Play parcourt `windowedCommits` (oldest→newest) via
+  `loadGraphAtCommit` avec le `FRAME_DELAY_MS` existant ; s'appuie sur le
+  pré-chauffage (frame instantanée si le diff est chaud, sinon lazy plus lent —
+  un commit froid ne bloque pas la boucle, il prend juste son temps). Réutilise
+  le bouton Play (branche sur `navMode`).
+
+**Alternatives écartées** : curseurs séparés window-vs-compare (2 paires de
+triangles → confus) ; Compare via diff des deltas incrémentaux directement (plus
+"pur" mais nécessite un nouveau chemin de diff ; reconstruire+`graph-diff`
+réutilise tout l'existant, coût = 2 reconstructions in-memory, acceptable).
+
+**Risque** : Compare-commits = 2 reconstructions (baseline + replay ×2) — peut
+être lent si froid ; mitigé par le pré-chauffage (#C) + le fait que A/B sont
+souvent déjà visités. Play sur une era froide est lent à la 1ʳᵉ passe (idem).
+
+### Vérification
+Build Docker (compile gate) + Playwright (Compare A↔B sur 2 commits → DiffBanner +
+coloring ; Play en mode Commits avance les frames ; `droppedLabels` surfacé).
+Tests composant/unit écrits, exécution différée (#8, Node 21 < 22).

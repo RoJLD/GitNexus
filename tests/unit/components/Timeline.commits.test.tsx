@@ -53,6 +53,8 @@ const defaultAppState = {
   atCommitActive: false, atCommitSha: null, atCommitLoading: false, atCommitMissingDiffs: 0,
   // Baseline auto-seed (Plan 2)
   seedBaseline: vi.fn(), atCommitNeedsBaseline: false, seedingBaseline: false, seedPhase: null,
+  // Compare A↔B on commits (#3)
+  compareCommits: vi.fn(),
 };
 
 let currentState = { ...defaultAppState };
@@ -133,5 +135,20 @@ describe('Timeline — Commits mode', () => {
     await waitFor(() => expect(screen.getByTestId('commit-density-hint')).toBeInTheDocument());
     expect(screen.getAllByTestId('commit-dot').length).toBeLessThanOrEqual(60);
     await waitFor(() => expect(screen.getByTestId('prewarm-status').textContent).toMatch(/40\/130/));
+  });
+
+  it('Compare A↔B in commits mode calls compareCommits with the cursor commits (#3)', async () => {
+    // cursorA→2026-05-10 (h_old), cursorB→2026-05-20 (h_new); commitNearest maps each.
+    currentState = {
+      ...defaultAppState,
+      compareCommits: vi.fn(),
+      cursorA: '2026-05-10T00:00:00Z',
+      cursorB: '2026-05-20T00:00:00Z',
+    };
+    render(<Timeline />);
+    fireEvent.click(await screen.findByTestId('navmode-commits'));
+    await screen.findAllByTestId('commit-dot'); // commits loaded → windowedCommits populated
+    fireEvent.click(screen.getByRole('button', { name: /Compare A/ }));
+    expect(currentState.compareCommits).toHaveBeenCalledWith('h_old', 'h_new');
   });
 });

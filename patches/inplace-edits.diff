@@ -3554,7 +3554,7 @@ index 49862a9..5c552dd 100644
   * Create a Graph RAG agent
   */
 diff --git a/gitnexus-web/src/hooks/useAppState.tsx b/gitnexus-web/src/hooks/useAppState.tsx
-index 25c5776..d36d771 100644
+index 25c5776..310692d 100644
 --- a/gitnexus-web/src/hooks/useAppState.tsx
 +++ b/gitnexus-web/src/hooks/useAppState.tsx
 @@ -8,7 +8,12 @@ import {
@@ -3629,7 +3629,7 @@ index 25c5776..d36d771 100644
    isAgentReady: boolean;
    isAgentInitializing: boolean;
    agentError: string | null;
-@@ -192,6 +221,486 @@ interface AppState {
+@@ -192,6 +221,491 @@ interface AppState {
    clearAICodeReferences: () => void;
    clearCodeReferences: () => void;
    codeReferenceFocus: CodeReferenceFocus | null;
@@ -3641,6 +3641,9 @@ index 25c5776..d36d771 100644
 +  diffLoading: boolean;
 +  diffError: string | null;
 +  enterDiffMode: (repoB: string) => Promise<void>;
++  // Compare A↔B between two commits (#3): reconstruct both via /graph/at-commit,
++  // diff them (reuses computeGraphDiff + diffMode). Exit via exitDiffMode.
++  compareCommits: (shaA: string, shaB: string) => Promise<void>;
 +  exitDiffMode: () => Promise<void>;
 +
 +  // Timeline zoom + 2-cursor state (Phase 1 of timeline-zoom-cursors design).
@@ -3815,6 +3818,8 @@ index 25c5776..d36d771 100644
 +    distance: number;
 +    reconstructedCounts: { nodes: number; relationships: number };
 +    filterConsistency: string;
++    droppedLabels?: string[];
++    droppedRelTypes?: string[];
 +  } | null;
 +  loadGraphAtCommit: (sha: string, opts?: { lazy?: boolean }) => Promise<void>;
 +  exitGraphAtCommit: () => void;
@@ -4116,7 +4121,7 @@ index 25c5776..d36d771 100644
  }
  
  const AppStateContext = createContext<AppState | null>(null);
-@@ -205,6 +714,10 @@ export const AppStateProvider = ({ children }: { children: ReactNode }) => (
+@@ -205,6 +719,10 @@ export const AppStateProvider = ({ children }: { children: ReactNode }) => (
  const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
    // View state
    const [viewMode, setViewMode] = useState<ViewMode>('onboarding');
@@ -4127,7 +4132,7 @@ index 25c5776..d36d771 100644
  
    const {
      graph,
-@@ -329,6 +842,7 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
+@@ -329,6 +847,7 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
    // LLM/Agent state
    const [llmSettings, setLLMSettings] = useState<LLMSettings>(loadSettings);
    const [isSettingsPanelOpen, setSettingsPanelOpen] = useState(false);
@@ -4135,7 +4140,7 @@ index 25c5776..d36d771 100644
    const [isAgentReady, setIsAgentReady] = useState(false);
    const [isAgentInitializing, setIsAgentInitializing] = useState(false);
    const [agentError, setAgentError] = useState<string | null>(null);
-@@ -343,6 +857,179 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
+@@ -343,6 +862,179 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
    const [isCodePanelOpen, setCodePanelOpen] = useState(false);
    const [codeReferenceFocus, setCodeReferenceFocus] = useState<CodeReferenceFocus | null>(null);
  
@@ -4315,7 +4320,7 @@ index 25c5776..d36d771 100644
    // Map of normalized file path → node ID for graph-based lookups
    const fileNodeByPath = useMemo(() => {
      if (!graph) return new Map<string, string>();
-@@ -1029,6 +1716,66 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
+@@ -1029,6 +1721,66 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
      async (repoName: string) => {
        if (!serverBaseUrl) return;
  
@@ -4382,7 +4387,7 @@ index 25c5776..d36d771 100644
        setProgress({
          phase: 'extracting',
          percent: 0,
-@@ -1105,6 +1852,13 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
+@@ -1105,6 +1857,13 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
          for (const node of result.nodes) newGraph.addNode(node);
          for (const rel of result.relationships) newGraph.addRelationship(rel);
          setGraph(newGraph);
@@ -4396,7 +4401,7 @@ index 25c5776..d36d771 100644
        } catch (err: unknown) {
          console.error('Repo switch failed:', err);
          setProgress({
-@@ -1207,9 +1961,1217 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
+@@ -1207,9 +1966,1257 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
      setCodeReferenceFocus(null);
    }, []);
  
@@ -4464,6 +4469,44 @@ index 25c5776..d36d771 100644
 +    setDiffData(null);
 +    setDiffError(null);
 +  }, [setGraph]);
++
++  // Compare A↔B between two commits (#3). Mirrors enterDiffMode but both sides
++  // are reconstructed via /graph/at-commit (baseline + replayed diffs).
++  const compareCommits = useCallback(
++    async (shaA: string, shaB: string) => {
++      if (!projectName || shaA === shaB) return;
++      const baseRepo = projectName.split('@')[0];
++      setDiffLoading(true);
++      setDiffError(null);
++      try {
++        preDiffGraphRef.current = graph;
++        preDiffProjectRef.current = projectName;
++        const fetchAt = async (sha: string) => {
++          const r = await fetch(
++            `/graph/at-commit?repo=${encodeURIComponent(baseRepo)}&commit=${encodeURIComponent(sha)}`,
++            { cache: 'no-store' },
++          );
++          const b = await r.json().catch(() => ({}));
++          if (!r.ok) throw new Error(b?.error || `reconstruct ${sha.slice(0, 7)} failed (HTTP ${r.status})`);
++          return { nodes: b.nodes || [], relationships: b.relationships || [] };
++        };
++        const [ga, gb] = await Promise.all([fetchAt(shaA), fetchAt(shaB)]);
++        const diff = computeGraphDiff(ga, gb);
++        const unionGraph = createKnowledgeGraph();
++        for (const n of diff.unionNodes) unionGraph.addNode(n);
++        for (const e of diff.unionEdges) unionGraph.addRelationship(e);
++        setGraph(unionGraph);
++        setDiffData(diff);
++        setGraphModeState('single');
++        setDiffMode({ repoA: `${baseRepo}@${shaA.slice(0, 7)}`, repoB: `${baseRepo}@${shaB.slice(0, 7)}` });
++      } catch (err) {
++        setDiffError(err instanceof Error ? err.message : 'Failed to compare commits');
++      } finally {
++        setDiffLoading(false);
++      }
++    },
++    [projectName, graph, setGraph],
++  );
 +
 +  // ── Timeline zoom + 2-cursor setters (auto-swap A ≤ B + mutual exclusion
 +  // with cross-repo diffMode). See spec § 4.2 Data model.
@@ -5399,6 +5442,8 @@ index 25c5776..d36d771 100644
 +          distance: body.baseline?.distance ?? 0,
 +          reconstructedCounts: body.reconstructedCounts || { nodes: 0, relationships: 0 },
 +          filterConsistency: body.replay?.filterConsistency || 'consistent',
++          droppedLabels: body.replay?.droppedLabels || [],
++          droppedRelTypes: body.replay?.droppedRelTypes || [],
 +        });
 +      } catch (err) {
 +        setAtCommitError(err instanceof Error ? err.message : 'Failed to reconstruct graph at commit');
@@ -5614,7 +5659,7 @@ index 25c5776..d36d771 100644
      graph,
      setGraph,
      selectedNode,
-@@ -1271,6 +3233,8 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
+@@ -1271,6 +3278,8 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
      updateLLMSettings,
      isSettingsPanelOpen,
      setSettingsPanelOpen,
@@ -5623,7 +5668,7 @@ index 25c5776..d36d771 100644
      isAgentReady,
      isAgentInitializing,
      agentError,
-@@ -1293,6 +3257,170 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
+@@ -1293,6 +3302,171 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
      clearAICodeReferences,
      clearCodeReferences,
      codeReferenceFocus,
@@ -5634,6 +5679,7 @@ index 25c5776..d36d771 100644
 +    diffError,
 +    enterDiffMode,
 +    exitDiffMode,
++    compareCommits,
 +    // Timeline zoom + 2-cursor state (Phase 1 of timeline-zoom-cursors)
 +    cursorA,
 +    cursorB,
