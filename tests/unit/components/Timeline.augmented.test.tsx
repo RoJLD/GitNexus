@@ -123,17 +123,15 @@ vi.mock('../../../upstream/gitnexus-web/src/components/EntropyBadge', () => ({
   EntropyBadge: () => null,
 }));
 
-// Stub lucide icons (the alias path uses @/lib/lucide-icons which is
-// only resolved by Vite). The test pulls only the visual icons; we
-// replace them with bare spans so the import resolves.
+// Stub the icons Timeline imports. vitest 4 rejects a Proxy as a mock factory
+// return ("Cannot create proxy…"), so use an explicit object of stub components.
 vi.mock('@/lib/lucide-icons', () => {
-  const stub = () => null;
-  return new Proxy(
-    {},
-    {
-      get: () => stub,
-    },
-  );
+  const S = () => null;
+  return {
+    Play: S, Pause: S, Clock: S, Camera: S, Zap: S, Loader2: S, GitBranch: S,
+    TrendingUp: S, History: S, Users: S, Target: S, FlaskConical: S, Network: S,
+    Activity: S, Download: S, Check: S,
+  };
 });
 
 // Import after mocks so the resolution picks them up.

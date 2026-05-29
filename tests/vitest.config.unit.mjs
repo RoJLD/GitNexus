@@ -17,6 +17,8 @@ export default defineConfig({
   resolve: {
     alias: {
       '@': fileURLToPath(new URL('../upstream/gitnexus-web/src', import.meta.url)),
+      'gitnexus-shared': fileURLToPath(new URL('../upstream/gitnexus-shared/src/index.ts', import.meta.url)),
+      '@shared': fileURLToPath(new URL('../upstream/shared', import.meta.url)),
     },
   },
   test: {
