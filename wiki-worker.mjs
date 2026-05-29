@@ -22,6 +22,43 @@ const GITNEXUS_BIN = process.env.GITNEXUS_BIN || 'gitnexus';
 // repoName -> { generating: bool, error: string|null, finishedAt: number|null }
 const state = new Map();
 
+// Group sync in-progress state, keyed by group name.
+const groupState = new Map();
+
+function resolveRepoPathSync(reposList, name) {
+  const repo = Array.isArray(reposList) ? reposList.find((r) => r.name === name) : null;
+  return repo ? repo.repoPath || repo.path || null : null;
+}
+
+async function runGroupSync(name, repoNames) {
+  groupState.set(name, { syncing: true, error: null, finishedAt: null });
+  const run = (args) => new Promise((resolve) => {
+    const c = spawn(GITNEXUS_BIN, args, { stdio: ['ignore', 'pipe', 'pipe'], env: process.env });
+    let err = '';
+    c.stderr.on('data', (d) => { err += d.toString(); if (err.length > 4000) err = err.slice(-4000); });
+    c.on('error', (e) => resolve({ code: -1, err: String(e && e.message || e) }));
+    c.on('close', (code) => resolve({ code, err }));
+  });
+  try {
+    // --force gives a clean idempotent re-sync: the group.yaml is reset to the
+    // template each time, so a changed repo set never leaves stale entries.
+    await run(['group', 'create', name, '--force']);
+    for (const repo of repoNames) {
+      // <group> <groupPath> <registryName>; groupPath == registryName so the
+      // contracts' crossLink.repo matches the indexed repo name.
+      await run(['group', 'add', name, repo, repo]);
+    }
+    const sync = await run(['group', 'sync', name]);
+    groupState.set(name, {
+      syncing: false,
+      error: sync.code === 0 ? null : `group sync exited ${sync.code}: ${sync.err.trim().slice(-500)}`,
+      finishedAt: Date.now(),
+    });
+  } catch (e) {
+    groupState.set(name, { syncing: false, error: String(e && e.message || e), finishedAt: Date.now() });
+  }
+}
+
 async function resolveRepoPath(name) {
   try {
     const res = await fetch(`${API}/api/repos`);
@@ -95,6 +132,33 @@ const server = createServer(async (req, res) => {
       lastGeneratedAt: lga ? new Date(lga).toISOString() : null,
       error: cur.error || null,
     });
+  }
+
+  if (url.pathname === '/group/sync' && req.method === 'POST') {
+    const name = url.searchParams.get('name');
+    const reposCsv = url.searchParams.get('repos') || '';
+    const repoNames = reposCsv.split(',').map((s) => s.trim()).filter(Boolean);
+    if (!name || repoNames.length === 0) return json(400, { error: 'missing name or repos' });
+    const cur = groupState.get(name);
+    if (cur && cur.syncing) return json(409, { syncing: true });
+    let reposList = [];
+    try { const rr = await fetch(`${API}/api/repos`); const data = await rr.json(); reposList = Array.isArray(data) ? data : data.repos; } catch { /* leave empty → unknown */ }
+    const unknown = repoNames.filter((n) => !resolveRepoPathSync(reposList, n));
+    if (unknown.length) return json(404, { error: `unknown repos: ${unknown.join(', ')}` });
+    runGroupSync(name, repoNames); // async, fire-and-forget
+    return json(202, { started: true });
+  }
+
+  if (url.pathname === '/group/status' && req.method === 'GET') {
+    const name = url.searchParams.get('name');
+    if (!name) return json(400, { error: 'missing name' });
+    const cur = groupState.get(name) || { syncing: false, error: null };
+    let lastSyncedAt = null;
+    try {
+      const home = process.env.GITNEXUS_HOME || '/data/gitnexus';
+      lastSyncedAt = new Date(statSync(join(home, 'groups', name, 'contracts.json')).mtimeMs).toISOString();
+    } catch { /* not synced yet */ }
+    return json(200, { syncing: !!cur.syncing, lastSyncedAt, error: cur.error || null });
   }
 
   if (url.pathname === '/health') return json(200, { ok: true });
