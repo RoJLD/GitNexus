@@ -135,7 +135,7 @@ Le diff monolithique unique a été supprimé et remplacé par deux artefacts di
 | Script | Rôle |
 |---|---|
 | [`scripts/check-patch-drift.mjs`](scripts/check-patch-drift.mjs) | **Dérive interne** : compare les diffs commités (`additive-files.diff` / `inplace-edits.diff`) avec le clone `upstream/` actuel ; exit 1 + rapport si désynchronisés. À lancer avant tout commit touchant `upstream/`. |
-| [`scripts/check-upstream-releases.mjs`](scripts/check-upstream-releases.mjs) | **Veille externe** : interroge l'API GitHub Releases et compare la dernière release stable (`vX.Y.Z`) au pin dans `Dockerfile.cli` ; exit 10 si une version plus récente existe (alerte), exit 0 si à jour. |
+| [`scripts/check-upstream-releases.mjs`](scripts/check-upstream-releases.mjs) | **Veille externe** : liste les tags upstream via `git ls-remote --tags` (pas d'API key) et compare la dernière release stable (`vX.Y.Z`) au pin dans `Dockerfile.cli` ; exit 10 si une version plus récente existe (alerte), exit 0 si à jour. |
 
 #### Endpoints backend (ajoutés à `docker-server.mjs`)
 | Endpoint | Fonction |
