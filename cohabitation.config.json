@@ -1,0 +1,8 @@
+{
+  "upstreamUrl": "https://github.com/abhigyanpatwari/gitnexus.git",
+  "cloneDir": "upstream",
+  "additiveDiff": "patches/additive-files.diff",
+  "inplaceDiff": "patches/inplace-edits.diff",
+  "pinFile": "Dockerfile.cli",
+  "pinPattern": "gitnexus:(\\d+\\.\\d+\\.\\d+)"
+}
