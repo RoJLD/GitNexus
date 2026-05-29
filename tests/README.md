@@ -62,6 +62,7 @@ Pré-requis local : Rancher Desktop running, **Node ≥ 22 LTS**. CI : `.github/
 | Code Wiki — schedule pure fns | `unit/wiki-schedule.test.mjs` | parseAutoEvery (h/d/off/malformed) + isWikiRegenDue (never/elapsed/not-elapsed/broken — 12 cases) |
 | Auto-reindex — decision pure fn | `unit/auto-reindex.test.mjs` | shouldReindex (disabled/no-sha/first-sight/unchanged/changed — 6 cases) |
 | Regression forensics — core pure fns | `unit/regression-core.test.mjs` | METRIC_REGISTRY directions + locateRegression (rise/fall/flat/null/short) + rankCulprits (up/down/empty — 10 cases) |
+| Group graph — core pure fns | `unit/group-graph-core.test.mjs` | collapseToFileLevel (fold symbols→file + namespace `<repo>::<file>` + edge roll-up/dedup + self-loop drop + empty) + mergeRepoGraphs (union + cross-link join by `symbolRef.filePath` + orphan drop) |
 | Regression forensics Phase 2 — suspects + registry | `unit/regression-suspects.test.mjs` | rankSuspects (filesTouched desc + date tiebreak + empty) + Phase 2 registry rows (series/attribution/worseDirection) |
 | Auto regression forensics — pure helpers | `unit/auto-regression-forensics.test.mjs` | mapWatchToRegressionMetric (entropy strip / identity / coupling→coupling / unmapped→null) + buildWebhookPayload (culprit line + regression field + files fallback) |
 | Temporal filter — pure client fns | `unit/temporal-filter-modes.test.mjs` | computeStrictFilter + computeNormalFilter (intersection + union) |
@@ -150,6 +151,7 @@ Pré-requis local : Rancher Desktop running, **Node ≥ 22 LTS**. CI : `.github/
 | SysML endpoint | integration/endpoints/sysml-export.test.mjs | GET 200 (text/plain), 400 missing repo, 400 invalid format |
 | MCP ghost_audit | `integration/mcp/ghost_audit.test.mjs` | stdio JSON-RPC tool call |
 | Clusters endpoint | `integration/endpoints/clusters.test.mjs` | `GET /clusters` 200/400/404 + filter |
+| Group graph endpoints | `integration/endpoints/group-graph.test.mjs` | `GET /groups` 200 array shape + `GET /group/status` 400 + `POST /group/sync` 400 + `GET /graph/merged` 400 missing-group + 404 unsynced-group |
 
 ### UI flows e2e
 | Test | Fichier | Couvre |
@@ -167,6 +169,7 @@ Pré-requis local : Rancher Desktop running, **Node ≥ 22 LTS**. CI : `.github/
 | E2E cluster halos | `e2e/specs/06-cluster-halos.spec.ts` | toggle + halo + tooltip |
 | E2E Augmented Timeline | `e2e/specs/07-augmented-timeline.spec.ts` | Scrub cursorB with ghosts ON (skip if no snapshots) + Animate roadmap button shows banner |
 | Lifespan windowed | `e2e/specs/lifespan-windowed.spec.ts` | Header + badge toggle on filter mode change (3 cases) |
+| Group graph panel | `e2e/specs/group-graph.spec.ts` | "Group graph" toolbar button opens panel + create/sync form (name input + sync button) visible |
 | Timeline URL persistence | `e2e/specs/timeline-url-persistence.spec.ts` | write tl* params (filter+compare) + reload restore + clear on default + zoom param write/clear (4 cases) |
 | Code Wiki panel | `e2e/specs/wiki-panel.spec.ts` | open Wiki panel (iframe or empty-state) + Regenerate fires POST /wiki/generate (2 cases) |
 | Regression highlight | `e2e/specs/regression-highlight.spec.ts` | Commit Δ sparkline → Locate regression fires /regression + culprit banner appears |

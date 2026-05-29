@@ -289,6 +289,17 @@ curl -s -o /dev/null -w "prewarm GET: HTTP %{http_code}\n" \
 curl -s -o /dev/null -w "prewarm POST: HTTP %{http_code}\n" \
   -X POST "http://localhost:4173/snapshot/prewarm?repo=hmm_studio&max=3"
 
+# Multi-repo unified graph (Tier 65) — read-only routing checks. /groups lists
+# synced groups (200, empty array fine on a cold stack). /graph/merged 404s an
+# unsynced group (we only check routing, not a live sync). Syncing a real group
+# is CLI-side (gitnexus group, via the worker /group/sync); the merged render
+# needs ≥2 repos sharing a contract. /group/sync + /group/status proxy the
+# wiki-worker — same sidecar as /wiki/*.
+curl -s -o /dev/null -w "groups: HTTP %{http_code}\n" \
+  "http://localhost:4173/groups"
+curl -s -o /dev/null -w "graph/merged (unsynced→404): HTTP %{http_code}\n" \
+  "http://localhost:4173/graph/merged?group=__none__"
+
 # MCP sidecar — stdio JSON-RPC against the live stack. Exercises the
 # wrapper layer that exposes our analytics to Claude Code / Cursor.
 node mcp-server/smoke.mjs
