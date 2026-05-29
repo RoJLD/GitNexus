@@ -87,19 +87,26 @@ describe('Timeline — Commits mode', () => {
     expect(currentState.loadGraphAtCommit).toHaveBeenCalledWith('h_new');
   });
 
-  it('shows a missing-diffs strip with a lazy retry when atCommitMissingDiffs > 0', async () => {
-    currentState = { ...defaultAppState, loadGraphAtCommit: vi.fn(), atCommitSha: 'h_new', atCommitMissingDiffs: 3 };
+  it('shows a missing-diffs strip with a lazy retry after clicking a commit (atCommitMissingDiffs > 0)', async () => {
+    // The strip gates on the locally-tracked clicked commit (set on dot click),
+    // NOT atCommitSha (which stays null on a 409). So we must click a dot first.
+    currentState = { ...defaultAppState, loadGraphAtCommit: vi.fn(), atCommitMissingDiffs: 3 };
     render(<Timeline />);
     fireEvent.click(await screen.findByTestId('navmode-commits'));
+    const dots = await screen.findAllByTestId('commit-dot');
+    fireEvent.click(dots[0]); // sets clickedCommit = 'h_new'
     const retry = await screen.findByTestId('commit-generate-retry');
     fireEvent.click(retry);
     expect(currentState.loadGraphAtCommit).toHaveBeenCalledWith('h_new', { lazy: true });
   });
 
-  it('shows a Seed baseline button when atCommitNeedsBaseline and triggers seedBaseline', async () => {
-    currentState = { ...defaultAppState, seedBaseline: vi.fn(), atCommitSha: 'h_new', atCommitNeedsBaseline: true };
+  it('shows a Seed baseline button after clicking a commit when atCommitNeedsBaseline', async () => {
+    // Same gating note as above: click a dot first to set clickedCommit.
+    currentState = { ...defaultAppState, seedBaseline: vi.fn(), loadGraphAtCommit: vi.fn(), atCommitNeedsBaseline: true };
     render(<Timeline />);
     fireEvent.click(await screen.findByTestId('navmode-commits'));
+    const dots = await screen.findAllByTestId('commit-dot');
+    fireEvent.click(dots[0]); // sets clickedCommit = 'h_new'
     fireEvent.click(await screen.findByTestId('seed-baseline-btn'));
     expect(currentState.seedBaseline).toHaveBeenCalledWith('h_new');
   });
