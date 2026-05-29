@@ -116,6 +116,8 @@ In short:
   - `scripts/check-upstream-releases.mjs` — external drift: alerts (exit 10) when a
     newer stable upstream release exists than our pin.
 
+L'outil générique multi-repo vit désormais dans le dépôt frère `fork-cohabitation` (CLI `cohabit`). Les 3 scripts `scripts/check-patch-drift.mjs` / `check-upstream-releases.mjs` / `bump-upstream.mjs` de gitnexus sont CONSERVÉS et GELÉS (référence autonome + oracle de parité) : toute évolution de leur logique va désormais dans `fork-cohabitation`. Consolidation (suppression au profit du seul outil central) conditionnée à l'onboarding d'un 2ᵉ repo. Voir le spec Phase 3 : `docs/superpowers/specs/2026-05-29-fork-cohabitation-extraction-design.md`.
+
 ## Why not a git submodule?
 
 A submodule would be the textbook answer, but it'd force every user of

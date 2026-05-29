@@ -78,7 +78,7 @@ INVENTORY, add tests if applicable):
    cd ..
    ```
 
-   Lancer `node scripts/check-patch-drift.mjs` avant de committer toute édition d'`upstream/` — il échoue (exit 1) si `additive-files.diff`/`inplace-edits.diff` ne reflètent plus le clone.
+   Lancer `node scripts/check-patch-drift.mjs` avant de committer toute édition d'`upstream/` — il échoue (exit 1) si `additive-files.diff`/`inplace-edits.diff` ne reflètent plus le clone. Équivalent via l'outil central : `node ../fork-cohabitation/bin/cohabit.mjs drift gitnexus`.
 
 2. **Update `ROADMAP.md`** :
    - Mark the Tier item ✅
@@ -322,6 +322,7 @@ gitnexus/
 │   ├── bump-upstream.mjs               Bump dry-run tool: clone target, apply both diffs, write per-file conflict report
 │   ├── check-patch-drift.mjs           Garde de dérive interne (diffs commités vs clone upstream/)
 │   └── check-upstream-releases.mjs     Veille : alerte si une release stable upstream plus récente existe
+│                                       # (gelés — outil générique dans le dépôt frère fork-cohabitation ; cf. spec Phase 3)
 ├── patches/
 │   ├── additive-files.diff     New files we own (~99 files, zero conflict risk at bump)
 │   ├── inplace-edits.diff      In-place edits to upstream files (17 files, real conflict surface)

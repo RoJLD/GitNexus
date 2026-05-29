@@ -137,6 +137,30 @@ Le diff monolithique unique a été supprimé et remplacé par deux artefacts di
 | [`scripts/check-patch-drift.mjs`](scripts/check-patch-drift.mjs) | **Dérive interne** : compare les diffs commités (`additive-files.diff` / `inplace-edits.diff`) avec le clone `upstream/` actuel ; exit 1 + rapport si désynchronisés. À lancer avant tout commit touchant `upstream/`. |
 | [`scripts/check-upstream-releases.mjs`](scripts/check-upstream-releases.mjs) | **Veille externe** : liste les tags upstream via `git ls-remote --tags` (pas d'API key) et compare la dernière release stable (`vX.Y.Z`) au pin dans `Dockerfile.cli` ; exit 10 si une version plus récente existe (alerte), exit 0 si à jour. |
 
+#### Extraction Phase 3 (2026-05-29)
+
+Le mécanisme de cohabitation upstream a été extrait dans un outil générique indépendant :
+**`fork-cohabitation`** (dépôt frère `C:/Users/rdenis/VScode/fork-cohabitation`, CLI
+`cohabit`). L'outil est piloté par :
+
+- un fichier `cohabitation.config.json` déposé à la racine de chaque repo consommateur
+  (champs : `upstreamUrl`, `cloneDir`, `additiveDiff`, `inplaceDiff`, `pinFile`,
+  `pinPattern`) ;
+- un registre multi-repo central `repos.json` dans `fork-cohabitation`, avec champs
+  `name`, `path`, `tier` (priorité), `cadence` (fréquence de veille).
+
+gitnexus est le **consommateur #1** : son `cohabitation.config.json` est présent à la
+racine du repo et son entrée est enregistrée dans `fork-cohabitation/repos.json`.
+
+Les 3 scripts locaux (`scripts/check-patch-drift.mjs`, `check-upstream-releases.mjs`,
+`bump-upstream.mjs`) sont **conservés et gelés** : ils servent de référence autonome
+et d'oracle de parité. Toute évolution de leur logique va désormais dans
+`fork-cohabitation`. Leur suppression au profit du seul outil central est
+conditionnée à l'onboarding d'un 2ᵉ repo consommateur.
+
+Spec Phase 3 :
+[`docs/superpowers/specs/2026-05-29-fork-cohabitation-extraction-design.md`](docs/superpowers/specs/2026-05-29-fork-cohabitation-extraction-design.md)
+
 #### Endpoints backend (ajoutés à `docker-server.mjs`)
 | Endpoint | Fonction |
 |---|---|
