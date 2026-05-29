@@ -61,7 +61,16 @@ let currentState = { ...defaultAppState };
 
 vi.mock('../../../upstream/gitnexus-web/src/hooks/useAppState', () => ({ useAppState: () => currentState }));
 vi.mock('../../../upstream/gitnexus-web/src/components/EntropyBadge', () => ({ EntropyBadge: () => null }));
-vi.mock('@/lib/lucide-icons', () => new Proxy({}, { get: () => () => null }));
+// Stub the icons Timeline imports (vitest 4 rejects a Proxy as a mock factory
+// return — use an explicit object of stub components).
+vi.mock('@/lib/lucide-icons', () => {
+  const S = () => null;
+  return {
+    Play: S, Pause: S, Clock: S, Camera: S, Zap: S, Loader2: S, GitBranch: S,
+    TrendingUp: S, History: S, Users: S, Target: S, FlaskConical: S, Network: S,
+    Activity: S, Download: S, Check: S,
+  };
+});
 
 const { Timeline } = await import('../../../upstream/gitnexus-web/src/components/Timeline');
 
@@ -116,9 +125,10 @@ describe('Timeline — Commits mode', () => {
   });
 
   it('density-caps commit dots + shows hint + prewarm chip when over MAX_COMMIT_DOTS', async () => {
+    // Newest-first (like the real /commits) — i=0 is the most recent.
     const many = Array.from({ length: 130 }, (_, i) => ({
       hash: `h${i}`, shortHash: `h${i}`, message: `c${i}`, author: 'a',
-      date: new Date(Date.UTC(2026, 0, 1) + i * 86400000).toISOString(),
+      date: new Date(Date.UTC(2026, 4, 1) - i * 86400000).toISOString(),
     }));
     globalThis.fetch = vi.fn(async (url) => {
       const u = String(url);
