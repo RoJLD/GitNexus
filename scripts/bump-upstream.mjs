@@ -49,6 +49,9 @@ function applyPerFile(cwd, diffPath, layer, mode) {
   const files = listDiffFiles(cwd, diffPath);
   const results = [];
   for (const file of files) {
+    // --include treats the path as an fnmatch pattern; our diff paths are literal
+    // full paths with no glob metachars, so each matches exactly one file. Guard it:
+    if (/[*?[]/.test(file)) { results.push({ file, layer, status: 'fail' }); continue; }
     try {
       execFileSync('git', ['apply', ...mode, '--include', file, diffPath], { cwd, stdio: 'pipe' });
       // In --3way mode, a "successful" apply can still leave conflict markers.
@@ -71,7 +74,13 @@ function main() {
   const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
   const tmp = mkdtempSync(join(tmpdir(), 'gnx-bump-'));
   try {
-    execFileSync('git', ['clone', '--depth', '1', '--branch', target, UPSTREAM_URL, tmp], { stdio: 'inherit' });
+    // Full history (no --depth): git apply --3way needs the v1.6.5 ancestor blobs to 3-way merge.
+    try {
+      execFileSync('git', ['clone', '--branch', target, UPSTREAM_URL, tmp], { stdio: 'inherit' });
+    } catch {
+      console.error(`bump-upstream: échec du clone de '${target}' — vérifier le nom du tag/branche et le réseau.`);
+      process.exit(1);
+    }
     const additive = applyPerFile(tmp, join(repoRoot, 'patches/additive-files.diff'), 'additive', ['--check']);
     const inplace = applyPerFile(tmp, join(repoRoot, 'patches/inplace-edits.diff'), 'inplace', ['--3way']);
     const report = formatBumpReport(target, [...additive, ...inplace]);

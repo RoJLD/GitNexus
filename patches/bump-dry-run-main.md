@@ -1,22 +1,19 @@
 # Bump dry-run report — cible `main`
 
-- clean: 104
+- clean: 107
 - conflict: 0
-- fail: 12
+- fail: 9
 
 ## Fichiers à reprendre à la main
 - [fail] (inplace) docker-server.mjs
 - [fail] (inplace) gitnexus-web/package-lock.json
 - [fail] (inplace) gitnexus-web/package.json
 - [fail] (inplace) gitnexus-web/src/components/DropZone.tsx
-- [fail] (inplace) gitnexus-web/src/components/FileTreePanel.tsx
 - [fail] (inplace) gitnexus-web/src/components/GraphCanvas.tsx
 - [fail] (inplace) gitnexus-web/src/components/Header.tsx
 - [fail] (inplace) gitnexus-web/src/components/RepoAnalyzer.tsx
 - [fail] (inplace) gitnexus-web/src/core/llm/agent.ts
-- [fail] (inplace) gitnexus-web/src/hooks/useAppState.tsx
 - [fail] (inplace) gitnexus-web/src/hooks/useSigma.ts
-- [fail] (inplace) gitnexus-web/src/lib/lucide-icons.tsx
 
 ## Détail
 - [clean] (additive) connectors/github.mjs
@@ -124,14 +121,14 @@
 - [fail] (inplace) gitnexus-web/package.json
 - [clean] (inplace) gitnexus-web/src/App.tsx
 - [fail] (inplace) gitnexus-web/src/components/DropZone.tsx
-- [fail] (inplace) gitnexus-web/src/components/FileTreePanel.tsx
+- [clean] (inplace) gitnexus-web/src/components/FileTreePanel.tsx
 - [fail] (inplace) gitnexus-web/src/components/GraphCanvas.tsx
 - [fail] (inplace) gitnexus-web/src/components/Header.tsx
 - [fail] (inplace) gitnexus-web/src/components/RepoAnalyzer.tsx
 - [clean] (inplace) gitnexus-web/src/config/ui-constants.ts
 - [fail] (inplace) gitnexus-web/src/core/llm/agent.ts
-- [fail] (inplace) gitnexus-web/src/hooks/useAppState.tsx
+- [clean] (inplace) gitnexus-web/src/hooks/useAppState.tsx
 - [fail] (inplace) gitnexus-web/src/hooks/useSigma.ts
 - [clean] (inplace) gitnexus-web/src/index.css
-- [fail] (inplace) gitnexus-web/src/lib/lucide-icons.tsx
+- [clean] (inplace) gitnexus-web/src/lib/lucide-icons.tsx
 - [clean] (inplace) gitnexus-web/src/services/backend-client.ts
