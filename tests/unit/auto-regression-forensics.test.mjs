@@ -11,8 +11,10 @@ describe('mapWatchToRegressionMetric', () => {
     expect(mapWatchToRegressionMetric('ownership.topAuthorShare')).toBe('ownership.topAuthorShare');
     expect(mapWatchToRegressionMetric('dissonance.purity')).toBe('dissonance.purity');
   });
-  it('returns null for unmapped metrics (coupling, custom)', () => {
-    expect(mapWatchToRegressionMetric('coupling')).toBeNull();
+  it('maps coupling to itself (Tier 60)', () => {
+    expect(mapWatchToRegressionMetric('coupling')).toBe('coupling');
+  });
+  it('returns null for genuinely unknown metrics', () => {
     expect(mapWatchToRegressionMetric('something.custom')).toBeNull();
   });
 });
