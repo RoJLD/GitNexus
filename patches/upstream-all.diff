@@ -6898,7 +6898,7 @@ index 0000000..ae8e0f6
 +}
 diff --git a/docker-server-routes.mjs b/docker-server-routes.mjs
 new file mode 100644
-index 0000000..d05e659
+index 0000000..7a3d2d3
 --- /dev/null
 +++ b/docker-server-routes.mjs
 @@ -0,0 +1,77 @@
@@ -6936,8 +6936,7 @@ index 0000000..d05e659
 +import { handleBaselineSeedRoute } from './docker-server-baseline-seed.mjs';
 +import { handlePrewarmRoute } from './docker-server-prewarm.mjs';
 +
-+// Renvoie true dès qu'un handler a pris la requête (sémantique identique à
-+// l'ancienne chaîne `if (await handleX(...)) return;` de docker-server.mjs).
++// Returns true once a handler claims (responds to) the request; false if no route matched.
 +export async function registerGitnexusRoutes(req, reqUrl, res, ctx) {
 +  if (await handleSnapshotRoute(req, reqUrl, res, ctx)) return true;
 +  if (await handleSnapshotBulkRoute(req, reqUrl, res, ctx)) return true;
@@ -6969,13 +6968,14 @@ index 0000000..d05e659
 +  if (await handleClustersRoute(req, reqUrl, res, ctx)) return true;
 +  if (await handleWikiRoute(req, reqUrl, res, ctx)) return true;
 +  if (await handleAutoReindexRoute(req, reqUrl, res, ctx)) return true;
-+  if (await handleRegressionRoute(req, reqUrl, res)) return true; // NB: pas de ctx
++  if (await handleRegressionRoute(req, reqUrl, res)) return true; // NB: no ctx — handler resolves its own API base, unlike the others
 +  if (await handleCommitsRoute(req, reqUrl, res, ctx)) return true;
 +  if (await handleBaselineSeedRoute(req, reqUrl, res, ctx)) return true;
 +  if (await handlePrewarmRoute(req, reqUrl, res, ctx)) return true;
 +  return false;
 +}
 +
++// Grouping point: add future crons here so docker-server.mjs stays untouched.
 +export function startGitnexusCron(api) {
 +  startWatchesCron(api);
 +}
