@@ -210,6 +210,9 @@ curl -s -o /dev/null -w "watches: HTTP %{http_code}\n" \
   "http://localhost:4173/watches"
 # (Tier 59) Watch webhooks are auto-enriched with the /regression culprit at
 # fire-time; GET /watches `state` now carries `lastCulprit` (null until a fire).
+# (Tier 62) `coupling` is now a 6th watchable + auto-forensiquable metric;
+# supportedMetrics in /watches includes "coupling". UI: "Locate regression"
+# button in EntropyCommitTimeline (Commit Δ sparkline) highlights the culprit.
 
 # SysML export (Tier 3.x bonus — pure read-only, no side effects)
 curl -s -o /dev/null -w "sysml-export: HTTP %{http_code}\n" \
