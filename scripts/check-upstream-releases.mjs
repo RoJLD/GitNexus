@@ -19,6 +19,7 @@ export function parseStableTags(lsRemoteOutput) {
   return [...lsRemoteOutput.matchAll(/refs\/tags\/(v\d+\.\d+\.\d+)$/gm)].map((m) => m[1]);
 }
 
+// Suppose des entrées validées « vX.Y.Z » (le filtre de compareToLatest le garantit) ; NaN sinon.
 export function cmpSemver(a, b) {
   const pa = a.replace(/^v/, '').split('.').map(Number);
   const pb = b.replace(/^v/, '').split('.').map(Number);
@@ -33,7 +34,7 @@ export function compareToLatest(pinned, tags) {
   const stable = tags.filter((t) => /^v\d+\.\d+\.\d+$/.test(t)).slice().sort(cmpSemver);
   const latest = stable.length ? stable[stable.length - 1] : null;
   const newer = stable.filter((t) => cmpSemver(t, pin) > 0);
-  return { pinned: pin, latest, newer, upToDate: newer.length === 0 };
+  return { pinned: pin, latest, newer, upToDate: latest !== null && newer.length === 0 };
 }
 
 function main() {

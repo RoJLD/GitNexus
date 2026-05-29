@@ -26,6 +26,13 @@ describe('parseStableTags', () => {
     ].join('\n');
     expect(parseStableTags(out).sort()).toEqual(['v1.6.4', 'v1.6.5', 'v1.7.0']);
   });
+  it('ignore les peeled refs `^{}` (annotated tags)', () => {
+    const out = [
+      'abc123\trefs/tags/v1.7.0',
+      'def456\trefs/tags/v1.7.0^{}',
+    ].join('\n');
+    expect(parseStableTags(out)).toEqual(['v1.7.0']);
+  });
 });
 
 describe('cmpSemver', () => {
@@ -49,5 +56,16 @@ describe('compareToLatest', () => {
     expect(r.upToDate).toBe(false);
     expect(r.latest).toBe('v1.7.1');
     expect(r.newer.sort()).toEqual(['v1.7.0', 'v1.7.1']);
+  });
+  it('pin absent de la liste de tags : pas à jour, newer correct', () => {
+    const r = compareToLatest('1.6.5', ['v1.6.4', 'v1.7.0']);
+    expect(r.upToDate).toBe(false);
+    expect(r.latest).toBe('v1.7.0');
+    expect(r.newer).toEqual(['v1.7.0']);
+  });
+  it('liste de tags vide : PAS à jour (latest null ne doit pas masquer l\'alerte)', () => {
+    const r = compareToLatest('1.6.5', []);
+    expect(r.latest).toBe(null);
+    expect(r.upToDate).toBe(false);
   });
 });
