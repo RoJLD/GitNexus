@@ -33,9 +33,19 @@ esac
 # `pwd -W` is Git-Bash-specific (this deployment is Windows-targeted).
 REPO_WIN="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -W 2>/dev/null || pwd)"
 
+# The component/hook tests that import the real useAppState pull gitnexus-web's
+# full dep tree (langchain/anthropic/mermaid/sigma). Install those too for the
+# unit tier (cached in a named volume → only the first run is heavy). Skipped
+# for integ (node-env, no components).
+WEB_INSTALL=""
+if [ "$TIER" = "unit" ]; then
+  WEB_INSTALL="echo '=== installing gitnexus-web deps (first run is heavy, cached after) ==='; npm install --prefix /work/upstream/gitnexus-web --no-audit --no-fund --legacy-peer-deps >/tmp/web.log 2>&1 || { echo 'gitnexus-web install failed:'; tail -25 /tmp/web.log; exit 1; };"
+fi
+
 MSYS_NO_PATHCONV=1 docker run --rm \
   -v "${REPO_WIN}:/work" \
   -v "gnx-test-nm:/work/tests/node_modules" \
+  -v "gnx-web-nm:/work/upstream/gitnexus-web/node_modules" \
   -w "/work/tests" \
   node:22-bookworm-slim \
-  bash -lc "npm install --no-package-lock --no-audit --no-fund >/tmp/npm.log 2>&1 || { echo 'npm install failed:'; tail -25 /tmp/npm.log; exit 1; }; npx vitest run --config ${CFG} $*"
+  bash -lc "npm install --no-package-lock --no-audit --no-fund >/tmp/npm.log 2>&1 || { echo 'tests npm install failed:'; tail -25 /tmp/npm.log; exit 1; }; ${WEB_INSTALL} npx vitest run --config ${CFG} $*"
