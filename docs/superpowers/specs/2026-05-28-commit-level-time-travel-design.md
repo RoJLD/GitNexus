@@ -98,3 +98,33 @@ Naviguer **commit-par-commit, fluide et léger**, depuis la timeline principale.
 - **Integration** (`tests/integration/endpoints/`) : shape `/commits` ; `promote` flippe la visibilité ; `baseline-seed` crée un snapshot `hidden` ; `/graph/at-commit` toujours 200 ; `/snapshots` n'expose pas les cachés.
 - **Component** (`tests/unit/components/`) : toggle de mode, rendu mode Commits, bouton promote, chip de progression.
 - **Smoke loop** (CLAUDE.md) : ajouter `/commits` + `/snapshot/promote`.
+
+---
+
+## Update 2026-05-29 — Plan 1 (A) + Plan 2 (B) livrés ; déviations d'implémentation
+
+**Plan 1 (A — mode Commits timeline)** livré : endpoint `GET /commits`
+(`docker-server-commits.mjs`) + toggle Snapshots⇄Commits dans `Timeline.tsx`
+(clic commit → `loadGraphAtCommit`, fallback lazy sur diffs manquants).
+
+**Plan 2 (B — baseline auto-seed)** livré, avec 3 déviations assumées vs le
+design initial §3.3 (notées pour l'historique) :
+
+1. **Flag caché = fichier sentinelle `.hidden`** dans le dossier du snapshot
+   (pas de champ dans le registry ni `commit.json`). `handleListSnapshots`
+   l'exclut par défaut, champ `hidden` + `?includeHidden=true`. `findNearestBaseline`
+   inchangé (ne consulte pas le marqueur → voit tous les baselines).
+2. **Seed = endpoint de statut *pollable*** (`GET /snapshot/baseline-seed/:jobId`
+   → JSON `{state,phase}`), **pas SSE** comme suggéré en §3.3. Un chip de
+   progression n'a besoin que de phases grossières ; évite de dupliquer la
+   machinerie SSE de `/snapshot/bulk`. La job map est en mémoire (TTL 60s).
+3. **Promote vit dans `SnapshotsPanel`** (sous-section "Internal baselines"),
+   pas sur les dots de la timeline (maquette initiale). **Seed déclenché au
+   clic** sur le 409 `needsBaseline` (`/graph/at-commit`), pas auto à l'entrée
+   du mode — moins agressif, conforme à la décision "background non-bloquant".
+
+**Vérification** (host vitest/vite bloqués par Node 21 < 22) : via build Docker
+(porte de compilation) + smoke endpoints + tests d'intégration. Tests
+composant écrits, exécution différée jusqu'à Node 22.
+
+**Reste** : Plan 3 (C — pré-chauffage des diffs on-push + on-era-entry).

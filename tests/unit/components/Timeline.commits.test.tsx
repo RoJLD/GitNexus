@@ -51,6 +51,8 @@ const defaultAppState = {
   // Commit-level time-travel wiring (this plan)
   loadGraphAtCommit: vi.fn(), exitGraphAtCommit: vi.fn(),
   atCommitActive: false, atCommitSha: null, atCommitLoading: false, atCommitMissingDiffs: 0,
+  // Baseline auto-seed (Plan 2)
+  seedBaseline: vi.fn(), atCommitNeedsBaseline: false, seedingBaseline: false, seedPhase: null,
 };
 
 let currentState = { ...defaultAppState };
@@ -92,5 +94,13 @@ describe('Timeline — Commits mode', () => {
     const retry = await screen.findByTestId('commit-generate-retry');
     fireEvent.click(retry);
     expect(currentState.loadGraphAtCommit).toHaveBeenCalledWith('h_new', { lazy: true });
+  });
+
+  it('shows a Seed baseline button when atCommitNeedsBaseline and triggers seedBaseline', async () => {
+    currentState = { ...defaultAppState, seedBaseline: vi.fn(), atCommitSha: 'h_new', atCommitNeedsBaseline: true };
+    render(<Timeline />);
+    fireEvent.click(await screen.findByTestId('navmode-commits'));
+    fireEvent.click(await screen.findByTestId('seed-baseline-btn'));
+    expect(currentState.seedBaseline).toHaveBeenCalledWith('h_new');
   });
 });

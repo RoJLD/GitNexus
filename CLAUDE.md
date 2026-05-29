@@ -263,6 +263,16 @@ curl -s -o /dev/null -w "regression ownership: HTTP %{http_code}\n" \
 curl -s -o /dev/null -w "commits: HTTP %{http_code}\n" \
   "http://localhost:4173/commits?repo=hmm_studio&max=50"
 
+# Baseline auto-seed + promote (commit-level time-travel, Plan 2/3 — pièce B).
+# Le seed lance un analyze complet en fond (POST renvoie 202 + jobId, statut
+# pollable) et marque le snapshot caché (.hidden) → exclu de /snapshots sauf
+# ?includeHidden=true ; promote retire le marqueur. On vérifie juste le routing
+# (400 sur args manquants — pas de seed réel dans le smoke).
+curl -s -o /dev/null -w "baseline-seed (missing args): HTTP %{http_code}\n" \
+  -X POST "http://localhost:4173/snapshot/baseline-seed"
+curl -s -o /dev/null -w "snapshot/promote (missing args): HTTP %{http_code}\n" \
+  -X POST "http://localhost:4173/snapshot/promote"
+
 # MCP sidecar — stdio JSON-RPC against the live stack. Exercises the
 # wrapper layer that exposes our analytics to Claude Code / Cursor.
 node mcp-server/smoke.mjs
