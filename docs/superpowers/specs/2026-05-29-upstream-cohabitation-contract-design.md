@@ -136,3 +136,20 @@ les deux scripts de garde).
   pure de comparaison).
 - Wiring correct si `grep` ne trouve plus de procédure de bump périmée et si les
   deux scripts sont documentés dans `CLAUDE.md` + `patches/README.md`.
+
+## Update 2026-05-29 — Réalité d'implémentation (Phase 2 livrée)
+
+- **Veille externe via `git ls-remote --tags`, PAS l'API GitHub.** Le §3.4 esquissait
+  « interroge l'API GitHub (`releases/latest`) » ; l'implémentation de
+  `scripts/check-upstream-releases.mjs` a retenu `git ls-remote --tags <url>` —
+  pas de clé API requise, plus robuste, déjà l'approche utilisée par
+  `bump-upstream.mjs`. Fonctions pures testables : `parsePinnedVersion`,
+  `parseStableTags` (ignore `rc/*` et les peeled refs `^{}`), `cmpSemver` (numérique),
+  `compareToLatest` (`{pinned, latest, newer, upToDate}` ; `upToDate=false` si aucune
+  release trouvée — une liste vide ne masque pas l'alerte). Codes de sortie :
+  0 à jour / 10 alerte / 2 erreur.
+- **`check-patch-drift.mjs`** détecte la dérive par ensemble de fichiers ET par
+  contenu normalisé (CRLF→LF) ; `git add -N .` + `git reset` dans un `finally`
+  (jamais d'état laissé staské) ; exit 1 + rapport si dérive.
+- Câblage doc : section « Cohabitation contract » dans `patches/README.md`, entrée
+  checklist + arbre dans `CLAUDE.md`, ligne ROADMAP, inventaire INVENTORY.
