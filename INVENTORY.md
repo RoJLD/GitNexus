@@ -130,6 +130,13 @@ Le diff monolithique unique a été supprimé et remplacé par deux artefacts di
 
 **Outil de bump `scripts/bump-upstream.mjs`** : `node scripts/bump-upstream.mjs <tag-ou-branche>` clone l'upstream cible dans un répertoire jetable, applique `additive-files.diff` (doit être propre, sinon erreur), tente `inplace-edits.diff` avec `git apply --3way`, et écrit un rapport par fichier dans `patches/bump-dry-run-<target>.md` (résultat : clean / conflict / fail). First run contre `main` : résultat dans [`patches/bump-dry-run-main.md`](patches/bump-dry-run-main.md) — 107 clean / 0 conflict / 9 fail (les 9 fichiers in-place qui nécessiteront un re-merge manuel pour un bump vers `main`). La décision sur le format de cohabitation (rester en diff plat scindé vs migrer vers subtree/submodule) est différée à la Phase 2 — voir spec [`docs/superpowers/specs/2026-05-29-upstream-divergence-paydown-design.md`](docs/superpowers/specs/2026-05-29-upstream-divergence-paydown-design.md).
 
+**Gardes de cohabitation (Phase 2, 2026-05-29)** : deux scripts complémentaires qui automatisent la surveillance du contrat upstream. Contrat formalisé dans [`docs/superpowers/specs/2026-05-29-upstream-cohabitation-contract-design.md`](docs/superpowers/specs/2026-05-29-upstream-cohabitation-contract-design.md).
+
+| Script | Rôle |
+|---|---|
+| [`scripts/check-patch-drift.mjs`](scripts/check-patch-drift.mjs) | **Dérive interne** : compare les diffs commités (`additive-files.diff` / `inplace-edits.diff`) avec le clone `upstream/` actuel ; exit 1 + rapport si désynchronisés. À lancer avant tout commit touchant `upstream/`. |
+| [`scripts/check-upstream-releases.mjs`](scripts/check-upstream-releases.mjs) | **Veille externe** : interroge l'API GitHub Releases et compare la dernière release stable (`vX.Y.Z`) au pin dans `Dockerfile.cli` ; exit 10 si une version plus récente existe (alerte), exit 0 si à jour. |
+
 #### Endpoints backend (ajoutés à `docker-server.mjs`)
 | Endpoint | Fonction |
 |---|---|

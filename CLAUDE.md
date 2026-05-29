@@ -78,6 +78,8 @@ INVENTORY, add tests if applicable):
    cd ..
    ```
 
+   Lancer `node scripts/check-patch-drift.mjs` avant de committer toute édition d'`upstream/` — il échoue (exit 1) si `additive-files.diff`/`inplace-edits.diff` ne reflètent plus le clone.
+
 2. **Update `ROADMAP.md`** :
    - Mark the Tier item ✅
    - Add a row to the "Déjà livré" table at the top with endpoint/component pointers.
@@ -317,7 +319,9 @@ gitnexus/
 ├── scripts/
 │   ├── install-duckdb-extension.mjs    Upstream bug 2 workaround
 │   ├── patch-lbug-staleness.mjs        Upstream bug 3 workaround (REST cache)
-│   └── bump-upstream.mjs               Bump dry-run tool: clone target, apply both diffs, write per-file conflict report
+│   ├── bump-upstream.mjs               Bump dry-run tool: clone target, apply both diffs, write per-file conflict report
+│   ├── check-patch-drift.mjs           Garde de dérive interne (diffs commités vs clone upstream/)
+│   └── check-upstream-releases.mjs     Veille : alerte si une release stable upstream plus récente existe
 ├── patches/
 │   ├── additive-files.diff     New files we own (~99 files, zero conflict risk at bump)
 │   ├── inplace-edits.diff      In-place edits to upstream files (17 files, real conflict surface)

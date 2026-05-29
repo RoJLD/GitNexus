@@ -96,6 +96,26 @@ The first run against `main` is in
 0 conflict / 9 fail (the 9 in-place files that will need manual re-merge
 for a future bump to `main`).
 
+## Cohabitation contract
+
+The durable contract for living alongside upstream is
+[docs/superpowers/specs/2026-05-29-upstream-cohabitation-contract-design.md](../docs/superpowers/specs/2026-05-29-upstream-cohabitation-contract-design.md).
+In short:
+
+- **Tracking model:** flat split diffs (`additive-files.diff` + `inplace-edits.diff`),
+  not a submodule/subtree — the dry-run shows the hard files fail even in `--3way`,
+  so a different merge mechanism would not reduce the conflict surface.
+- **Bump rule (conservative):** bump ONLY when a stable `v1.7.x+` release ships AND
+  we need something from it. Never track `main`. `bump-upstream.mjs` is the go/no-go gate.
+- **Bump playbook:** dry-run -> clone tag -> apply `additive-files.diff` (clean) ->
+  `git apply --3way inplace-edits.diff` -> resolve the handful of fails -> rebuild +
+  smoke loop + tests -> regenerate the two diffs -> bump version pins -> update docs.
+- **Watch guards:**
+  - `scripts/check-patch-drift.mjs` — internal drift: committed diffs vs the `upstream/`
+    clone (run before committing upstream edits; exit 1 on drift).
+  - `scripts/check-upstream-releases.mjs` — external drift: alerts (exit 10) when a
+    newer stable upstream release exists than our pin.
+
 ## Why not a git submodule?
 
 A submodule would be the textbook answer, but it'd force every user of
