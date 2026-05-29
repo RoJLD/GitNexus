@@ -1,5 +1,5 @@
 diff --git a/Dockerfile.web b/Dockerfile.web
-index b102a70..d4192ea 100644
+index b102a70..3bb5b02 100644
 --- a/Dockerfile.web
 +++ b/Dockerfile.web
 @@ -21,7 +21,10 @@ RUN npm run build --prefix gitnexus-shared
@@ -14,7 +14,7 @@ index b102a70..d4192ea 100644
  
  COPY gitnexus-web ./gitnexus-web
  RUN npm run build --prefix gitnexus-web
-@@ -29,15 +32,91 @@ RUN npm run build --prefix gitnexus-web
+@@ -29,15 +32,93 @@ RUN npm run build --prefix gitnexus-web
  # node:22-bookworm-slim
  FROM node:22-bookworm-slim@sha256:9f6d5975c7dca860947d3915877f85607946403fc55349f39b4bc3688448bb6e AS runtime
  
@@ -104,6 +104,8 @@ index b102a70..d4192ea 100644
 +COPY docker-server-baseline-seed.mjs ./docker-server-baseline-seed.mjs
 +# Diff pre-warming (commit-level time-travel §3.4)
 +COPY docker-server-prewarm.mjs ./docker-server-prewarm.mjs
++# Route wiring shim — extracts analytics dispatch from docker-server.mjs
++COPY docker-server-routes.mjs ./docker-server-routes.mjs
  
  RUN chown -R node:node /app
  
@@ -6894,6 +6896,89 @@ index 0000000..ae8e0f6
 +  }
 +  return false;
 +}
+diff --git a/docker-server-routes.mjs b/docker-server-routes.mjs
+new file mode 100644
+index 0000000..d05e659
+--- /dev/null
++++ b/docker-server-routes.mjs
+@@ -0,0 +1,77 @@
++import { handleSnapshotRoute } from './docker-server-snapshots.mjs';
++import { handleSnapshotBulkRoute } from './docker-server-snapshots-bulk.mjs';
++import { handleChurnRoute } from './docker-server-churn.mjs';
++import { handleCouplingRoute } from './docker-server-coupling.mjs';
++import { handleGrowthRoute } from './docker-server-growth.mjs';
++import { handleLifespanRoute } from './docker-server-lifespan.mjs';
++import { handleEntropyRoute } from './docker-server-entropy.mjs';
++import { handleOwnershipRoute } from './docker-server-ownership.mjs';
++import { handleDissonanceRoute } from './docker-server-dissonance.mjs';
++import { handleSemanticLabelsRoute } from './docker-server-semantic-labels.mjs';
++import { handleCouplingCrossRoute } from './docker-server-coupling-cross.mjs';
++import { handleGrowthCrossRoute } from './docker-server-growth-cross.mjs';
++import { handleSimilarityRoute } from './docker-server-similarity.mjs';
++import { handleNodesAliveBetweenRoute } from './docker-server-nodes-alive-between.mjs';
++import { handleRepoByIdRoute } from './docker-server-repo-id.mjs';
++import { handleEntropyCommitsRoute } from './docker-server-entropy-commits.mjs';
++import { handleWatchesRoute, startWatchesCron } from './docker-server-watches.mjs';
++import { handleCommitFootprintRoute } from './docker-server-commit-footprint.mjs';
++import { handleSnapshotAutoRoute } from './docker-server-snapshot-auto.mjs';
++import { handleSnapshotFromPrRoute } from './docker-server-snapshot-from-pr.mjs';
++import { handleSnapshotIncrementalRoute, handleGraphAtCommitRoute } from './docker-server-snapshot-incremental.mjs';
++import { handleGhostsRoute } from './docker-server-ghosts.mjs';
++import { handleGhostAuditRoute } from './docker-server-ghost-audit.mjs';
++import { handleGhostsCleanupRoute } from './docker-server-ghost-cleanup.mjs';
++import { handleConnectorsRoute } from './docker-server-connectors.mjs';
++import { handleSysmlExportRoute } from './docker-server-sysml-export.mjs';
++import { handleClustersRoute } from './docker-server-cluster-audit.mjs';
++import { handleWikiRoute } from './docker-server-wiki.mjs';
++import { handleAutoReindexRoute } from './docker-server-auto-reindex.mjs';
++import { handleRegressionRoute } from './docker-server-regression.mjs';
++import { handleCommitsRoute } from './docker-server-commits.mjs';
++import { handleBaselineSeedRoute } from './docker-server-baseline-seed.mjs';
++import { handlePrewarmRoute } from './docker-server-prewarm.mjs';
++
++// Renvoie true dès qu'un handler a pris la requête (sémantique identique à
++// l'ancienne chaîne `if (await handleX(...)) return;` de docker-server.mjs).
++export async function registerGitnexusRoutes(req, reqUrl, res, ctx) {
++  if (await handleSnapshotRoute(req, reqUrl, res, ctx)) return true;
++  if (await handleSnapshotBulkRoute(req, reqUrl, res, ctx)) return true;
++  if (await handleChurnRoute(req, reqUrl, res, ctx)) return true;
++  if (await handleCouplingRoute(req, reqUrl, res, ctx)) return true;
++  if (await handleGrowthRoute(req, reqUrl, res, ctx)) return true;
++  if (await handleLifespanRoute(req, reqUrl, res, ctx)) return true;
++  if (await handleEntropyRoute(req, reqUrl, res, ctx)) return true;
++  if (await handleOwnershipRoute(req, reqUrl, res, ctx)) return true;
++  if (await handleDissonanceRoute(req, reqUrl, res, ctx)) return true;
++  if (await handleSemanticLabelsRoute(req, reqUrl, res, ctx)) return true;
++  if (await handleCouplingCrossRoute(req, reqUrl, res, ctx)) return true;
++  if (await handleGrowthCrossRoute(req, reqUrl, res, ctx)) return true;
++  if (await handleSimilarityRoute(req, reqUrl, res, ctx)) return true;
++  if (await handleNodesAliveBetweenRoute(req, reqUrl, res, ctx)) return true;
++  if (await handleRepoByIdRoute(req, reqUrl, res, ctx)) return true;
++  if (await handleEntropyCommitsRoute(req, reqUrl, res, ctx)) return true;
++  if (await handleWatchesRoute(req, reqUrl, res, ctx)) return true;
++  if (await handleCommitFootprintRoute(req, reqUrl, res, ctx)) return true;
++  if (await handleSnapshotAutoRoute(req, reqUrl, res, ctx)) return true;
++  if (await handleSnapshotFromPrRoute(req, reqUrl, res, ctx)) return true;
++  if (await handleSnapshotIncrementalRoute(req, reqUrl, res, ctx)) return true;
++  if (await handleGraphAtCommitRoute(req, reqUrl, res, ctx)) return true;
++  if (await handleGhostsRoute(req, reqUrl, res, ctx)) return true;
++  if (await handleGhostAuditRoute(req, reqUrl, res, ctx)) return true;
++  if (await handleGhostsCleanupRoute(req, reqUrl, res, ctx)) return true;
++  if (await handleConnectorsRoute(req, reqUrl, res, ctx)) return true;
++  if (await handleSysmlExportRoute(req, reqUrl, res, ctx)) return true;
++  if (await handleClustersRoute(req, reqUrl, res, ctx)) return true;
++  if (await handleWikiRoute(req, reqUrl, res, ctx)) return true;
++  if (await handleAutoReindexRoute(req, reqUrl, res, ctx)) return true;
++  if (await handleRegressionRoute(req, reqUrl, res)) return true; // NB: pas de ctx
++  if (await handleCommitsRoute(req, reqUrl, res, ctx)) return true;
++  if (await handleBaselineSeedRoute(req, reqUrl, res, ctx)) return true;
++  if (await handlePrewarmRoute(req, reqUrl, res, ctx)) return true;
++  return false;
++}
++
++export function startGitnexusCron(api) {
++  startWatchesCron(api);
++}
 diff --git a/docker-server-semantic-labels.mjs b/docker-server-semantic-labels.mjs
 new file mode 100644
 index 0000000..254682a
@@ -11209,10 +11294,10 @@ index 0000000..35099d6
 +  return false;
 +}
 diff --git a/docker-server.mjs b/docker-server.mjs
-index 8143eb4..3efd3b5 100644
+index 8143eb4..9585a34 100644
 --- a/docker-server.mjs
 +++ b/docker-server.mjs
-@@ -1,12 +1,70 @@
+@@ -1,12 +1,38 @@
 -import { createReadStream } from 'node:fs';
 -import { stat } from 'node:fs/promises';
 +import { createReadStream, createWriteStream } from 'node:fs';
@@ -11222,39 +11307,7 @@ index 8143eb4..3efd3b5 100644
 +import { tmpdir } from 'node:os';
 +import { basename, dirname, extname, isAbsolute, join, normalize, relative, resolve, sep } from 'node:path';
 +import { spawn } from 'node:child_process';
-+import { handleSnapshotRoute } from './docker-server-snapshots.mjs';
-+import { handleSnapshotBulkRoute } from './docker-server-snapshots-bulk.mjs';
-+import { handleChurnRoute } from './docker-server-churn.mjs';
-+import { handleCouplingRoute } from './docker-server-coupling.mjs';
-+import { handleGrowthRoute } from './docker-server-growth.mjs';
-+import { handleLifespanRoute } from './docker-server-lifespan.mjs';
-+import { handleEntropyRoute } from './docker-server-entropy.mjs';
-+import { handleOwnershipRoute } from './docker-server-ownership.mjs';
-+import { handleDissonanceRoute } from './docker-server-dissonance.mjs';
-+import { handleSemanticLabelsRoute } from './docker-server-semantic-labels.mjs';
-+import { handleCouplingCrossRoute } from './docker-server-coupling-cross.mjs';
-+import { handleGrowthCrossRoute } from './docker-server-growth-cross.mjs';
-+import { handleSimilarityRoute } from './docker-server-similarity.mjs';
-+import { handleNodesAliveBetweenRoute } from './docker-server-nodes-alive-between.mjs';
-+import { handleRepoByIdRoute } from './docker-server-repo-id.mjs';
-+import { handleEntropyCommitsRoute } from './docker-server-entropy-commits.mjs';
-+import { handleWatchesRoute, startWatchesCron } from './docker-server-watches.mjs';
-+import { handleCommitFootprintRoute } from './docker-server-commit-footprint.mjs';
-+import { handleSnapshotAutoRoute } from './docker-server-snapshot-auto.mjs';
-+import { handleSnapshotFromPrRoute } from './docker-server-snapshot-from-pr.mjs';
-+import { handleSnapshotIncrementalRoute, handleGraphAtCommitRoute } from './docker-server-snapshot-incremental.mjs';
-+import { handleGhostsRoute } from './docker-server-ghosts.mjs';
-+import { handleGhostAuditRoute } from './docker-server-ghost-audit.mjs';
-+import { handleGhostsCleanupRoute } from './docker-server-ghost-cleanup.mjs';
-+import { handleConnectorsRoute } from './docker-server-connectors.mjs';
-+import { handleSysmlExportRoute } from './docker-server-sysml-export.mjs';
-+import { handleClustersRoute } from './docker-server-cluster-audit.mjs';
-+import { handleWikiRoute } from './docker-server-wiki.mjs';
-+import { handleAutoReindexRoute } from './docker-server-auto-reindex.mjs';
-+import { handleRegressionRoute } from './docker-server-regression.mjs';
-+import { handleCommitsRoute } from './docker-server-commits.mjs';
-+import { handleBaselineSeedRoute } from './docker-server-baseline-seed.mjs';
-+import { handlePrewarmRoute } from './docker-server-prewarm.mjs';
++import { registerGitnexusRoutes, startGitnexusCron } from './docker-server-routes.mjs';
  
  const host = '0.0.0.0';
  const port = Number(process.env.PORT || '4173');
@@ -11286,7 +11339,7 @@ index 8143eb4..3efd3b5 100644
  const contentTypes = {
    '.css': 'text/css; charset=utf-8',
    '.html': 'text/html; charset=utf-8',
-@@ -20,6 +78,416 @@ const contentTypes = {
+@@ -20,6 +46,416 @@ const contentTypes = {
    '.woff2': 'font/woff2',
  };
  
@@ -11703,7 +11756,7 @@ index 8143eb4..3efd3b5 100644
  // Static asset server for the gitnexus-web Docker image.
  //
  // Path-injection containment: the request handler is intentionally a single
-@@ -39,8 +507,95 @@ const contentTypes = {
+@@ -39,8 +475,29 @@ const contentTypes = {
  // the request handler's reassignment paths in vanilla JS. The inline-at-sink
  // shape below is the documented analyzer-friendly idiom.
  const server = createServer(async (req, res) => {
@@ -11727,86 +11780,20 @@ index 8143eb4..3efd3b5 100644
 +    return;
 +  }
 +
-+  // Snapshot endpoints (Phase 1 of time-travel) — see docker-server-snapshots.mjs
-+  if (await handleSnapshotRoute(req, reqUrl, res, { api: GITNEXUS_API })) return;
-+  // Bulk snapshot endpoints (Phase 2) — see docker-server-snapshots-bulk.mjs
-+  if (await handleSnapshotBulkRoute(req, reqUrl, res, { api: GITNEXUS_API })) return;
-+  // Churn analytics (Phase 4A) — see docker-server-churn.mjs
-+  if (await handleChurnRoute(req, reqUrl, res, { api: GITNEXUS_API })) return;
-+  // Coupling analytics (Phase 4B) — see docker-server-coupling.mjs
-+  if (await handleCouplingRoute(req, reqUrl, res, { api: GITNEXUS_API })) return;
-+  // Growth analytics (Phase 4D) — see docker-server-growth.mjs
-+  if (await handleGrowthRoute(req, reqUrl, res, { api: GITNEXUS_API })) return;
-+  // Lifespan analytics (Phase 4C) — see docker-server-lifespan.mjs
-+  if (await handleLifespanRoute(req, reqUrl, res, { api: GITNEXUS_API })) return;
-+  // Entropy / health metrics (ROADMAP Tier 1.4)
-+  if (await handleEntropyRoute(req, reqUrl, res, { api: GITNEXUS_API })) return;
-+  // Ownership / bus factor (ROADMAP Tier 1.1)
-+  if (await handleOwnershipRoute(req, reqUrl, res, { api: GITNEXUS_API })) return;
-+  // Dissonance / code-vs-domain alignment (ROADMAP Tier 2.2)
-+  if (await handleDissonanceRoute(req, reqUrl, res, { api: GITNEXUS_API })) return;
-+  // Semantic labels cache (ROADMAP Tier 2.1) — LLM call is frontend-side
-+  if (await handleSemanticLabelsRoute(req, reqUrl, res, { api: GITNEXUS_API })) return;
-+  // Cross-repo coupling (ROADMAP Tier 1.2)
-+  if (await handleCouplingCrossRoute(req, reqUrl, res, { api: GITNEXUS_API })) return;
-+  // Cross-repo growth (ROADMAP Tier 1.3)
-+  if (await handleGrowthCrossRoute(req, reqUrl, res, { api: GITNEXUS_API })) return;
-+  // Cross-repo similarity (ROADMAP Tier 2.5)
-+  if (await handleSimilarityRoute(req, reqUrl, res, { api: GITNEXUS_API })) return;
-+  // Nodes alive between A and B (ROADMAP Phase 2 Item #1 — Permissive temporal filter)
-+  if (await handleNodesAliveBetweenRoute(req, reqUrl, res, { api: GITNEXUS_API })) return;
-+  // Stable repo ID resolver (ROADMAP Tier 2bis.5)
-+  if (await handleRepoByIdRoute(req, reqUrl, res, { api: GITNEXUS_API })) return;
-+  // Commit-level entropy delta (ROADMAP Tier 2bis.2)
-+  if (await handleEntropyCommitsRoute(req, reqUrl, res, { api: GITNEXUS_API })) return;
-+  // Watches + webhook alerting (ROADMAP Tier 2bis.3)
-+  if (await handleWatchesRoute(req, reqUrl, res, { api: GITNEXUS_API })) return;
-+  // Commit footprint (Tier 2bis.2 follow-up — commit overlay on graph)
-+  if (await handleCommitFootprintRoute(req, reqUrl, res, { api: GITNEXUS_API })) return;
-+  // Auto-snapshot aux pics (Phase A of incremental-snapshots design)
-+  if (await handleSnapshotAutoRoute(req, reqUrl, res, { api: GITNEXUS_API })) return;
-+  // PR-mode snapshot on-demand (Phase B of incremental-snapshots design)
-+  if (await handleSnapshotFromPrRoute(req, reqUrl, res, { api: GITNEXUS_API })) return;
-+  // Per-commit incremental snapshot (Phase C of incremental-snapshots design)
-+  if (await handleSnapshotIncrementalRoute(req, reqUrl, res, { api: GITNEXUS_API })) return;
-+  // Graph reconstruction at any commit (Phase C §4.3 — baseline + replay)
-+  if (await handleGraphAtCommitRoute(req, reqUrl, res, { api: GITNEXUS_API })) return;
-+  // Roadmap-predictive ghosts CORE (ROADMAP Tier 3.x predictive views)
-+  if (await handleGhostsRoute(req, reqUrl, res, { api: GITNEXUS_API })) return;
-+  // Roadmap-predictive Audit view (Tier 3.x audit metrics)
-+  if (await handleGhostAuditRoute(req, reqUrl, res, { api: GITNEXUS_API })) return;
-+  // Roadmap-predictive cleanup-at-expiration (LLM-assisted)
-+  if (await handleGhostsCleanupRoute(req, reqUrl, res, { api: GITNEXUS_API })) return;
-+  // Roadmap-predictive connector suggestions (Plane / Linear / GitHub / Jira)
-+  if (await handleConnectorsRoute(req, reqUrl, res, { api: GITNEXUS_API })) return;
-+  // Roadmap-predictive SysML export (Tier 3.x bonus)
-+  if (await handleSysmlExportRoute(req, reqUrl, res, { api: GITNEXUS_API })) return;
-+  // Roadmap-predictive Ghost Clusters audit (Section C of cluster plan)
-+  if (await handleClustersRoute(req, reqUrl, res, { api: GITNEXUS_API })) return;
-+  // Code Wiki (serve generated HTML + proxy generate/status to wiki-worker)
-+  if (await handleWikiRoute(req, reqUrl, res, { api: GITNEXUS_API })) return;
-+  // Auto-reindexing status (read-only)
-+  if (await handleAutoReindexRoute(req, reqUrl, res, { api: GITNEXUS_API })) return;
-+  // Regression forensics (locate metric regression + culprit commit)
-+  if (await handleRegressionRoute(req, reqUrl, res)) return;
-+  // Commit lister for the timeline Commits mode (2026-05-28 commit-level time-travel spec)
-+  if (await handleCommitsRoute(req, reqUrl, res, { api: GITNEXUS_API })) return;
-+  // Baseline auto-seed (hidden) + promote (commit-level time-travel §3.3)
-+  if (await handleBaselineSeedRoute(req, reqUrl, res, { api: GITNEXUS_API })) return;
-+  // Diff pre-warming on-era (commit-level time-travel §3.4)
-+  if (await handlePrewarmRoute(req, reqUrl, res, { api: GITNEXUS_API })) return;
++  // GitNexus analytics + time-travel routes — voir docker-server-routes.mjs
++  if (await registerGitnexusRoutes(req, reqUrl, res, { api: GITNEXUS_API })) return;
  
 +  // ── Static asset serving (v1.6.5 CodeQL-compliant pipeline) ───────────
    let decoded;
    try {
      decoded = decodeURIComponent(urlPath);
-@@ -117,4 +672,7 @@ const server = createServer(async (req, res) => {
+@@ -117,4 +574,7 @@ const server = createServer(async (req, res) => {
  
  server.listen(port, host, () => {
    console.log(`gitnexus-web listening on http://${host}:${port}`);
 +  // Kick off the watches cron (ROADMAP Tier 2bis.3). Starts deferred
 +  // by 10s so the stack settles first. Disable via WATCHES_ENABLED=false.
-+  startWatchesCron(GITNEXUS_API);
++  startGitnexusCron(GITNEXUS_API);
  });
 diff --git a/gitnexus-web/package-lock.json b/gitnexus-web/package-lock.json
 index cf69e10..8beb5aa 100644
