@@ -1,5 +1,5 @@
 diff --git a/Dockerfile.web b/Dockerfile.web
-index b102a70..3bb5b02 100644
+index b102a70..833760b 100644
 --- a/Dockerfile.web
 +++ b/Dockerfile.web
 @@ -21,7 +21,10 @@ RUN npm run build --prefix gitnexus-shared
@@ -14,7 +14,7 @@ index b102a70..3bb5b02 100644
  
  COPY gitnexus-web ./gitnexus-web
  RUN npm run build --prefix gitnexus-web
-@@ -29,15 +32,93 @@ RUN npm run build --prefix gitnexus-web
+@@ -29,15 +32,97 @@ RUN npm run build --prefix gitnexus-web
  # node:22-bookworm-slim
  FROM node:22-bookworm-slim@sha256:9f6d5975c7dca860947d3915877f85607946403fc55349f39b4bc3688448bb6e AS runtime
  
@@ -104,6 +104,10 @@ index b102a70..3bb5b02 100644
 +COPY docker-server-baseline-seed.mjs ./docker-server-baseline-seed.mjs
 +# Diff pre-warming (commit-level time-travel §3.4)
 +COPY docker-server-prewarm.mjs ./docker-server-prewarm.mjs
++# Group management routes (multi-repo unified graph — Task 3)
++COPY docker-server-group.mjs ./docker-server-group.mjs
++COPY docker-server-group-graph-core.mjs ./docker-server-group-graph-core.mjs
++COPY docker-server-group-graph.mjs ./docker-server-group-graph.mjs
 +# Route wiring shim — extracts analytics dispatch from docker-server.mjs
 +COPY docker-server-routes.mjs ./docker-server-routes.mjs
  
@@ -1068,10 +1072,10 @@ index 211bb65..49a1c7a 100644
      "@vitejs/plugin-react": "^5.1.4",
      "@vitest/coverage-v8": "^4.1.5",
 diff --git a/gitnexus-web/src/App.tsx b/gitnexus-web/src/App.tsx
-index 2ee3569..6f6c279 100644
+index 2ee3569..78eacf8 100644
 --- a/gitnexus-web/src/App.tsx
 +++ b/gitnexus-web/src/App.tsx
-@@ -1,11 +1,26 @@
+@@ -1,11 +1,27 @@
  import { useCallback, useEffect, useRef, useState } from 'react';
  import { AppStateProvider, useAppState } from './hooks/useAppState';
 +import { useTimelineUrlSync } from './hooks/useTimelineUrlSync';
@@ -1095,10 +1099,11 @@ index 2ee3569..6f6c279 100644
  import { RightPanel } from './components/RightPanel';
  import { SettingsPanel } from './components/SettingsPanel';
 +import WikiPanel from './components/WikiPanel';
++import { GroupGraphPanel } from './components/GroupGraphPanel';
  import { StatusBar } from './components/StatusBar';
  import { FileTreePanel } from './components/FileTreePanel';
  import { CodeReferencesPanel } from './components/CodeReferencesPanel';
-@@ -29,10 +44,13 @@ const AppContent = () => {
+@@ -29,10 +45,15 @@ const AppContent = () => {
      setGraph,
      setProgress,
      setProjectName,
@@ -1109,10 +1114,12 @@ index 2ee3569..6f6c279 100644
      setSettingsPanelOpen,
 +    isWikiPanelOpen,
 +    setWikiPanelOpen,
++    isGroupPanelOpen,
++    setGroupPanelOpen,
      refreshLLMSettings,
      initializeAgent,
      startEmbeddingsWithFallback,
-@@ -45,10 +63,24 @@ const AppContent = () => {
+@@ -45,10 +66,24 @@ const AppContent = () => {
      setAvailableRepos,
      switchRepo,
      setCurrentRepo,
@@ -1137,7 +1144,7 @@ index 2ee3569..6f6c279 100644
  
    const handleServerConnect = useCallback(
      async (result: ConnectResult): Promise<void> => {
-@@ -194,6 +226,21 @@ const AppContent = () => {
+@@ -194,6 +229,21 @@ const AppContent = () => {
      initializeAgent();
    }, [refreshLLMSettings, initializeAgent]);
  
@@ -1159,7 +1166,7 @@ index 2ee3569..6f6c279 100644
    // ── Server heartbeat: detect when server goes down while exploring ────────
    // Uses SSE (EventSource) for instant detection — no polling delay.
    // On disconnect: show a reconnecting banner instead of resetting to onboarding.
-@@ -250,22 +297,84 @@ const AppContent = () => {
+@@ -250,22 +300,84 @@ const AppContent = () => {
            // Retry once after 1s if the repo isn't found yet (server may still
            // be reinitializing after the worker completed).
            const url = serverBaseUrl ?? 'http://localhost:4747';
@@ -1245,7 +1252,7 @@ index 2ee3569..6f6c279 100644
                fetchRepos()
                  .then((repos) => setAvailableRepos(repos))
                  .catch(() => {});
-@@ -281,7 +390,129 @@ const AppContent = () => {
+@@ -281,7 +393,129 @@ const AppContent = () => {
  
          {/* Graph area - takes remaining space */}
          <div className="relative min-w-0 flex-1">
@@ -1376,7 +1383,7 @@ index 2ee3569..6f6c279 100644
  
            {/* Code References Panel (overlay) - does NOT resize the graph, it overlaps on top */}
            {isCodePanelOpen && (codeReferences.length > 0 || !!selectedNode) && (
-@@ -295,6 +526,16 @@ const AppContent = () => {
+@@ -295,6 +529,16 @@ const AppContent = () => {
          {isRightPanelOpen && <RightPanel />}
        </main>
  
@@ -1393,7 +1400,7 @@ index 2ee3569..6f6c279 100644
        <StatusBar />
  
        {serverDisconnected && (
-@@ -309,6 +550,23 @@ const AppContent = () => {
+@@ -309,6 +553,38 @@ const AppContent = () => {
          onClose={() => setSettingsPanelOpen(false)}
          onSettingsSaved={handleSettingsSaved}
        />
@@ -1411,6 +1418,21 @@ index 2ee3569..6f6c279 100644
 +              ✕
 +            </button>
 +            <WikiPanel />
++          </div>
++        </div>
++      )}
++
++      {/* Group Graph Panel (modal) */}
++      {isGroupPanelOpen && (
++        <div
++          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
++          onClick={() => setGroupPanelOpen(false)}
++        >
++          <div
++            className="relative h-[80vh] w-full max-w-2xl overflow-hidden rounded-lg border border-border-default bg-surface shadow-xl"
++            onClick={(e) => e.stopPropagation()}
++          >
++            <GroupGraphPanel />
 +          </div>
 +        </div>
 +      )}
@@ -2114,7 +2136,7 @@ index e34fd43..5a492c8 100644
            onClick={handleToggleAIHighlights}
            className={
 diff --git a/gitnexus-web/src/components/Header.tsx b/gitnexus-web/src/components/Header.tsx
-index 3061a2e..4c7f7cf 100644
+index 3061a2e..8545056 100644
 --- a/gitnexus-web/src/components/Header.tsx
 +++ b/gitnexus-web/src/components/Header.tsx
 @@ -1,4 +1,5 @@
@@ -2123,7 +2145,7 @@ index 3061a2e..4c7f7cf 100644
    Search,
    Settings,
    HelpCircle,
-@@ -10,7 +11,13 @@ import {
+@@ -10,7 +11,14 @@ import {
    Trash2,
    RefreshCw,
    Loader2,
@@ -2132,12 +2154,13 @@ index 3061a2e..4c7f7cf 100644
 +  GitBranch,
 +  Camera,
 +  Network,
++  Layers,
  } from '@/lib/lucide-icons';
 +import { SnapshotsPanel } from './SnapshotsPanel';
  import { useAppState } from '../hooks/useAppState';
  import {
    deleteRepo,
-@@ -55,6 +62,7 @@ export const Header = ({
+@@ -55,6 +63,7 @@ export const Header = ({
    onAnalyzeComplete,
    onReposChanged,
  }: HeaderProps) => {
@@ -2145,11 +2168,12 @@ index 3061a2e..4c7f7cf 100644
    const {
      projectName,
      graph,
-@@ -62,14 +70,29 @@ export const Header = ({
+@@ -62,14 +71,30 @@ export const Header = ({
      isRightPanelOpen,
      rightPanelTab,
      setSettingsPanelOpen,
 +    setWikiPanelOpen,
++    setGroupPanelOpen,
      setHelpDialogBoxOpen,
 -  } = useAppState();
 +    diffMode,
@@ -2176,7 +2200,7 @@ index 3061a2e..4c7f7cf 100644
    const repoDropdownRef = useRef<HTMLDivElement>(null);
    const [isSearchOpen, setIsSearchOpen] = useState(false);
    const [selectedIndex, setSelectedIndex] = useState(0);
-@@ -111,6 +134,24 @@ export const Header = ({
+@@ -111,6 +136,24 @@ export const Header = ({
      };
    }, []);
  
@@ -2201,7 +2225,7 @@ index 3061a2e..4c7f7cf 100644
    // Keyboard shortcut (Cmd+K / Ctrl+K)
    useEffect(() => {
      const handleKeyDown = (e: KeyboardEvent) => {
-@@ -204,13 +245,16 @@ export const Header = ({
+@@ -204,13 +247,16 @@ export const Header = ({
                    </div>
                  ) : (
                    <>
@@ -2221,7 +2245,7 @@ index 3061a2e..4c7f7cf 100644
                            <div
                              key={repo.name}
                              className={`group flex items-center gap-2 px-4 py-2 transition-colors ${
-@@ -236,6 +280,102 @@ export const Header = ({
+@@ -236,6 +282,102 @@ export const Header = ({
                                  </span>
                                )}
                              </button>
@@ -2324,7 +2348,7 @@ index 3061a2e..4c7f7cf 100644
                              {/* Re-analyze */}
                              <button
                                onClick={async (e) => {
-@@ -278,7 +418,7 @@ export const Header = ({
+@@ -278,7 +420,7 @@ export const Header = ({
                                className={`cursor-pointer rounded p-1 transition-all ${
                                  reanalyzing === repo.name
                                    ? 'text-accent'
@@ -2333,7 +2357,7 @@ index 3061a2e..4c7f7cf 100644
                                }`}
                                title={
                                  reanalyzing === repo.name
-@@ -316,7 +456,7 @@ export const Header = ({
+@@ -316,7 +458,7 @@ export const Header = ({
                                    console.error('Failed to delete repo:', err);
                                  }
                                }}
@@ -2342,7 +2366,7 @@ index 3061a2e..4c7f7cf 100644
                                title={`Delete ${repo.name}`}
                              >
                                <Trash2 className="h-3.5 w-3.5" />
-@@ -326,6 +466,30 @@ export const Header = ({
+@@ -326,6 +468,30 @@ export const Header = ({
                        </div>
                      )}
  
@@ -2373,7 +2397,7 @@ index 3061a2e..4c7f7cf 100644
                      {/* Re-analyze progress bar */}
                      {reanalyzing && reanalyzeProgress && (
                        <div className="border-t border-border-subtle bg-accent/5 px-4 py-2.5">
-@@ -458,6 +622,26 @@ export const Header = ({
+@@ -458,6 +624,34 @@ export const Header = ({
          <EmbeddingStatus />
  
          {/* Icon buttons */}
@@ -2389,6 +2413,14 @@ index 3061a2e..4c7f7cf 100644
 +            <Network className="h-4.5 w-4.5" />
 +          </button>
 +        )}
++        <button
++          onClick={() => setGroupPanelOpen(true)}
++          className="flex h-9 w-9 cursor-pointer items-center justify-center rounded-md text-text-secondary transition-colors hover:bg-hover hover:text-text-primary"
++          title="Group graph"
++          aria-label="Group graph"
++        >
++          <Layers className="h-4.5 w-4.5" />
++        </button>
 +        <button
 +          onClick={() => setWikiPanelOpen(true)}
 +          className="flex h-9 w-9 cursor-pointer items-center justify-center rounded-md text-text-secondary transition-colors hover:bg-hover hover:text-text-primary"
@@ -3466,7 +3498,7 @@ index 49862a9..5c552dd 100644
   * Create a Graph RAG agent
   */
 diff --git a/gitnexus-web/src/hooks/useAppState.tsx b/gitnexus-web/src/hooks/useAppState.tsx
-index 25c5776..41f3471 100644
+index 25c5776..5862e7b 100644
 --- a/gitnexus-web/src/hooks/useAppState.tsx
 +++ b/gitnexus-web/src/hooks/useAppState.tsx
 @@ -8,7 +8,12 @@ import {
@@ -3541,7 +3573,7 @@ index 25c5776..41f3471 100644
    isAgentReady: boolean;
    isAgentInitializing: boolean;
    agentError: string | null;
-@@ -192,6 +221,464 @@ interface AppState {
+@@ -192,6 +221,484 @@ interface AppState {
    clearAICodeReferences: () => void;
    clearCodeReferences: () => void;
    codeReferenceFocus: CodeReferenceFocus | null;
@@ -3596,6 +3628,17 @@ index 25c5776..41f3471 100644
 +  couplingData: CouplingData | null;
 +  enterCouplingMode: () => Promise<void>;
 +  exitCouplingMode: () => void;
++
++  // Group graph (multi-repo unified graph). GroupGraphPanel lets users
++  // create + sync repo groups and enter a merged-graph viewing mode.
++  isGroupPanelOpen: boolean;
++  setGroupPanelOpen: (open: boolean) => void;
++  groupGraphActive: boolean;
++  groupGraphLoading: boolean;
++  groupGraphError: string | null;
++  groupGraphData: GroupGraphData | null;
++  enterGroupGraph: (group: string) => Promise<void>;
++  exitGroupGraph: () => void;
 +
 +  // Growth-by-category analytics (Phase 4D). Multi-line chart of node
 +  // counts per label across the snapshot timeline.
@@ -3803,6 +3846,15 @@ index 25c5776..41f3471 100644
 +  pairs: CouplingPair[];
 +}
 +
++export interface GroupGraphData {
++  group: string;
++  repos: { name: string; color: string }[];
++  nodes: { id: string; label: string; repo: string; kind: string; filePath: string; color: string }[];
++  edges: { source: string; target: string; crossRepo?: boolean; matchType?: string | null; contractType?: string | null }[];
++  crossRepoEdgeCount: number;
++  capped: boolean;
++}
++
 +export interface GrowthPoint {
 +  name: string;
 +  date: string;
@@ -4006,7 +4058,7 @@ index 25c5776..41f3471 100644
  }
  
  const AppStateContext = createContext<AppState | null>(null);
-@@ -205,6 +692,10 @@ export const AppStateProvider = ({ children }: { children: ReactNode }) => (
+@@ -205,6 +712,10 @@ export const AppStateProvider = ({ children }: { children: ReactNode }) => (
  const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
    // View state
    const [viewMode, setViewMode] = useState<ViewMode>('onboarding');
@@ -4017,7 +4069,7 @@ index 25c5776..41f3471 100644
  
    const {
      graph,
-@@ -329,6 +820,7 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
+@@ -329,6 +840,7 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
    // LLM/Agent state
    const [llmSettings, setLLMSettings] = useState<LLMSettings>(loadSettings);
    const [isSettingsPanelOpen, setSettingsPanelOpen] = useState(false);
@@ -4025,7 +4077,7 @@ index 25c5776..41f3471 100644
    const [isAgentReady, setIsAgentReady] = useState(false);
    const [isAgentInitializing, setIsAgentInitializing] = useState(false);
    const [agentError, setAgentError] = useState<string | null>(null);
-@@ -343,6 +835,172 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
+@@ -343,6 +855,179 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
    const [isCodePanelOpen, setCodePanelOpen] = useState(false);
    const [codeReferenceFocus, setCodeReferenceFocus] = useState<CodeReferenceFocus | null>(null);
  
@@ -4067,6 +4119,13 @@ index 25c5776..41f3471 100644
 +  const [couplingLoading, setCouplingLoading] = useState(false);
 +  const [couplingError, setCouplingError] = useState<string | null>(null);
 +  const [couplingData, setCouplingData] = useState<CouplingData | null>(null);
++
++  // Group graph (multi-repo) state.
++  const [isGroupPanelOpen, setGroupPanelOpen] = useState(false);
++  const [groupGraphActive, setGroupGraphActive] = useState(false);
++  const [groupGraphLoading, setGroupGraphLoading] = useState(false);
++  const [groupGraphError, setGroupGraphError] = useState<string | null>(null);
++  const [groupGraphData, setGroupGraphData] = useState<GroupGraphData | null>(null);
 +
 +  // Growth analytics state.
 +  const [growthActive, setGrowthActive] = useState(false);
@@ -4198,7 +4257,7 @@ index 25c5776..41f3471 100644
    // Map of normalized file path → node ID for graph-based lookups
    const fileNodeByPath = useMemo(() => {
      if (!graph) return new Map<string, string>();
-@@ -1029,6 +1687,66 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
+@@ -1029,6 +1714,66 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
      async (repoName: string) => {
        if (!serverBaseUrl) return;
  
@@ -4265,7 +4324,7 @@ index 25c5776..41f3471 100644
        setProgress({
          phase: 'extracting',
          percent: 0,
-@@ -1105,6 +1823,13 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
+@@ -1105,6 +1850,13 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
          for (const node of result.nodes) newGraph.addNode(node);
          for (const rel of result.relationships) newGraph.addRelationship(rel);
          setGraph(newGraph);
@@ -4279,7 +4338,7 @@ index 25c5776..41f3471 100644
        } catch (err: unknown) {
          console.error('Repo switch failed:', err);
          setProgress({
-@@ -1207,9 +1932,1194 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
+@@ -1207,9 +1959,1217 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
      setCodeReferenceFocus(null);
    }, []);
  
@@ -4686,6 +4745,29 @@ index 25c5776..41f3471 100644
 +
 +  const exitCouplingMode = useCallback(() => {
 +    setCouplingActive(false);
++  }, []);
++
++  // Group graph: fetch the merged graph for a named repo group and
++  // activate the group-graph viewing mode.
++  const enterGroupGraph = useCallback(async (group: string) => {
++    setGroupGraphLoading(true);
++    setGroupGraphError(null);
++    try {
++      const res = await fetch(`/graph/merged?group=${encodeURIComponent(group)}`, { cache: 'no-store' });
++      if (!res.ok) throw new Error(`merged graph failed: HTTP ${res.status}`);
++      const data = (await res.json()) as GroupGraphData;
++      setGroupGraphData(data);
++      setGroupGraphActive(true);
++    } catch (e) {
++      setGroupGraphError(e instanceof Error ? e.message : 'failed to load merged graph');
++    } finally {
++      setGroupGraphLoading(false);
++    }
++  }, []);
++
++  const exitGroupGraph = useCallback(() => {
++    setGroupGraphActive(false);
++    setGroupGraphData(null);
 +  }, []);
 +
 +  // Growth: same shape as churn/coupling. The chart component reads the
@@ -5474,7 +5556,7 @@ index 25c5776..41f3471 100644
      graph,
      setGraph,
      selectedNode,
-@@ -1271,6 +3181,8 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
+@@ -1271,6 +3231,8 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
      updateLLMSettings,
      isSettingsPanelOpen,
      setSettingsPanelOpen,
@@ -5483,7 +5565,7 @@ index 25c5776..41f3471 100644
      isAgentReady,
      isAgentInitializing,
      agentError,
-@@ -1293,6 +3205,161 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
+@@ -1293,6 +3255,170 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
      clearAICodeReferences,
      clearCodeReferences,
      codeReferenceFocus,
@@ -5525,6 +5607,15 @@ index 25c5776..41f3471 100644
 +    couplingData,
 +    enterCouplingMode,
 +    exitCouplingMode,
++    // Group graph (multi-repo)
++    isGroupPanelOpen,
++    setGroupPanelOpen,
++    groupGraphActive,
++    groupGraphLoading,
++    groupGraphError,
++    groupGraphData,
++    enterGroupGraph,
++    exitGroupGraph,
 +    // Growth analytics
 +    growthActive,
 +    growthLoading,
