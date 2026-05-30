@@ -1,3 +1,98 @@
+diff --git a/gitnexus-web/src/components/CanvasMultigraph.tsx b/gitnexus-web/src/components/CanvasMultigraph.tsx
+new file mode 100644
+index 0000000..7edf636
+--- /dev/null
++++ b/gitnexus-web/src/components/CanvasMultigraph.tsx
+@@ -0,0 +1,39 @@
++import { useEffect, useRef } from 'react';
++import type { GraphConfigEntry } from '@/services/MultigraphLoader';
++
++export type ZoomLevel = 'meta' | 'graph' | 'node' | 'inspector';
++
++interface CanvasMultigraphProps {
++  selectedGraph: GraphConfigEntry | null;
++  zoomLevel: ZoomLevel;
++}
++
++export function CanvasMultigraph({ selectedGraph, zoomLevel }: CanvasMultigraphProps) {
++  const containerRef = useRef<HTMLDivElement>(null);
++
++  useEffect(() => {
++    if (!selectedGraph || !containerRef.current) return;
++    containerRef.current.dataset.graphName = selectedGraph.name;
++  }, [selectedGraph]);
++
++  if (!selectedGraph) {
++    return (
++      <main className="flex-1 flex items-center justify-center bg-slate-950 text-slate-400">
++        <div className="text-center">
++          <p>Select a graph from the sidebar to begin.</p>
++          <p className="text-xs mt-2" data-testid="canvas-mode">{zoomLevel}</p>
++        </div>
++      </main>
++    );
++  }
++
++  return (
++    <main className="flex-1 bg-slate-950 text-slate-100 p-4">
++      <header className="flex justify-between mb-2">
++        <h2 className="text-xl font-semibold">{selectedGraph.name}</h2>
++        <span className="text-xs" data-testid="canvas-mode">{zoomLevel}</span>
++      </header>
++      <div ref={containerRef} className="w-full h-[calc(100vh-8rem)] bg-slate-900 rounded" />
++    </main>
++  );
++}
+diff --git a/gitnexus-web/src/components/GraphSidebar.tsx b/gitnexus-web/src/components/GraphSidebar.tsx
+new file mode 100644
+index 0000000..2b23f34
+--- /dev/null
++++ b/gitnexus-web/src/components/GraphSidebar.tsx
+@@ -0,0 +1,44 @@
++import { useMemo } from 'react';
++import type { GraphConfigEntry } from '@/services/MultigraphLoader';
++
++interface GraphSidebarProps {
++  graphs: GraphConfigEntry[];
++  onSelect: (name: string) => void;
++  selected: string | null;
++}
++
++export function GraphSidebar({ graphs, onSelect, selected }: GraphSidebarProps) {
++  const grouped = useMemo(() => {
++    const m = new Map<string, GraphConfigEntry[]>();
++    for (const g of graphs) {
++      const k = g.schema_type;
++      if (!m.has(k)) m.set(k, []);
++      m.get(k)!.push(g);
++    }
++    return m;
++  }, [graphs]);
++
++  return (
++    <aside className="w-64 bg-slate-900 text-slate-100 p-4 overflow-y-auto" role="navigation">
++      <h2 className="text-lg font-semibold mb-3">Graphs</h2>
++      {[...grouped.entries()].map(([schemaType, list]) => (
++        <section key={schemaType} className="mb-4">
++          <h3 className="text-xs uppercase text-slate-400 mb-1">{schemaType}</h3>
++          <ul>
++            {list.map(g => (
++              <li
++                key={g.name}
++                className={`cursor-pointer py-1 px-2 rounded ${
++                  selected === g.name ? 'bg-violet-600' : 'hover:bg-slate-800'
++                }`}
++                onClick={() => onSelect(g.name)}
++              >
++                {g.name}
++              </li>
++            ))}
++          </ul>
++        </section>
++      ))}
++    </aside>
++  );
++}
 diff --git a/gitnexus-web/src/services/MultigraphLoader.ts b/gitnexus-web/src/services/MultigraphLoader.ts
 new file mode 100644
 index 0000000..a525714
@@ -63,37 +158,67 @@ index 0000000..a525714
 +    return config.graphs;
 +  }
 +}
-diff --git a/gitnexus-web/test/setup.ts b/gitnexus-web/test/setup.ts
-index 860ee70..de1d3c1 100644
---- a/gitnexus-web/test/setup.ts
-+++ b/gitnexus-web/test/setup.ts
-@@ -1,8 +1,24 @@
- import { beforeEach } from 'vitest';
- import '@testing-library/jest-dom/vitest';
- 
-+// Node v25 ships a native WebStorage that raises when --localstorage-file is
-+// absent.  Guard every access so the suite stays green on Node ≥ 25.
-+function safeRemoveItem(storage: Storage | undefined, key: string): void {
-+  try {
-+    storage?.removeItem(key);
-+  } catch {
-+    // Native WebStorage unavailable — no-op (jsdom storage cleared per-test anyway)
-+  }
-+}
+diff --git a/gitnexus-web/test/unit/canvas-multigraph.test.tsx b/gitnexus-web/test/unit/canvas-multigraph.test.tsx
+new file mode 100644
+index 0000000..c8b1abb
+--- /dev/null
++++ b/gitnexus-web/test/unit/canvas-multigraph.test.tsx
+@@ -0,0 +1,24 @@
++import { describe, it, expect } from 'vitest';
++import { render, screen } from '@testing-library/react';
++import { CanvasMultigraph } from '@/components/CanvasMultigraph';
 +
- // Reset storage between tests
- beforeEach(() => {
--  sessionStorage.removeItem('gitnexus-llm-settings');
--  localStorage.removeItem('gitnexus-llm-settings'); // legacy key (migration)
-+  safeRemoveItem(
-+    typeof sessionStorage !== 'undefined' ? sessionStorage : undefined,
-+    'gitnexus-llm-settings',
-+  );
-+  safeRemoveItem(
-+    typeof localStorage !== 'undefined' ? localStorage : undefined,
-+    'gitnexus-llm-settings', // legacy key (migration)
-+  );
- });
++describe('CanvasMultigraph', () => {
++  it('shows placeholder when no graph selected', () => {
++    render(<CanvasMultigraph selectedGraph={null} zoomLevel="meta" />);
++    expect(screen.getByText(/select a graph/i)).toBeInTheDocument();
++  });
++
++  it('renders graph name when selected', () => {
++    render(<CanvasMultigraph selectedGraph={{
++      name: 'ASTKG', path: '/x', schema_type: 'code-cognition', ttl_snapshot_hours: 1, privacy_class: 'SHARED'
++    }} zoomLevel="graph" />);
++    expect(screen.getByText(/ASTKG/)).toBeInTheDocument();
++  });
++
++  it('zoom level controls rendering mode', () => {
++    const { rerender } = render(<CanvasMultigraph selectedGraph={null} zoomLevel="meta" />);
++    expect(screen.getByTestId('canvas-mode')).toHaveTextContent('meta');
++    rerender(<CanvasMultigraph selectedGraph={null} zoomLevel="graph" />);
++    expect(screen.getByTestId('canvas-mode')).toHaveTextContent('graph');
++  });
++});
+diff --git a/gitnexus-web/test/unit/graph-sidebar.test.tsx b/gitnexus-web/test/unit/graph-sidebar.test.tsx
+new file mode 100644
+index 0000000..f5eec39
+--- /dev/null
++++ b/gitnexus-web/test/unit/graph-sidebar.test.tsx
+@@ -0,0 +1,25 @@
++import { describe, it, expect, vi } from 'vitest';
++import { render, screen, fireEvent } from '@testing-library/react';
++import { GraphSidebar } from '@/components/GraphSidebar';
++import type { GraphConfigEntry } from '@/services/MultigraphLoader';
++
++const graphs: GraphConfigEntry[] = [
++  { name: 'ASTKG', path: '/x', schema_type: 'code-cognition', ttl_snapshot_hours: 1, privacy_class: 'SHARED' },
++  { name: 'Forge', path: '/y', schema_type: 'concept-forge', ttl_snapshot_hours: 1, privacy_class: 'SHARED' },
++];
++
++describe('GraphSidebar', () => {
++  it('renders graphs grouped by schema_type', () => {
++    render(<GraphSidebar graphs={graphs} onSelect={() => {}} selected={null} />);
++    expect(screen.getByText('ASTKG')).toBeInTheDocument();
++    expect(screen.getByText('Forge')).toBeInTheDocument();
++    expect(screen.getByText('code-cognition')).toBeInTheDocument();
++  });
++
++  it('calls onSelect when graph clicked', () => {
++    const onSelect = vi.fn();
++    render(<GraphSidebar graphs={graphs} onSelect={onSelect} selected={null} />);
++    fireEvent.click(screen.getByText('ASTKG'));
++    expect(onSelect).toHaveBeenCalledWith('ASTKG');
++  });
++});
 diff --git a/gitnexus-web/test/unit/multigraph-loader.test.ts b/gitnexus-web/test/unit/multigraph-loader.test.ts
 new file mode 100644
 index 0000000..b707c09
@@ -143,21 +268,3 @@ index 0000000..b707c09
 +    vi.unstubAllGlobals();
 +  });
 +});
-diff --git a/gitnexus-web/vitest.config.ts b/gitnexus-web/vitest.config.ts
-index e1460d8..f32a19d 100644
---- a/gitnexus-web/vitest.config.ts
-+++ b/gitnexus-web/vitest.config.ts
-@@ -24,6 +24,13 @@ export default defineConfig({
-   test: {
-     globals: true,
-     environment: 'jsdom',
-+    environmentOptions: {
-+      jsdom: {
-+        // Node v25 exposes a native WebStorage that conflicts with jsdom unless
-+        // a proper URL origin is set — this ensures jsdom's localStorage is used.
-+        url: 'http://localhost',
-+      },
-+    },
-     setupFiles: ['./test/setup.ts'],
-     include: ['test/**/*.test.{ts,tsx}'],
-     testTimeout: 15000,
