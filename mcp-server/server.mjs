@@ -419,6 +419,84 @@ const TOOLS = [
       return callWeb('/regression', params);
     },
   },
+  {
+    name: 'query_meta_graph',
+    description:
+      'Query the ELYSIUM inter-graph meta-layer (inter_graph.kuzu). Returns InterGraphRel edges between GraphRegistryNode instances, ' +
+      'optionally filtered by layer (lineage | manifestation | observation | economy | meta_cognition), ' +
+      'source graph name, and/or target graph name. ' +
+      'Use to understand how ASTKG, Forge, TechGenealogy, and other sovereign graphs relate to each other. ' +
+      'NOTE: inter_graph.kuzu live-query requires the ELYSIUM KuzuDB bridge to be running; ' +
+      'this tool returns a stub when the bridge is unavailable — see CONCERN comment in server.mjs.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        layer: {
+          type: 'string',
+          enum: ['lineage', 'manifestation', 'observation', 'economy', 'meta_cognition', 'all'],
+          description: 'Filter by InterGraphRel layer. Default: all.',
+        },
+        source: {
+          type: 'string',
+          description: 'Source graph name (e.g. "Forge", "ASTKG"). Optional.',
+        },
+        target: {
+          type: 'string',
+          description: 'Target graph name (e.g. "ASTKG", "TechGenealogy"). Optional.',
+        },
+      },
+      additionalProperties: false,
+    },
+    handler: async ({ layer = 'all', source = null, target = null }) => {
+      // CONCERN: The GitNexus MCP sidecar has no direct KuzuDB connection —
+      // it proxies HTTP calls to the gitnexus analytics web server.
+      // inter_graph.kuzu lives in the ELYSIUM sovereign data layer
+      // (data/governance/inter_graph.kuzu) and has no REST endpoint yet.
+      //
+      // Two options for a future implementation:
+      //   A. Add a dedicated /inter-graph route to docker-server-routes.mjs
+      //      that opens inter_graph.kuzu via kuzu-node and runs Cypher.
+      //   B. Expose a thin ELYSIUM KuzuDB bridge at INTER_GRAPH_URL and call it here.
+      //
+      // MVP: try option A (call the analytics web server) and fall back to
+      // a documented stub so the tool is callable and returns a valid shape.
+      const INTER_GRAPH_URL = process.env.INTER_GRAPH_URL || null;
+      if (INTER_GRAPH_URL) {
+        // Future path: dedicated bridge endpoint
+        try {
+          const params = { layer };
+          if (source) params.source = source;
+          if (target) params.target = target;
+          return await doCall(`${INTER_GRAPH_URL}/inter-graph${buildQs(params)}`, '/inter-graph');
+        } catch (err) {
+          return {
+            stub: true,
+            concern: 'INTER_GRAPH_URL set but request failed: ' + err.message,
+            rows: [],
+          };
+        }
+      }
+      // Try the analytics web server as a secondary path
+      try {
+        const params = { layer };
+        if (source) params.source = source;
+        if (target) params.target = target;
+        return await callWeb('/inter-graph', params);
+      } catch (_err) {
+        // Expected until /inter-graph route is wired in docker-server-routes.mjs
+        return {
+          stub: true,
+          concern:
+            'inter_graph.kuzu has no REST endpoint yet. ' +
+            'To enable: (A) add /inter-graph route in docker-server-routes.mjs, ' +
+            'or (B) set env INTER_GRAPH_URL=<bridge-url>. ' +
+            'See CONCERN comment in mcp-server/server.mjs.',
+          filter: { layer, source, target },
+          rows: [],
+        };
+      }
+    },
+  },
 ];
 
 function formatGhostAuditSummary(audit) {
