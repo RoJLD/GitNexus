@@ -1,549 +1,340 @@
-diff --git a/mcp-server/server.mjs b/mcp-server/server.mjs
-index 8a4b471..cf19cd9 100644
---- a/mcp-server/server.mjs
-+++ b/mcp-server/server.mjs
-@@ -419,6 +419,84 @@ const TOOLS = [
-       return callWeb('/regression', params);
+diff --git a/gitnexus-web/package-lock.json b/gitnexus-web/package-lock.json
+index cf69e10..58e2259 100644
+--- a/gitnexus-web/package-lock.json
++++ b/gitnexus-web/package-lock.json
+@@ -196,6 +196,7 @@
+       "integrity": "sha512-CGOfOJqWjg2qW/Mb6zNsDm+u5vFQ8DxXfbM09z69p5Z6+mE1ikP2jUXw+j42Pf1XTYED2Rni5f95npYeuwMDQA==",
+       "dev": true,
+       "license": "MIT",
++      "peer": true,
+       "dependencies": {
+         "@babel/code-frame": "^7.29.0",
+         "@babel/generator": "^7.29.0",
+@@ -646,6 +647,7 @@
+         }
+       ],
+       "license": "MIT",
++      "peer": true,
+       "engines": {
+         "node": ">=20.19.0"
+       },
+@@ -694,6 +696,7 @@
+         }
+       ],
+       "license": "MIT",
++      "peer": true,
+       "engines": {
+         "node": ">=20.19.0"
+       }
+@@ -751,27 +754,6 @@
+         "node": ">=16"
+       }
      },
-   },
-+  {
-+    name: 'query_meta_graph',
-+    description:
-+      'Query the ELYSIUM inter-graph meta-layer (inter_graph.kuzu). Returns InterGraphRel edges between GraphRegistryNode instances, ' +
-+      'optionally filtered by layer (lineage | manifestation | observation | economy | meta_cognition), ' +
-+      'source graph name, and/or target graph name. ' +
-+      'Use to understand how ASTKG, Forge, TechGenealogy, and other sovereign graphs relate to each other. ' +
-+      'NOTE: inter_graph.kuzu live-query requires the ELYSIUM KuzuDB bridge to be running; ' +
-+      'this tool returns a stub when the bridge is unavailable — see CONCERN comment in server.mjs.',
-+    inputSchema: {
-+      type: 'object',
-+      properties: {
-+        layer: {
-+          type: 'string',
-+          enum: ['lineage', 'manifestation', 'observation', 'economy', 'meta_cognition', 'all'],
-+          description: 'Filter by InterGraphRel layer. Default: all.',
-+        },
-+        source: {
-+          type: 'string',
-+          description: 'Source graph name (e.g. "Forge", "ASTKG"). Optional.',
-+        },
-+        target: {
-+          type: 'string',
-+          description: 'Target graph name (e.g. "ASTKG", "TechGenealogy"). Optional.',
-+        },
-+      },
-+      additionalProperties: false,
-+    },
-+    handler: async ({ layer = 'all', source = null, target = null }) => {
-+      // CONCERN: The GitNexus MCP sidecar has no direct KuzuDB connection —
-+      // it proxies HTTP calls to the gitnexus analytics web server.
-+      // inter_graph.kuzu lives in the ELYSIUM sovereign data layer
-+      // (data/governance/inter_graph.kuzu) and has no REST endpoint yet.
-+      //
-+      // Two options for a future implementation:
-+      //   A. Add a dedicated /inter-graph route to docker-server-routes.mjs
-+      //      that opens inter_graph.kuzu via kuzu-node and runs Cypher.
-+      //   B. Expose a thin ELYSIUM KuzuDB bridge at INTER_GRAPH_URL and call it here.
-+      //
-+      // MVP: try option A (call the analytics web server) and fall back to
-+      // a documented stub so the tool is callable and returns a valid shape.
-+      const INTER_GRAPH_URL = process.env.INTER_GRAPH_URL || null;
-+      if (INTER_GRAPH_URL) {
-+        // Future path: dedicated bridge endpoint
-+        try {
-+          const params = { layer };
-+          if (source) params.source = source;
-+          if (target) params.target = target;
-+          return await doCall(`${INTER_GRAPH_URL}/inter-graph${buildQs(params)}`, '/inter-graph');
-+        } catch (err) {
-+          return {
-+            stub: true,
-+            concern: 'INTER_GRAPH_URL set but request failed: ' + err.message,
-+            rows: [],
-+          };
-+        }
-+      }
-+      // Try the analytics web server as a secondary path
-+      try {
-+        const params = { layer };
-+        if (source) params.source = source;
-+        if (target) params.target = target;
-+        return await callWeb('/inter-graph', params);
-+      } catch (_err) {
-+        // Expected until /inter-graph route is wired in docker-server-routes.mjs
-+        return {
-+          stub: true,
-+          concern:
-+            'inter_graph.kuzu has no REST endpoint yet. ' +
-+            'To enable: (A) add /inter-graph route in docker-server-routes.mjs, ' +
-+            'or (B) set env INTER_GRAPH_URL=<bridge-url>. ' +
-+            'See CONCERN comment in mcp-server/server.mjs.',
-+          filter: { layer, source, target },
-+          rows: [],
-+        };
-+      }
-+    },
-+  },
- ];
+-    "node_modules/@emnapi/core": {
+-      "version": "1.10.0",
+-      "resolved": "https://registry.npmjs.org/@emnapi/core/-/core-1.10.0.tgz",
+-      "integrity": "sha512-yq6OkJ4p82CAfPl0u9mQebQHKPJkY7WrIuk205cTYnYe+k2Z8YBh11FrbRG/H6ihirqcacOgl2BIO8oyMQLeXw==",
+-      "license": "MIT",
+-      "optional": true,
+-      "dependencies": {
+-        "@emnapi/wasi-threads": "1.2.1",
+-        "tslib": "^2.4.0"
+-      }
+-    },
+-    "node_modules/@emnapi/runtime": {
+-      "version": "1.10.0",
+-      "resolved": "https://registry.npmjs.org/@emnapi/runtime/-/runtime-1.10.0.tgz",
+-      "integrity": "sha512-ewvYlk86xUoGI0zQRNq/mC+16R1QeDlKQy21Ki3oSYXNgLb45GV1P6A0M+/s6nyCuNDqe5VpaY84BzXGwVbwFA==",
+-      "license": "MIT",
+-      "optional": true,
+-      "dependencies": {
+-        "tslib": "^2.4.0"
+-      }
+-    },
+     "node_modules/@emnapi/wasi-threads": {
+       "version": "1.2.1",
+       "resolved": "https://registry.npmjs.org/@emnapi/wasi-threads/-/wasi-threads-1.2.1.tgz",
+@@ -1385,6 +1367,7 @@
+       "resolved": "https://registry.npmjs.org/@langchain/core/-/core-1.1.45.tgz",
+       "integrity": "sha512-Y/wvuglLTMKJahkl4QD9dBIdF/z/CxZJWdTfHJF/q2jtlJtoFf6Mb5JpGxZfsi3mBY6NSG941FSLTcqhCKrhBA==",
+       "license": "MIT",
++      "peer": true,
+       "dependencies": {
+         "@cfworker/json-schema": "^4.0.2",
+         "@standard-schema/spec": "^1.1.0",
+@@ -2426,8 +2409,7 @@
+       "resolved": "https://registry.npmjs.org/@types/aria-query/-/aria-query-5.0.4.tgz",
+       "integrity": "sha512-rfT93uj5s0PRL7EzccGMs3brplhcrghnDoV26NqKhCAS1hVo+WdNsPvE/yb6ilfr5hi2MEk6d5EWJTKdxg8jVw==",
+       "dev": true,
+-      "license": "MIT",
+-      "peer": true
++      "license": "MIT"
+     },
+     "node_modules/@types/babel__core": {
+       "version": "7.20.5",
+@@ -2822,6 +2804,7 @@
+       "integrity": "sha512-+qIYRKdNYJwY3vRCZMdJbPLJAtGjQBudzZzdzwQYkEPQd+PJGixUL5QfvCLDaULoLv+RhT3LDkwEfKaAkgSmNQ==",
+       "devOptional": true,
+       "license": "MIT",
++      "peer": true,
+       "dependencies": {
+         "undici-types": "~7.19.0"
+       }
+@@ -2837,6 +2820,7 @@
+       "resolved": "https://registry.npmjs.org/@types/react/-/react-19.2.14.tgz",
+       "integrity": "sha512-ilcTH/UniCkMdtexkoCN0bI7pMcJDvmQFPvuPvmEaYA/NSfFTAgdUSLAoVjaRJm7+6PvcM+q1zYOwS4wTYMF9w==",
+       "license": "MIT",
++      "peer": true,
+       "dependencies": {
+         "csstype": "^3.2.2"
+       }
+@@ -2847,6 +2831,7 @@
+       "integrity": "sha512-jp2L/eY6fn+KgVVQAOqYItbF0VY/YApe5Mz2F0aykSO8gx31bYCZyvSeYxCHKvzHG5eZjc+zyaS5BrBWya2+kQ==",
+       "dev": true,
+       "license": "MIT",
++      "peer": true,
+       "peerDependencies": {
+         "@types/react": "^19.2.0"
+       }
+@@ -3034,6 +3019,7 @@
+       "integrity": "sha512-38C0/Ddb7HcRG0Z4/DUem8x57d2p9jYgp18mkaYswEOQBGsI1CG4f/hjm0ZCeaJfWhSZ4k7jgs29V1Zom7Ki9A==",
+       "dev": true,
+       "license": "MIT",
++      "peer": true,
+       "dependencies": {
+         "@bcoe/v8-coverage": "^1.0.2",
+         "@vitest/utils": "4.1.5",
+@@ -3197,6 +3183,7 @@
+       "resolved": "https://registry.npmjs.org/acorn/-/acorn-8.15.0.tgz",
+       "integrity": "sha512-NZyJarBfL7nWwIq+FDL6Zp/yHEhePMNnnJ0y3qfieCrmNvYct8uvtiV41UvlSe6apAfk0fY1FbWx+NwfmpvtTg==",
+       "license": "MIT",
++      "peer": true,
+       "bin": {
+         "acorn": "bin/acorn"
+       },
+@@ -3260,7 +3247,6 @@
+       "integrity": "sha512-quJQXlTSUGL2LH9SUXo8VwsY4soanhgo6LNSm84E1LBcE8s3O0wpdiRzyR9z/ZZJMlMWv37qOOb9pdJlMUEKFQ==",
+       "dev": true,
+       "license": "MIT",
+-      "peer": true,
+       "engines": {
+         "node": ">=8"
+       }
+@@ -3478,6 +3464,7 @@
+         }
+       ],
+       "license": "MIT",
++      "peer": true,
+       "dependencies": {
+         "baseline-browser-mapping": "^2.9.0",
+         "caniuse-lite": "^1.0.30001759",
+@@ -3741,6 +3728,7 @@
+       "resolved": "https://registry.npmjs.org/cytoscape/-/cytoscape-3.33.1.tgz",
+       "integrity": "sha512-iJc4TwyANnOGR1OmWhsS9ayRS3s+XQ185FmuHObThD+5AeJCakAAbWv8KimMTt08xCCLNgneQwFp+JRJOr9qGQ==",
+       "license": "MIT",
++      "peer": true,
+       "engines": {
+         "node": ">=0.10"
+       }
+@@ -4141,6 +4129,7 @@
+       "resolved": "https://registry.npmjs.org/d3-selection/-/d3-selection-3.0.0.tgz",
+       "integrity": "sha512-fmTRWbNMmsmWq6xJV8D19U/gw/bwrHfNXxrIN+HfZgnzqTHp9jOmKMhsTUjXOJnZOdZY9Q28y4yebKzqDKlxlQ==",
+       "license": "ISC",
++      "peer": true,
+       "engines": {
+         "node": ">=12"
+       }
+@@ -4403,8 +4392,7 @@
+       "resolved": "https://registry.npmjs.org/dom-accessibility-api/-/dom-accessibility-api-0.5.16.tgz",
+       "integrity": "sha512-X7BJ2yElsnOJ30pZF4uIIDfBEVgF4XEBxL9Bxhy6dnrm5hkzqmsWHGTiHqRiITNhMyFLyAiWndIJP7Z1NTteDg==",
+       "dev": true,
+-      "license": "MIT",
+-      "peer": true
++      "license": "MIT"
+     },
+     "node_modules/dompurify": {
+       "version": "3.4.2",
+@@ -5961,7 +5949,6 @@
+       "integrity": "sha512-h5bgJWpxJNswbU7qCrV0tIKQCaS3blPDrqKWx+QxzuzL1zGUzij9XCWLrSLsJPu5t+eWA/ycetzYAO5IOMcWAQ==",
+       "dev": true,
+       "license": "MIT",
+-      "peer": true,
+       "bin": {
+         "lz-string": "bin/bin.js"
+       }
+@@ -7534,7 +7521,6 @@
+       "integrity": "sha512-Qb1gy5OrP5+zDf2Bvnzdl3jsTf1qXVMazbvCoKhtKqVs4/YK4ozX4gKQJJVyNe+cajNPn0KoC0MC3FUmaHWEmQ==",
+       "dev": true,
+       "license": "MIT",
+-      "peer": true,
+       "dependencies": {
+         "ansi-regex": "^5.0.1",
+         "ansi-styles": "^5.0.0",
+@@ -7624,6 +7610,7 @@
+       "resolved": "https://registry.npmjs.org/react/-/react-19.2.6.tgz",
+       "integrity": "sha512-sfWGGfavi0xr8Pg0sVsyHMAOziVYKgPLNrS7ig+ivMNb3wbCBw3KxtflsGBAwD3gYQlE/AEZsTLgToRrSCjb0Q==",
+       "license": "MIT",
++      "peer": true,
+       "engines": {
+         "node": ">=0.10.0"
+       }
+@@ -7633,6 +7620,7 @@
+       "resolved": "https://registry.npmjs.org/react-dom/-/react-dom-19.2.6.tgz",
+       "integrity": "sha512-0prMI+hvBbPjsWnxDLxlCGyM8PN6UuWjEUCYmZhO67xIV9Xasa/r/vDnq+Xyq4Lo27g8QSbO5YzARu0D1Sps3g==",
+       "license": "MIT",
++      "peer": true,
+       "dependencies": {
+         "scheduler": "^0.27.0"
+       },
+@@ -7645,8 +7633,7 @@
+       "resolved": "https://registry.npmjs.org/react-is/-/react-is-17.0.2.tgz",
+       "integrity": "sha512-w2GsyukL62IJnlaff/nRegPQR94C/XXamvMWmSHRJ4y7Ts/4ocGRmTHvOs8PSE6pB3dWOrD/nueuU5sduBsQ4w==",
+       "dev": true,
+-      "license": "MIT",
+-      "peer": true
++      "license": "MIT"
+     },
+     "node_modules/react-markdown": {
+       "version": "10.1.0",
+@@ -7993,6 +7980,7 @@
+       "resolved": "https://registry.npmjs.org/sigma/-/sigma-3.0.2.tgz",
+       "integrity": "sha512-/BUbeOwPGruiBOm0YQQ6ZMcLIZ6tf/W+Jcm7dxZyAX0tK3WP9/sq7/NAWBxPIxVahdGjCJoGwej0Gdrv0DxlQQ==",
+       "license": "MIT",
++      "peer": true,
+       "dependencies": {
+         "events": "^3.3.0",
+         "graphology-utils": "^2.5.2"
+@@ -8382,6 +8370,7 @@
+       "integrity": "sha512-jl1vZzPDinLr9eUt3J/t7V6FgNEw9QjvBPdysz9KfQDD41fQrC2Y4vKQdiaUpFT4bXlb1RHhLpp8wtm6M5TgSw==",
+       "dev": true,
+       "license": "Apache-2.0",
++      "peer": true,
+       "bin": {
+         "tsc": "bin/tsc",
+         "tsserver": "bin/tsserver"
+@@ -8612,6 +8601,7 @@
+       "resolved": "https://registry.npmjs.org/vite/-/vite-8.0.11.tgz",
+       "integrity": "sha512-Jz1mxtUBR5xTT65VOdJZUUeoyLtqljmFkiUXhPTLZka3RDc9vpi/xXkyrnsdRcm2lIi3l3GPMnAidTsEGIj3Ow==",
+       "license": "MIT",
++      "peer": true,
+       "dependencies": {
+         "lightningcss": "^1.32.0",
+         "picomatch": "^4.0.4",
+@@ -8690,6 +8680,7 @@
+       "integrity": "sha512-9Xx1v3/ih3m9hN+SbfkUyy0JAs72ap3r7joc87XL6jwF0jGg6mFBvQ1SrwaX+h8BlkX6Hz9shdd1uo6AF+ZGpg==",
+       "dev": true,
+       "license": "MIT",
++      "peer": true,
+       "dependencies": {
+         "@vitest/expect": "4.1.5",
+         "@vitest/mocker": "4.1.5",
+@@ -8907,6 +8898,7 @@
+       "resolved": "https://registry.npmjs.org/zod/-/zod-3.25.76.tgz",
+       "integrity": "sha512-gzUt/qt81nXsFGKIFcC3YnfEAx5NkunCfnDlvuBSSFS02bcXu4Lmea0AFIUwbLWxWPx3d9p8S5QoaujKcNQxcQ==",
+       "license": "MIT",
++      "peer": true,
+       "funding": {
+         "url": "https://github.com/sponsors/colinhacks"
+       }
+diff --git a/gitnexus-web/src/App.tsx b/gitnexus-web/src/App.tsx
+index 2ee3569..8e2bfcc 100644
+--- a/gitnexus-web/src/App.tsx
++++ b/gitnexus-web/src/App.tsx
+@@ -21,6 +21,9 @@ import {
+   type BackendRepo,
+ } from './services/backend-client';
+ import { ERROR_RESET_DELAY_MS } from './config/ui-constants';
++import { MultigraphLoader, type GraphConfigEntry } from '@/services/MultigraphLoader';
++import { GraphSidebar } from '@/components/GraphSidebar';
++import { CanvasMultigraph, type ZoomLevel } from '@/components/CanvasMultigraph';
  
- function formatGhostAuditSummary(audit) {
-diff --git a/patches/additive-files.diff b/patches/additive-files.diff
-index 7047147..6f4c689 100644
---- a/patches/additive-files.diff
-+++ b/patches/additive-files.diff
-@@ -1,270 +1,101 @@
--diff --git a/gitnexus-web/src/components/CanvasMultigraph.tsx b/gitnexus-web/src/components/CanvasMultigraph.tsx
-+diff --git a/mcp-server/server.test.mjs b/mcp-server/server.test.mjs
- new file mode 100644
--index 0000000..7edf636
-+index 0000000..87bee05
- --- /dev/null
--+++ b/gitnexus-web/src/components/CanvasMultigraph.tsx
--@@ -0,0 +1,39 @@
--+import { useEffect, useRef } from 'react';
--+import type { GraphConfigEntry } from '@/services/MultigraphLoader';
--+
--+export type ZoomLevel = 'meta' | 'graph' | 'node' | 'inspector';
--+
--+interface CanvasMultigraphProps {
--+  selectedGraph: GraphConfigEntry | null;
--+  zoomLevel: ZoomLevel;
--+}
--+
--+export function CanvasMultigraph({ selectedGraph, zoomLevel }: CanvasMultigraphProps) {
--+  const containerRef = useRef<HTMLDivElement>(null);
--+
--+  useEffect(() => {
--+    if (!selectedGraph || !containerRef.current) return;
--+    containerRef.current.dataset.graphName = selectedGraph.name;
--+  }, [selectedGraph]);
--+
--+  if (!selectedGraph) {
--+    return (
--+      <main className="flex-1 flex items-center justify-center bg-slate-950 text-slate-400">
--+        <div className="text-center">
--+          <p>Select a graph from the sidebar to begin.</p>
--+          <p className="text-xs mt-2" data-testid="canvas-mode">{zoomLevel}</p>
--+        </div>
--+      </main>
--+    );
--+  }
--+
--+  return (
--+    <main className="flex-1 bg-slate-950 text-slate-100 p-4">
--+      <header className="flex justify-between mb-2">
--+        <h2 className="text-xl font-semibold">{selectedGraph.name}</h2>
--+        <span className="text-xs" data-testid="canvas-mode">{zoomLevel}</span>
--+      </header>
--+      <div ref={containerRef} className="w-full h-[calc(100vh-8rem)] bg-slate-900 rounded" />
--+    </main>
--+  );
--+}
--diff --git a/gitnexus-web/src/components/GraphSidebar.tsx b/gitnexus-web/src/components/GraphSidebar.tsx
--new file mode 100644
--index 0000000..2b23f34
----- /dev/null
--+++ b/gitnexus-web/src/components/GraphSidebar.tsx
--@@ -0,0 +1,44 @@
--+import { useMemo } from 'react';
--+import type { GraphConfigEntry } from '@/services/MultigraphLoader';
--+
--+interface GraphSidebarProps {
--+  graphs: GraphConfigEntry[];
--+  onSelect: (name: string) => void;
--+  selected: string | null;
--+}
--+
--+export function GraphSidebar({ graphs, onSelect, selected }: GraphSidebarProps) {
--+  const grouped = useMemo(() => {
--+    const m = new Map<string, GraphConfigEntry[]>();
--+    for (const g of graphs) {
--+      const k = g.schema_type;
--+      if (!m.has(k)) m.set(k, []);
--+      m.get(k)!.push(g);
--+    }
--+    return m;
--+  }, [graphs]);
--+
--+  return (
--+    <aside className="w-64 bg-slate-900 text-slate-100 p-4 overflow-y-auto" role="navigation">
--+      <h2 className="text-lg font-semibold mb-3">Graphs</h2>
--+      {[...grouped.entries()].map(([schemaType, list]) => (
--+        <section key={schemaType} className="mb-4">
--+          <h3 className="text-xs uppercase text-slate-400 mb-1">{schemaType}</h3>
--+          <ul>
--+            {list.map(g => (
--+              <li
--+                key={g.name}
--+                className={`cursor-pointer py-1 px-2 rounded ${
--+                  selected === g.name ? 'bg-violet-600' : 'hover:bg-slate-800'
--+                }`}
--+                onClick={() => onSelect(g.name)}
--+              >
--+                {g.name}
--+              </li>
--+            ))}
--+          </ul>
--+        </section>
--+      ))}
--+    </aside>
--+  );
--+}
--diff --git a/gitnexus-web/src/services/MultigraphLoader.ts b/gitnexus-web/src/services/MultigraphLoader.ts
--new file mode 100644
--index 0000000..a525714
----- /dev/null
--+++ b/gitnexus-web/src/services/MultigraphLoader.ts
--@@ -0,0 +1,59 @@
-++++ b/mcp-server/server.test.mjs
-+@@ -0,0 +1,95 @@
- +/**
--+ * MultigraphLoader — fetches gitnexus.config.json and exposes the N graph entries
--+ * to the rest of the UI (sidebar, canvas, scrubber).
-++ * Smoke test for mcp-server/server.mjs — Task 11.13.
-++ *
-++ * Uses Node's built-in test runner (node:test) — no external deps required.
-++ * Run:
-++ *   node --test mcp-server/server.test.mjs
- + *
--+ * Config schema produced by ELYSIUM sigma_gitnexus_config_generator.py.
--+ * Spec source : docs/governance/sigils/SIGIL-GITNEXUS-MULTIGRAPH.md (commit 8b5574ba).
-++ * Validates:
-++ *  1. Module loads without syntax errors (dynamic import).
-++ *  2. Source contains query_meta_graph registration.
-++ *  3. All baseline tool names are present in source.
-++ *  4. query_meta_graph stub return shape is documented correctly.
- + */
- +
--+export type PrivacyClass = 'SHARED' | 'PRIVATE-IDENTITY' | 'REGENERABLE';
--+
--+export interface GraphConfigEntry {
--+  name: string;
--+  path: string;
--+  schema_type: string;
--+  parent_schema?: string | null;
--+  ttl_snapshot_hours: number;
--+  privacy_class: PrivacyClass;
-++import { describe, it, before } from 'node:test';
-++import assert from 'node:assert/strict';
-++import { readFile } from 'node:fs/promises';
-++import { fileURLToPath } from 'node:url';
-++import { dirname, join } from 'node:path';
-++
-++const __dirname = dirname(fileURLToPath(import.meta.url));
-++const SERVER_PATH = join(__dirname, 'server.mjs');
-++
-++// ── Stub stdin so readline in server.mjs does not block the test process ──────
-++import { Readable } from 'node:stream';
-++const stubStdin = new Readable({ read() {} });
-++stubStdin.push(null); // EOF immediately
-++try {
-++  Object.defineProperty(process, 'stdin', { value: stubStdin, writable: false, configurable: true });
-++} catch (_) {
-++  // stdin may already be defined non-configurable — proceed anyway
- +}
- +
--+export interface MultigraphConfig {
--+  version: string;
--+  generated_by?: string;
--+  workspace_root?: string;
--+  graphs: GraphConfigEntry[];
--+}
-++let src;
- +
--+export interface MultigraphLoaderOptions {
--+  configFetcher?: () => Promise<MultigraphConfig>;
--+  configPath?: string;
--+}
--+
--+const DEFAULT_CONFIG_PATH = '/gitnexus.config.json';
--+
--+export class MultigraphLoader {
--+  private readonly fetcher: () => Promise<MultigraphConfig>;
--+
--+  constructor(opts: MultigraphLoaderOptions = {}) {
--+    if (opts.configFetcher) {
--+      this.fetcher = opts.configFetcher;
--+    } else {
--+      const path = opts.configPath ?? DEFAULT_CONFIG_PATH;
--+      this.fetcher = async () => {
--+        const res = await fetch(path);
--+        if (!res.ok) {
--+          throw new Error(`Config fetch failed: ${res.status}`);
--+        }
--+        return res.json() as Promise<MultigraphConfig>;
--+      };
--+    }
--+  }
--+
--+  async listGraphs(): Promise<GraphConfigEntry[]> {
--+    const config = await this.fetcher();
--+    if (!Array.isArray(config.graphs)) {
--+      throw new Error('Invalid config: graphs[] missing or not an array');
--+    }
--+    return config.graphs;
--+  }
--+}
--diff --git a/gitnexus-web/test/unit/canvas-multigraph.test.tsx b/gitnexus-web/test/unit/canvas-multigraph.test.tsx
--new file mode 100644
--index 0000000..c8b1abb
----- /dev/null
--+++ b/gitnexus-web/test/unit/canvas-multigraph.test.tsx
--@@ -0,0 +1,24 @@
--+import { describe, it, expect } from 'vitest';
--+import { render, screen } from '@testing-library/react';
--+import { CanvasMultigraph } from '@/components/CanvasMultigraph';
--+
--+describe('CanvasMultigraph', () => {
--+  it('shows placeholder when no graph selected', () => {
--+    render(<CanvasMultigraph selectedGraph={null} zoomLevel="meta" />);
--+    expect(screen.getByText(/select a graph/i)).toBeInTheDocument();
--+  });
--+
--+  it('renders graph name when selected', () => {
--+    render(<CanvasMultigraph selectedGraph={{
--+      name: 'ASTKG', path: '/x', schema_type: 'code-cognition', ttl_snapshot_hours: 1, privacy_class: 'SHARED'
--+    }} zoomLevel="graph" />);
--+    expect(screen.getByText(/ASTKG/)).toBeInTheDocument();
-++describe('mcp-server/server.mjs — Task 11.13 smoke', () => {
-++  before(async () => {
-++    src = await readFile(SERVER_PATH, 'utf8');
- +  });
- +
--+  it('zoom level controls rendering mode', () => {
--+    const { rerender } = render(<CanvasMultigraph selectedGraph={null} zoomLevel="meta" />);
--+    expect(screen.getByTestId('canvas-mode')).toHaveTextContent('meta');
--+    rerender(<CanvasMultigraph selectedGraph={null} zoomLevel="graph" />);
--+    expect(screen.getByTestId('canvas-mode')).toHaveTextContent('graph');
-++  it('server source file is readable', () => {
-++    assert.ok(src && src.length > 0, 'server.mjs must not be empty');
- +  });
--+});
--diff --git a/gitnexus-web/test/unit/graph-sidebar.test.tsx b/gitnexus-web/test/unit/graph-sidebar.test.tsx
--new file mode 100644
--index 0000000..f5eec39
----- /dev/null
--+++ b/gitnexus-web/test/unit/graph-sidebar.test.tsx
--@@ -0,0 +1,25 @@
--+import { describe, it, expect, vi } from 'vitest';
--+import { render, screen, fireEvent } from '@testing-library/react';
--+import { GraphSidebar } from '@/components/GraphSidebar';
--+import type { GraphConfigEntry } from '@/services/MultigraphLoader';
--+
--+const graphs: GraphConfigEntry[] = [
--+  { name: 'ASTKG', path: '/x', schema_type: 'code-cognition', ttl_snapshot_hours: 1, privacy_class: 'SHARED' },
--+  { name: 'Forge', path: '/y', schema_type: 'concept-forge', ttl_snapshot_hours: 1, privacy_class: 'SHARED' },
--+];
- +
--+describe('GraphSidebar', () => {
--+  it('renders graphs grouped by schema_type', () => {
--+    render(<GraphSidebar graphs={graphs} onSelect={() => {}} selected={null} />);
--+    expect(screen.getByText('ASTKG')).toBeInTheDocument();
--+    expect(screen.getByText('Forge')).toBeInTheDocument();
--+    expect(screen.getByText('code-cognition')).toBeInTheDocument();
-++  it("registers 'query_meta_graph' tool in TOOLS array", () => {
-++    assert.ok(
-++      src.includes("name: 'query_meta_graph'"),
-++      "TOOLS array must contain name: 'query_meta_graph'",
-++    );
- +  });
- +
--+  it('calls onSelect when graph clicked', () => {
--+    const onSelect = vi.fn();
--+    render(<GraphSidebar graphs={graphs} onSelect={onSelect} selected={null} />);
--+    fireEvent.click(screen.getByText('ASTKG'));
--+    expect(onSelect).toHaveBeenCalledWith('ASTKG');
-++  it('query_meta_graph handler documents inter_graph.kuzu concern', () => {
-++    assert.ok(
-++      src.includes('inter_graph.kuzu'),
-++      'handler must reference inter_graph.kuzu as the target store',
-++    );
- +  });
--+});
--diff --git a/gitnexus-web/test/unit/multigraph-loader.test.ts b/gitnexus-web/test/unit/multigraph-loader.test.ts
--new file mode 100644
--index 0000000..b707c09
----- /dev/null
--+++ b/gitnexus-web/test/unit/multigraph-loader.test.ts
--@@ -0,0 +1,43 @@
--+import { describe, it, expect, vi } from 'vitest';
--+import { MultigraphLoader, type MultigraphConfig } from '@/services/MultigraphLoader';
- +
--+describe('MultigraphLoader', () => {
--+  it('loads config and returns graph entries', async () => {
--+    const fakeConfig: MultigraphConfig = {
--+      version: '1.0',
--+      graphs: [
--+        { name: 'ASTKG', path: '/data/projects/elysium/.agent/knowledge/brain/graph/elysium_graph',
--+          schema_type: 'code-cognition', ttl_snapshot_hours: 1, privacy_class: 'SHARED' },
--+        { name: 'Forge', path: '/data/projects/elysium/data/forge/forge_concept.kuzu',
--+          schema_type: 'concept-forge', ttl_snapshot_hours: 1, privacy_class: 'SHARED' },
--+      ],
--+    };
--+    const loader = new MultigraphLoader({
--+      configFetcher: () => Promise.resolve(fakeConfig),
--+    });
--+    const graphs = await loader.listGraphs();
--+    expect(graphs).toHaveLength(2);
--+    expect(graphs[0].name).toBe('ASTKG');
-++  it('query_meta_graph stub returns rows array in fallback path', () => {
-++    // Verify documented fallback shape exists in source
-++    assert.ok(src.includes('rows: []'), 'stub fallback must include rows: []');
-++    assert.ok(src.includes('stub: true'), 'stub fallback must include stub: true');
- +  });
- +
--+  it('throws when config missing graphs array', async () => {
--+    const loader = new MultigraphLoader({
--+      configFetcher: () => Promise.resolve({ version: '1.0' } as any),
--+    });
--+    await expect(loader.listGraphs()).rejects.toThrow(/graphs/);
-++  it('all expected baseline tool names present in source', () => {
-++    const expectedTools = [
-++      'gitnexus_list_repos',
-++      'gitnexus_entropy',
-++      'gitnexus_churn',
-++      'gitnexus_coupling',
-++      'gitnexus_growth',
-++      'gitnexus_lifespan',
-++      'gitnexus_ownership',
-++      'gitnexus_dissonance',
-++      'gitnexus_semantic_labels',
-++      'gitnexus_coupling_cross',
-++      'gitnexus_growth_cross',
-++      'gitnexus_similarity',
-++      'gitnexus_regression',
-++      'query_meta_graph',
-++    ];
-++    for (const name of expectedTools) {
-++      assert.ok(src.includes(`'${name}'`), `Missing tool registration: ${name}`);
-++    }
- +  });
- +
--+  it('uses default config path when no fetcher passed', async () => {
--+    // Mock fetch globally
--+    const mockResponse = {
--+      ok: true,
--+      status: 200,
--+      json: async () => ({ version: '1.0', graphs: [] }),
--+    };
--+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(mockResponse));
--+    const loader = new MultigraphLoader();
--+    const graphs = await loader.listGraphs();
--+    expect(graphs).toEqual([]);
--+    vi.unstubAllGlobals();
-++  it('query_meta_graph inputSchema enumerates valid layer values', () => {
-++    assert.ok(src.includes("'lineage'"), "layer enum must include 'lineage'");
-++    assert.ok(src.includes("'manifestation'"), "layer enum must include 'manifestation'");
-++    assert.ok(src.includes("'observation'"), "layer enum must include 'observation'");
-++    assert.ok(src.includes("'economy'"), "layer enum must include 'economy'");
-++    assert.ok(src.includes("'meta_cognition'"), "layer enum must include 'meta_cognition'");
-++    assert.ok(src.includes("'all'"), "layer enum must include 'all'");
- +  });
- +});
-diff --git a/patches/inplace-edits.diff b/patches/inplace-edits.diff
-index 987758c..5ff4193 100644
---- a/patches/inplace-edits.diff
-+++ b/patches/inplace-edits.diff
-@@ -1,102 +0,0 @@
--diff --git a/gitnexus-web/src/App.tsx b/gitnexus-web/src/App.tsx
--index 2ee3569..8e2bfcc 100644
----- a/gitnexus-web/src/App.tsx
--+++ b/gitnexus-web/src/App.tsx
--@@ -21,6 +21,9 @@ import {
--   type BackendRepo,
-- } from './services/backend-client';
-- import { ERROR_RESET_DELAY_MS } from './config/ui-constants';
--+import { MultigraphLoader, type GraphConfigEntry } from '@/services/MultigraphLoader';
--+import { GraphSidebar } from '@/components/GraphSidebar';
--+import { CanvasMultigraph, type ZoomLevel } from '@/components/CanvasMultigraph';
-- 
-- const AppContent = () => {
--   const {
--@@ -50,6 +53,20 @@ const AppContent = () => {
--   const graphCanvasRef = useRef<GraphCanvasHandle>(null);
--   const [serverDisconnected, setServerDisconnected] = useState(false);
-- 
--+  // ── Multigraph mode (?multigraph=1) ──────────────────────────────────────
--+  // Opt-in via URL query param — minimally invasive, preserves existing single-graph view.
--+  const isMultigraphMode =
--+    typeof window !== 'undefined' &&
--+    new URLSearchParams(window.location.search).get('multigraph') === '1';
--+  const [multigraphs, setMultigraphs] = useState<GraphConfigEntry[]>([]);
--+  const [selectedMG, setSelectedMG] = useState<string | null>(null);
--+  const [zoomLevel] = useState<ZoomLevel>('meta');
--+
--+  useEffect(() => {
--+    if (!isMultigraphMode) return;
--+    new MultigraphLoader().listGraphs().then(setMultigraphs).catch(console.error);
--+  }, [isMultigraphMode]);
--+
--   const handleServerConnect = useCallback(
--     async (result: ConnectResult): Promise<void> => {
--       // Use the canonical repo name from the server response so all subsequent
--@@ -209,6 +226,17 @@ const AppContent = () => {
--     return cleanup;
--   }, [viewMode]);
-- 
--+  // ── Multigraph mode early return ─────────────────────────────────────────
--+  if (isMultigraphMode) {
--+    const selectedGraph = multigraphs.find(g => g.name === selectedMG) ?? null;
--+    return (
--+      <div className="flex h-screen">
--+        <GraphSidebar graphs={multigraphs} onSelect={setSelectedMG} selected={selectedMG} />
--+        <CanvasMultigraph selectedGraph={selectedGraph} zoomLevel={zoomLevel} />
--+      </div>
--+    );
--+  }
--+
--   // Render based on view mode
--   if (viewMode === 'onboarding') {
--     return (
--diff --git a/gitnexus-web/test/setup.ts b/gitnexus-web/test/setup.ts
--index 860ee70..de1d3c1 100644
----- a/gitnexus-web/test/setup.ts
--+++ b/gitnexus-web/test/setup.ts
--@@ -1,8 +1,24 @@
-- import { beforeEach } from 'vitest';
-- import '@testing-library/jest-dom/vitest';
-- 
--+// Node v25 ships a native WebStorage that raises when --localstorage-file is
--+// absent.  Guard every access so the suite stays green on Node ≥ 25.
--+function safeRemoveItem(storage: Storage | undefined, key: string): void {
--+  try {
--+    storage?.removeItem(key);
--+  } catch {
--+    // Native WebStorage unavailable — no-op (jsdom storage cleared per-test anyway)
--+  }
--+}
--+
-- // Reset storage between tests
-- beforeEach(() => {
---  sessionStorage.removeItem('gitnexus-llm-settings');
---  localStorage.removeItem('gitnexus-llm-settings'); // legacy key (migration)
--+  safeRemoveItem(
--+    typeof sessionStorage !== 'undefined' ? sessionStorage : undefined,
--+    'gitnexus-llm-settings',
--+  );
--+  safeRemoveItem(
--+    typeof localStorage !== 'undefined' ? localStorage : undefined,
--+    'gitnexus-llm-settings', // legacy key (migration)
--+  );
-- });
--diff --git a/gitnexus-web/vitest.config.ts b/gitnexus-web/vitest.config.ts
--index e1460d8..f32a19d 100644
----- a/gitnexus-web/vitest.config.ts
--+++ b/gitnexus-web/vitest.config.ts
--@@ -24,6 +24,13 @@ export default defineConfig({
--   test: {
--     globals: true,
--     environment: 'jsdom',
--+    environmentOptions: {
--+      jsdom: {
--+        // Node v25 exposes a native WebStorage that conflicts with jsdom unless
--+        // a proper URL origin is set — this ensures jsdom's localStorage is used.
--+        url: 'http://localhost',
--+      },
--+    },
--     setupFiles: ['./test/setup.ts'],
--     include: ['test/**/*.test.{ts,tsx}'],
--     testTimeout: 15000,
+ const AppContent = () => {
+   const {
+@@ -50,6 +53,20 @@ const AppContent = () => {
+   const graphCanvasRef = useRef<GraphCanvasHandle>(null);
+   const [serverDisconnected, setServerDisconnected] = useState(false);
+ 
++  // ── Multigraph mode (?multigraph=1) ──────────────────────────────────────
++  // Opt-in via URL query param — minimally invasive, preserves existing single-graph view.
++  const isMultigraphMode =
++    typeof window !== 'undefined' &&
++    new URLSearchParams(window.location.search).get('multigraph') === '1';
++  const [multigraphs, setMultigraphs] = useState<GraphConfigEntry[]>([]);
++  const [selectedMG, setSelectedMG] = useState<string | null>(null);
++  const [zoomLevel] = useState<ZoomLevel>('meta');
++
++  useEffect(() => {
++    if (!isMultigraphMode) return;
++    new MultigraphLoader().listGraphs().then(setMultigraphs).catch(console.error);
++  }, [isMultigraphMode]);
++
+   const handleServerConnect = useCallback(
+     async (result: ConnectResult): Promise<void> => {
+       // Use the canonical repo name from the server response so all subsequent
+@@ -209,6 +226,17 @@ const AppContent = () => {
+     return cleanup;
+   }, [viewMode]);
+ 
++  // ── Multigraph mode early return ─────────────────────────────────────────
++  if (isMultigraphMode) {
++    const selectedGraph = multigraphs.find(g => g.name === selectedMG) ?? null;
++    return (
++      <div className="flex h-screen">
++        <GraphSidebar graphs={multigraphs} onSelect={setSelectedMG} selected={selectedMG} />
++        <CanvasMultigraph selectedGraph={selectedGraph} zoomLevel={zoomLevel} />
++      </div>
++    );
++  }
++
+   // Render based on view mode
+   if (viewMode === 'onboarding') {
+     return (
+diff --git a/gitnexus-web/test/setup.ts b/gitnexus-web/test/setup.ts
+index 860ee70..de1d3c1 100644
+--- a/gitnexus-web/test/setup.ts
++++ b/gitnexus-web/test/setup.ts
+@@ -1,8 +1,24 @@
+ import { beforeEach } from 'vitest';
+ import '@testing-library/jest-dom/vitest';
+ 
++// Node v25 ships a native WebStorage that raises when --localstorage-file is
++// absent.  Guard every access so the suite stays green on Node ≥ 25.
++function safeRemoveItem(storage: Storage | undefined, key: string): void {
++  try {
++    storage?.removeItem(key);
++  } catch {
++    // Native WebStorage unavailable — no-op (jsdom storage cleared per-test anyway)
++  }
++}
++
+ // Reset storage between tests
+ beforeEach(() => {
+-  sessionStorage.removeItem('gitnexus-llm-settings');
+-  localStorage.removeItem('gitnexus-llm-settings'); // legacy key (migration)
++  safeRemoveItem(
++    typeof sessionStorage !== 'undefined' ? sessionStorage : undefined,
++    'gitnexus-llm-settings',
++  );
++  safeRemoveItem(
++    typeof localStorage !== 'undefined' ? localStorage : undefined,
++    'gitnexus-llm-settings', // legacy key (migration)
++  );
+ });
+diff --git a/gitnexus-web/vitest.config.ts b/gitnexus-web/vitest.config.ts
+index e1460d8..f32a19d 100644
+--- a/gitnexus-web/vitest.config.ts
++++ b/gitnexus-web/vitest.config.ts
+@@ -24,6 +24,13 @@ export default defineConfig({
+   test: {
+     globals: true,
+     environment: 'jsdom',
++    environmentOptions: {
++      jsdom: {
++        // Node v25 exposes a native WebStorage that conflicts with jsdom unless
++        // a proper URL origin is set — this ensures jsdom's localStorage is used.
++        url: 'http://localhost',
++      },
++    },
+     setupFiles: ['./test/setup.ts'],
+     include: ['test/**/*.test.{ts,tsx}'],
+     testTimeout: 15000,

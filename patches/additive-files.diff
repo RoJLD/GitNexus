@@ -1,101 +1,478 @@
-diff --git a/mcp-server/server.test.mjs b/mcp-server/server.test.mjs
+diff --git a/gitnexus-web/src/components/CanvasMultigraph.tsx b/gitnexus-web/src/components/CanvasMultigraph.tsx
 new file mode 100644
-index 0000000..87bee05
+index 0000000..7edf636
 --- /dev/null
-+++ b/mcp-server/server.test.mjs
-@@ -0,0 +1,95 @@
-+/**
-+ * Smoke test for mcp-server/server.mjs — Task 11.13.
-+ *
-+ * Uses Node's built-in test runner (node:test) — no external deps required.
-+ * Run:
-+ *   node --test mcp-server/server.test.mjs
-+ *
-+ * Validates:
-+ *  1. Module loads without syntax errors (dynamic import).
-+ *  2. Source contains query_meta_graph registration.
-+ *  3. All baseline tool names are present in source.
-+ *  4. query_meta_graph stub return shape is documented correctly.
-+ */
++++ b/gitnexus-web/src/components/CanvasMultigraph.tsx
+@@ -0,0 +1,39 @@
++import { useEffect, useRef } from 'react';
++import type { GraphConfigEntry } from '@/services/MultigraphLoader';
 +
-+import { describe, it, before } from 'node:test';
-+import assert from 'node:assert/strict';
-+import { readFile } from 'node:fs/promises';
-+import { fileURLToPath } from 'node:url';
-+import { dirname, join } from 'node:path';
++export type ZoomLevel = 'meta' | 'graph' | 'node' | 'inspector';
 +
-+const __dirname = dirname(fileURLToPath(import.meta.url));
-+const SERVER_PATH = join(__dirname, 'server.mjs');
-+
-+// ── Stub stdin so readline in server.mjs does not block the test process ──────
-+import { Readable } from 'node:stream';
-+const stubStdin = new Readable({ read() {} });
-+stubStdin.push(null); // EOF immediately
-+try {
-+  Object.defineProperty(process, 'stdin', { value: stubStdin, writable: false, configurable: true });
-+} catch (_) {
-+  // stdin may already be defined non-configurable — proceed anyway
++interface CanvasMultigraphProps {
++  selectedGraph: GraphConfigEntry | null;
++  zoomLevel: ZoomLevel;
 +}
 +
-+let src;
++export function CanvasMultigraph({ selectedGraph, zoomLevel }: CanvasMultigraphProps) {
++  const containerRef = useRef<HTMLDivElement>(null);
 +
-+describe('mcp-server/server.mjs — Task 11.13 smoke', () => {
-+  before(async () => {
-+    src = await readFile(SERVER_PATH, 'utf8');
-+  });
++  useEffect(() => {
++    if (!selectedGraph || !containerRef.current) return;
++    containerRef.current.dataset.graphName = selectedGraph.name;
++  }, [selectedGraph]);
 +
-+  it('server source file is readable', () => {
-+    assert.ok(src && src.length > 0, 'server.mjs must not be empty');
-+  });
-+
-+  it("registers 'query_meta_graph' tool in TOOLS array", () => {
-+    assert.ok(
-+      src.includes("name: 'query_meta_graph'"),
-+      "TOOLS array must contain name: 'query_meta_graph'",
++  if (!selectedGraph) {
++    return (
++      <main className="flex-1 flex items-center justify-center bg-slate-950 text-slate-400">
++        <div className="text-center">
++          <p>Select a graph from the sidebar to begin.</p>
++          <p className="text-xs mt-2" data-testid="canvas-mode">{zoomLevel}</p>
++        </div>
++      </main>
 +    );
-+  });
++  }
 +
-+  it('query_meta_graph handler documents inter_graph.kuzu concern', () => {
-+    assert.ok(
-+      src.includes('inter_graph.kuzu'),
-+      'handler must reference inter_graph.kuzu as the target store',
-+    );
-+  });
++  return (
++    <main className="flex-1 bg-slate-950 text-slate-100 p-4">
++      <header className="flex justify-between mb-2">
++        <h2 className="text-xl font-semibold">{selectedGraph.name}</h2>
++        <span className="text-xs" data-testid="canvas-mode">{zoomLevel}</span>
++      </header>
++      <div ref={containerRef} className="w-full h-[calc(100vh-8rem)] bg-slate-900 rounded" />
++    </main>
++  );
++}
+diff --git a/gitnexus-web/src/components/GraphSidebar.tsx b/gitnexus-web/src/components/GraphSidebar.tsx
+new file mode 100644
+index 0000000..2b23f34
+--- /dev/null
++++ b/gitnexus-web/src/components/GraphSidebar.tsx
+@@ -0,0 +1,44 @@
++import { useMemo } from 'react';
++import type { GraphConfigEntry } from '@/services/MultigraphLoader';
 +
-+  it('query_meta_graph stub returns rows array in fallback path', () => {
-+    // Verify documented fallback shape exists in source
-+    assert.ok(src.includes('rows: []'), 'stub fallback must include rows: []');
-+    assert.ok(src.includes('stub: true'), 'stub fallback must include stub: true');
-+  });
++interface GraphSidebarProps {
++  graphs: GraphConfigEntry[];
++  onSelect: (name: string) => void;
++  selected: string | null;
++}
 +
-+  it('all expected baseline tool names present in source', () => {
-+    const expectedTools = [
-+      'gitnexus_list_repos',
-+      'gitnexus_entropy',
-+      'gitnexus_churn',
-+      'gitnexus_coupling',
-+      'gitnexus_growth',
-+      'gitnexus_lifespan',
-+      'gitnexus_ownership',
-+      'gitnexus_dissonance',
-+      'gitnexus_semantic_labels',
-+      'gitnexus_coupling_cross',
-+      'gitnexus_growth_cross',
-+      'gitnexus_similarity',
-+      'gitnexus_regression',
-+      'query_meta_graph',
-+    ];
-+    for (const name of expectedTools) {
-+      assert.ok(src.includes(`'${name}'`), `Missing tool registration: ${name}`);
++export function GraphSidebar({ graphs, onSelect, selected }: GraphSidebarProps) {
++  const grouped = useMemo(() => {
++    const m = new Map<string, GraphConfigEntry[]>();
++    for (const g of graphs) {
++      const k = g.schema_type;
++      if (!m.has(k)) m.set(k, []);
++      m.get(k)!.push(g);
 +    }
++    return m;
++  }, [graphs]);
++
++  return (
++    <aside className="w-64 bg-slate-900 text-slate-100 p-4 overflow-y-auto" role="navigation">
++      <h2 className="text-lg font-semibold mb-3">Graphs</h2>
++      {[...grouped.entries()].map(([schemaType, list]) => (
++        <section key={schemaType} className="mb-4">
++          <h3 className="text-xs uppercase text-slate-400 mb-1">{schemaType}</h3>
++          <ul>
++            {list.map(g => (
++              <li
++                key={g.name}
++                className={`cursor-pointer py-1 px-2 rounded ${
++                  selected === g.name ? 'bg-violet-600' : 'hover:bg-slate-800'
++                }`}
++                onClick={() => onSelect(g.name)}
++              >
++                {g.name}
++              </li>
++            ))}
++          </ul>
++        </section>
++      ))}
++    </aside>
++  );
++}
+diff --git a/gitnexus-web/src/components/TimelineScrubber.tsx b/gitnexus-web/src/components/TimelineScrubber.tsx
+new file mode 100644
+index 0000000..22a3d5d
+--- /dev/null
++++ b/gitnexus-web/src/components/TimelineScrubber.tsx
+@@ -0,0 +1,78 @@
++/**
++ * TimelineScrubber — Task 10.5.
++ *
++ * A horizontal range slider that lets the user scrub through the snapshot
++ * timeline for a given graph. Fetches the available timestamps from
++ * TimelineReplay and calls onTimestampChange whenever the slider moves.
++ *
++ * Props:
++ *   graph              — name of the graph to load timestamps for
++ *   onTimestampChange  — called with the selected timestamp string
++ */
++
++import { useEffect, useState } from 'react';
++import { TimelineReplay } from '@/services/TimelineReplay';
++
++interface TimelineScrubberProps {
++  graph: string;
++  onTimestampChange: (ts: string) => void;
++}
++
++export function TimelineScrubber({ graph, onTimestampChange }: TimelineScrubberProps) {
++  const [timestamps, setTimestamps] = useState<string[]>([]);
++  const [idx, setIdx] = useState(0);
++  const [error, setError] = useState<string | null>(null);
++
++  useEffect(() => {
++    setTimestamps([]);
++    setIdx(0);
++    setError(null);
++    new TimelineReplay()
++      .listSnapshots(graph)
++      .then((snaps) => {
++        setTimestamps(snaps);
++        if (snaps.length > 0) onTimestampChange(snaps[0]);
++      })
++      .catch((err: unknown) => {
++        const msg = err instanceof Error ? err.message : String(err);
++        setError(msg);
++      });
++    // eslint-disable-next-line react-hooks/exhaustive-deps
++  }, [graph]);
++
++  if (error) {
++    return (
++      <div className="p-2 text-xs text-red-400" title={error}>
++        Timeline unavailable
++      </div>
++    );
++  }
++
++  if (timestamps.length === 0) {
++    return <div className="p-2 text-xs text-slate-400">No timeline data</div>;
++  }
++
++  return (
++    <div className="flex items-center gap-3 p-2 bg-slate-800" data-testid="timeline-scrubber">
++      <span className="text-xs text-slate-400 shrink-0">
++        {timestamps[0]?.slice(0, 10) ?? ''}
++      </span>
++      <input
++        type="range"
++        min={0}
++        max={timestamps.length - 1}
++        value={idx}
++        onChange={(e) => {
++          const i = parseInt(e.target.value, 10);
++          setIdx(i);
++          onTimestampChange(timestamps[i]);
++        }}
++        className="flex-1 accent-indigo-400"
++        aria-label="Timeline scrubber"
++      />
++      <span className="text-xs font-mono text-slate-200 shrink-0 w-40 text-right">
++        {timestamps[idx]}
++      </span>
++    </div>
++  );
++}
+diff --git a/gitnexus-web/src/services/MultigraphLoader.ts b/gitnexus-web/src/services/MultigraphLoader.ts
+new file mode 100644
+index 0000000..a525714
+--- /dev/null
++++ b/gitnexus-web/src/services/MultigraphLoader.ts
+@@ -0,0 +1,59 @@
++/**
++ * MultigraphLoader — fetches gitnexus.config.json and exposes the N graph entries
++ * to the rest of the UI (sidebar, canvas, scrubber).
++ *
++ * Config schema produced by ELYSIUM sigma_gitnexus_config_generator.py.
++ * Spec source : docs/governance/sigils/SIGIL-GITNEXUS-MULTIGRAPH.md (commit 8b5574ba).
++ */
++
++export type PrivacyClass = 'SHARED' | 'PRIVATE-IDENTITY' | 'REGENERABLE';
++
++export interface GraphConfigEntry {
++  name: string;
++  path: string;
++  schema_type: string;
++  parent_schema?: string | null;
++  ttl_snapshot_hours: number;
++  privacy_class: PrivacyClass;
++}
++
++export interface MultigraphConfig {
++  version: string;
++  generated_by?: string;
++  workspace_root?: string;
++  graphs: GraphConfigEntry[];
++}
++
++export interface MultigraphLoaderOptions {
++  configFetcher?: () => Promise<MultigraphConfig>;
++  configPath?: string;
++}
++
++const DEFAULT_CONFIG_PATH = '/gitnexus.config.json';
++
++export class MultigraphLoader {
++  private readonly fetcher: () => Promise<MultigraphConfig>;
++
++  constructor(opts: MultigraphLoaderOptions = {}) {
++    if (opts.configFetcher) {
++      this.fetcher = opts.configFetcher;
++    } else {
++      const path = opts.configPath ?? DEFAULT_CONFIG_PATH;
++      this.fetcher = async () => {
++        const res = await fetch(path);
++        if (!res.ok) {
++          throw new Error(`Config fetch failed: ${res.status}`);
++        }
++        return res.json() as Promise<MultigraphConfig>;
++      };
++    }
++  }
++
++  async listGraphs(): Promise<GraphConfigEntry[]> {
++    const config = await this.fetcher();
++    if (!Array.isArray(config.graphs)) {
++      throw new Error('Invalid config: graphs[] missing or not an array');
++    }
++    return config.graphs;
++  }
++}
+diff --git a/gitnexus-web/src/services/TimelineReplay.ts b/gitnexus-web/src/services/TimelineReplay.ts
+new file mode 100644
+index 0000000..19ef067
+--- /dev/null
++++ b/gitnexus-web/src/services/TimelineReplay.ts
+@@ -0,0 +1,51 @@
++/**
++ * TimelineReplay — Task 10.5.
++ *
++ * Fetches the snapshot timestamp list for a given graph name from the
++ * ELYSIUM analytics API (or an injected apiFetcher for tests) and
++ * exposes it for use by TimelineScrubber.
++ *
++ * API contract (default):
++ *   GET /api/timeline/:graph
++ *   → { graph: string; timestamps: string[] }
++ *
++ * Timestamps are ISO-like strings, e.g. "2026-05-29T00-00-00".
++ */
++
++export interface TimelineSnapshotList {
++  graph: string;
++  timestamps: string[];
++}
++
++interface TimelineReplayOpts {
++  /** Override the HTTP fetcher — primarily for unit tests. */
++  apiFetcher?: (graph: string) => Promise<TimelineSnapshotList>;
++}
++
++export class TimelineReplay {
++  private readonly fetcher: (graph: string) => Promise<TimelineSnapshotList>;
++
++  constructor(opts: TimelineReplayOpts = {}) {
++    this.fetcher =
++      opts.apiFetcher ??
++      (async (graph: string) => {
++        const res = await fetch(`/api/timeline/${encodeURIComponent(graph)}`);
++        if (!res.ok) throw new Error(`Timeline API HTTP ${res.status} for graph "${graph}"`);
++        return res.json() as Promise<TimelineSnapshotList>;
++      });
++  }
++
++  /**
++   * Returns the ordered list of snapshot timestamps for the given graph.
++   * Throws if the API response is missing the `timestamps` array.
++   */
++  async listSnapshots(graph: string): Promise<string[]> {
++    const data = await this.fetcher(graph);
++    if (!Array.isArray(data.timestamps)) {
++      throw new Error(
++        `Invalid timeline API response for graph "${graph}": timestamps[] missing`,
++      );
++    }
++    return data.timestamps;
++  }
++}
+diff --git a/gitnexus-web/test/unit/canvas-multigraph.test.tsx b/gitnexus-web/test/unit/canvas-multigraph.test.tsx
+new file mode 100644
+index 0000000..c8b1abb
+--- /dev/null
++++ b/gitnexus-web/test/unit/canvas-multigraph.test.tsx
+@@ -0,0 +1,24 @@
++import { describe, it, expect } from 'vitest';
++import { render, screen } from '@testing-library/react';
++import { CanvasMultigraph } from '@/components/CanvasMultigraph';
++
++describe('CanvasMultigraph', () => {
++  it('shows placeholder when no graph selected', () => {
++    render(<CanvasMultigraph selectedGraph={null} zoomLevel="meta" />);
++    expect(screen.getByText(/select a graph/i)).toBeInTheDocument();
 +  });
 +
-+  it('query_meta_graph inputSchema enumerates valid layer values', () => {
-+    assert.ok(src.includes("'lineage'"), "layer enum must include 'lineage'");
-+    assert.ok(src.includes("'manifestation'"), "layer enum must include 'manifestation'");
-+    assert.ok(src.includes("'observation'"), "layer enum must include 'observation'");
-+    assert.ok(src.includes("'economy'"), "layer enum must include 'economy'");
-+    assert.ok(src.includes("'meta_cognition'"), "layer enum must include 'meta_cognition'");
-+    assert.ok(src.includes("'all'"), "layer enum must include 'all'");
++  it('renders graph name when selected', () => {
++    render(<CanvasMultigraph selectedGraph={{
++      name: 'ASTKG', path: '/x', schema_type: 'code-cognition', ttl_snapshot_hours: 1, privacy_class: 'SHARED'
++    }} zoomLevel="graph" />);
++    expect(screen.getByText(/ASTKG/)).toBeInTheDocument();
++  });
++
++  it('zoom level controls rendering mode', () => {
++    const { rerender } = render(<CanvasMultigraph selectedGraph={null} zoomLevel="meta" />);
++    expect(screen.getByTestId('canvas-mode')).toHaveTextContent('meta');
++    rerender(<CanvasMultigraph selectedGraph={null} zoomLevel="graph" />);
++    expect(screen.getByTestId('canvas-mode')).toHaveTextContent('graph');
++  });
++});
+diff --git a/gitnexus-web/test/unit/graph-sidebar.test.tsx b/gitnexus-web/test/unit/graph-sidebar.test.tsx
+new file mode 100644
+index 0000000..f5eec39
+--- /dev/null
++++ b/gitnexus-web/test/unit/graph-sidebar.test.tsx
+@@ -0,0 +1,25 @@
++import { describe, it, expect, vi } from 'vitest';
++import { render, screen, fireEvent } from '@testing-library/react';
++import { GraphSidebar } from '@/components/GraphSidebar';
++import type { GraphConfigEntry } from '@/services/MultigraphLoader';
++
++const graphs: GraphConfigEntry[] = [
++  { name: 'ASTKG', path: '/x', schema_type: 'code-cognition', ttl_snapshot_hours: 1, privacy_class: 'SHARED' },
++  { name: 'Forge', path: '/y', schema_type: 'concept-forge', ttl_snapshot_hours: 1, privacy_class: 'SHARED' },
++];
++
++describe('GraphSidebar', () => {
++  it('renders graphs grouped by schema_type', () => {
++    render(<GraphSidebar graphs={graphs} onSelect={() => {}} selected={null} />);
++    expect(screen.getByText('ASTKG')).toBeInTheDocument();
++    expect(screen.getByText('Forge')).toBeInTheDocument();
++    expect(screen.getByText('code-cognition')).toBeInTheDocument();
++  });
++
++  it('calls onSelect when graph clicked', () => {
++    const onSelect = vi.fn();
++    render(<GraphSidebar graphs={graphs} onSelect={onSelect} selected={null} />);
++    fireEvent.click(screen.getByText('ASTKG'));
++    expect(onSelect).toHaveBeenCalledWith('ASTKG');
++  });
++});
+diff --git a/gitnexus-web/test/unit/multigraph-loader.test.ts b/gitnexus-web/test/unit/multigraph-loader.test.ts
+new file mode 100644
+index 0000000..b707c09
+--- /dev/null
++++ b/gitnexus-web/test/unit/multigraph-loader.test.ts
+@@ -0,0 +1,43 @@
++import { describe, it, expect, vi } from 'vitest';
++import { MultigraphLoader, type MultigraphConfig } from '@/services/MultigraphLoader';
++
++describe('MultigraphLoader', () => {
++  it('loads config and returns graph entries', async () => {
++    const fakeConfig: MultigraphConfig = {
++      version: '1.0',
++      graphs: [
++        { name: 'ASTKG', path: '/data/projects/elysium/.agent/knowledge/brain/graph/elysium_graph',
++          schema_type: 'code-cognition', ttl_snapshot_hours: 1, privacy_class: 'SHARED' },
++        { name: 'Forge', path: '/data/projects/elysium/data/forge/forge_concept.kuzu',
++          schema_type: 'concept-forge', ttl_snapshot_hours: 1, privacy_class: 'SHARED' },
++      ],
++    };
++    const loader = new MultigraphLoader({
++      configFetcher: () => Promise.resolve(fakeConfig),
++    });
++    const graphs = await loader.listGraphs();
++    expect(graphs).toHaveLength(2);
++    expect(graphs[0].name).toBe('ASTKG');
++  });
++
++  it('throws when config missing graphs array', async () => {
++    const loader = new MultigraphLoader({
++      configFetcher: () => Promise.resolve({ version: '1.0' } as any),
++    });
++    await expect(loader.listGraphs()).rejects.toThrow(/graphs/);
++  });
++
++  it('uses default config path when no fetcher passed', async () => {
++    // Mock fetch globally
++    const mockResponse = {
++      ok: true,
++      status: 200,
++      json: async () => ({ version: '1.0', graphs: [] }),
++    };
++    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(mockResponse));
++    const loader = new MultigraphLoader();
++    const graphs = await loader.listGraphs();
++    expect(graphs).toEqual([]);
++    vi.unstubAllGlobals();
++  });
++});
+diff --git a/gitnexus-web/test/unit/timeline-replay.test.ts b/gitnexus-web/test/unit/timeline-replay.test.ts
+new file mode 100644
+index 0000000..abfc0f1
+--- /dev/null
++++ b/gitnexus-web/test/unit/timeline-replay.test.ts
+@@ -0,0 +1,61 @@
++/**
++ * Unit tests for TimelineReplay — Task 10.5.
++ * Run: npx vitest run test/unit/timeline-replay.test.ts
++ */
++
++import { describe, it, expect } from 'vitest';
++import { TimelineReplay } from '@/services/TimelineReplay';
++
++describe('TimelineReplay', () => {
++  it('builds snapshot list for a graph', async () => {
++    const replay = new TimelineReplay({
++      apiFetcher: () =>
++        Promise.resolve({
++          graph: 'ASTKG',
++          timestamps: ['2026-05-29T00-00-00', '2026-05-30T00-00-00'],
++        }),
++    });
++    const snaps = await replay.listSnapshots('ASTKG');
++    expect(snaps).toHaveLength(2);
++    expect(snaps[0]).toBe('2026-05-29T00-00-00');
++    expect(snaps[1]).toBe('2026-05-30T00-00-00');
++  });
++
++  it('throws on missing timestamps array', async () => {
++    const replay = new TimelineReplay({
++      apiFetcher: () => Promise.resolve({ graph: 'ASTKG' } as any),
++    });
++    await expect(replay.listSnapshots('ASTKG')).rejects.toThrow(
++      'timestamps[] missing',
++    );
++  });
++
++  it('throws when apiFetcher rejects (HTTP error simulation)', async () => {
++    const replay = new TimelineReplay({
++      apiFetcher: () => Promise.reject(new Error('Timeline API HTTP 404 for graph "Ghost"')),
++    });
++    await expect(replay.listSnapshots('Ghost')).rejects.toThrow('404');
++  });
++
++  it('returns empty array when timestamps is an empty list', async () => {
++    const replay = new TimelineReplay({
++      apiFetcher: () => Promise.resolve({ graph: 'Forge', timestamps: [] }),
++    });
++    const snaps = await replay.listSnapshots('Forge');
++    expect(snaps).toHaveLength(0);
++    expect(Array.isArray(snaps)).toBe(true);
++  });
++
++  it('preserves timestamp ordering as returned by API', async () => {
++    const ordered = [
++      '2026-01-01T00-00-00',
++      '2026-03-15T12-00-00',
++      '2026-05-30T23-59-59',
++    ];
++    const replay = new TimelineReplay({
++      apiFetcher: () => Promise.resolve({ graph: 'TechGenealogy', timestamps: ordered }),
++    });
++    const snaps = await replay.listSnapshots('TechGenealogy');
++    expect(snaps).toEqual(ordered);
 +  });
 +});
