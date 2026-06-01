@@ -51,6 +51,14 @@ const PREFIX_OVERRIDES = {
   handleGhostsCleanupRoute: '/ghosts',
   handleClustersRoute: '/clusters',
   handleSysmlExportRoute: '/sysml-export',
+  // Phase B+2 (2026-06-01) — gate-pattern handlers : prefix garanti pour
+  // débloquer patchHandler() qui détecte la gate-pattern via regex et split.
+  // Sans override, heuristique extractPrefixFromBody peut rater (cause inconnue
+  // sur nodes-alive-between malgré présence du `!==` regex).
+  handleAutoReindexRoute: '/auto-reindex',
+  handleRegressionRoute: '/regression',
+  handleNodesAliveBetweenRoute: '/nodes',
+  // handleGroupGraphRoute deja overrided ci-dessus (/graph)
 };
 
 function extractHandlerName(funcLine) {
@@ -143,6 +151,50 @@ function generateLogBlock(handlerName, prefix) {
 `;
 }
 
+// Σ-HANDLER-LOG-ON-REJECT Phase B+2 (2026-06-01) — gate-pattern detection.
+// Détecte les handlers à pattern :
+//   if (url.pathname !== '/X' || req.method !== 'METHOD') return false;
+// (au début de la fonction, sans return false; à la fin).
+// Transforme en :
+//   if (url.pathname !== '/X') return false;
+//   if (req.method !== 'METHOD') {
+//     console.warn(`[X-slug] method-mismatch: ${req.method} ${url.pathname} (expected METHOD)`);
+//     return false;
+//   }
+//
+// Aussi détecte la variante multi-ligne avec block braces :
+//   if (url.pathname !== '/X' || req.method !== 'METHOD') {
+//     return false;
+//   }
+function tryPatchGatePattern(handlerBody, handlerName) {
+  // Pattern 1 : single-line `if (url.pathname !== '/X' || req.method !== 'M') return false;`
+  // Pattern 2 : multi-line block
+  const singleLine = /if\s*\(\s*url\.pathname\s*!==\s*['"]([^'"]+)['"]\s*\|\|\s*req\.method\s*!==\s*['"](\w+)['"]\s*\)\s*return\s+false\s*;/;
+  const multiLine = /if\s*\(\s*url\.pathname\s*!==\s*['"]([^'"]+)['"]\s*\|\|\s*req\.method\s*!==\s*['"](\w+)['"]\s*\)\s*\{\s*\n?\s*return\s+false\s*;\s*\n?\s*\}/;
+
+  let match = handlerBody.match(singleLine);
+  let isMultiLine = false;
+  if (!match) {
+    match = handlerBody.match(multiLine);
+    isMultiLine = !!match;
+  }
+  if (!match) return null;
+
+  const path = match[1];
+  const method = match[2];
+  const slug = slugify(handlerName);
+  const original = match[0];
+  const replacement =
+    `if (url.pathname !== '${path}') return false;\n` +
+    `  // ${MARKER} niveau 2 gate-pattern (Phase B+2 2026-06-01)\n` +
+    `  if (req.method !== '${method}') {\n` +
+    `    console.warn(\`[${slug}] method-mismatch: \${req.method} \${url.pathname} (expected ${method})\`);\n` +
+    `    return false;\n` +
+    `  }`;
+
+  return { original, replacement, path, method, isMultiLine };
+}
+
 async function patchHandler(filePath, content, handlerName, prefix) {
   // Find the function declaration
   const sigPattern = new RegExp(`export\\s+(async\\s+)?function\\s+${handlerName}\\s*\\(`);
@@ -162,7 +214,17 @@ async function patchHandler(filePath, content, handlerName, prefix) {
   // Trouve le `return false;\n}` final (last occurrence within handler body)
   const lastReturnFalseRe = /(\s+)return\s+false\s*;\s*\n}/m;
   const trailingMatch = handlerBody.match(lastReturnFalseRe);
-  if (!trailingMatch) return { status: 'skip', reason: 'no return false at end (variant pattern)' };
+
+  if (!trailingMatch) {
+    // Pas de return false; final → fallback gate-pattern detection (Phase B+2)
+    const gate = tryPatchGatePattern(handlerBody, handlerName);
+    if (gate) {
+      const newHandlerBody = handlerBody.replace(gate.original, gate.replacement);
+      const newContent = content.slice(0, handlerStart) + newHandlerBody + content.slice(handlerEnd + 1);
+      return { status: 'patched', newContent, variant: 'gate-pattern', path: gate.path, method: gate.method };
+    }
+    return { status: 'skip', reason: 'no return false at end (variant pattern, no gate detected)' };
+  }
 
   // Insert log block BEFORE the leading whitespace of `return false;`
   const insertPoint = handlerStart + trailingMatch.index;
