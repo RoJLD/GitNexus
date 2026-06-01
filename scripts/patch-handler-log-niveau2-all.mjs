@@ -108,9 +108,33 @@ function slugify(handlerName) {
 function findHandlerEnd(content, handlerStart) {
   // À partir de la ligne `export async function handleXRoute(...) {`,
   // trouve le `\n}` qui ferme cette fonction (balance des accolades).
+  // FIX Phase B+2 2026-06-01 : skip d'abord la signature `(...)` pour éviter
+  // que le brace-counter ne démarre sur un default param `{}` (ex: opts = {}).
   let depth = 0;
   let i = handlerStart;
-  // Skip jusqu'à la première `{`
+  // Skip jusqu'à la `(` de la signature
+  while (i < content.length && content[i] !== '(') i++;
+  if (i >= content.length) return -1;
+  // Skip jusqu'à la `)` de fermeture de la signature (paren balance)
+  let parenDepth = 1;
+  i++;
+  while (i < content.length && parenDepth > 0) {
+    const c = content[i];
+    if (c === '(') parenDepth++;
+    else if (c === ')') parenDepth--;
+    // Skip strings (les params peuvent contenir des chaînes par default)
+    if (c === '"' || c === "'" || c === '`') {
+      const quote = c;
+      i++;
+      while (i < content.length && content[i] !== quote) {
+        if (content[i] === '\\') i++;
+        i++;
+      }
+    }
+    i++;
+  }
+  if (parenDepth !== 0) return -1;
+  // Maintenant skip jusqu'à la première `{` (body opening)
   while (i < content.length && content[i] !== '{') i++;
   if (i >= content.length) return -1;
   depth = 1;
