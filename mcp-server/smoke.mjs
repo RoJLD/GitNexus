@@ -87,7 +87,7 @@ try {
   const list = await send('tools/list');
   if (list.error) fail(`tools/list: ${list.error.message}`);
   const tools = list.result?.tools || [];
-  if (tools.length !== 21) fail(`tools/list: expected 21 tools, got ${tools.length}`);
+  if (tools.length !== 25) fail(`tools/list: expected 25 tools, got ${tools.length}`);
   for (const expected of [
     'gitnexus_list_repos', 'gitnexus_entropy', 'gitnexus_churn', 'gitnexus_coupling',
     'gitnexus_growth', 'gitnexus_lifespan', 'gitnexus_ownership', 'gitnexus_dissonance',
@@ -96,6 +96,8 @@ try {
     'gitnexus_repo_by_id', 'gitnexus_commit_footprint', 'gitnexus_snapshot_auto',
     'gitnexus_snapshot_from_pr', 'gitnexus_ghost_audit', 'gitnexus_clusters',
     'gitnexus_regression',
+    'query_meta_graph',
+    'gitnexus_list_graph_templates', 'gitnexus_create_graph_from_template', 'gitnexus_import_into_graph',
   ]) {
     if (!tools.find((t) => t.name === expected)) fail(`tools/list: missing ${expected}`);
   }

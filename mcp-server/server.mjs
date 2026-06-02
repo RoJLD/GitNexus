@@ -497,6 +497,72 @@ const TOOLS = [
       }
     },
   },
+  {
+    name: 'gitnexus_list_graph_templates',
+    description: 'List available graph templates (id, label, schema_type, description). Use before create_graph_from_template to discover what kinds of graphs can be scaffolded (e.g. research-artifacts).',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+    handler: () => callWeb('/graph/templates'),
+  },
+  {
+    name: 'gitnexus_create_graph_from_template',
+    description: 'Scaffold a new graph from a template. Records the graph (name + template + source dir relative to /data/projects) so it can then be imported. Does NOT populate it — call gitnexus_import_into_graph next. Returns the index record.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        templateId: { type: 'string', description: 'Template id from gitnexus_list_graph_templates (e.g. research-artifacts).' },
+        name: { type: 'string', description: 'Unique name for the new graph.' },
+        source: { type: 'string', description: 'Source directory relative to /data/projects (e.g. Experiment.Crypto.2026S1.RobinDenis).' },
+      },
+      required: ['templateId', 'name', 'source'],
+      additionalProperties: false,
+    },
+    handler: async ({ templateId, name, source }) => {
+      const url = `${WEB_URL}/graph/scaffold`;
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+      try {
+        const resp = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ templateId, name, source }),
+          signal: controller.signal,
+        });
+        const json = await resp.json().catch(() => ({}));
+        if (!resp.ok) throw new Error(json?.error || `HTTP ${resp.status}`);
+        return json;
+      } finally {
+        clearTimeout(timer);
+      }
+    },
+  },
+  {
+    name: 'gitnexus_import_into_graph',
+    description: 'Populate a scaffolded graph by running its template importer over the source tree (research-fs walks notebooks/markdown + frontmatter). Re-import replaces the contents. Returns the import report (node/edge counts, unresolved links).',
+    inputSchema: {
+      type: 'object',
+      properties: { name: { type: 'string', description: 'Name of a graph created via gitnexus_create_graph_from_template.' } },
+      required: ['name'],
+      additionalProperties: false,
+    },
+    handler: async ({ name }) => {
+      const url = `${WEB_URL}/graph/import`;
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+      try {
+        const resp = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name }),
+          signal: controller.signal,
+        });
+        const json = await resp.json().catch(() => ({}));
+        if (!resp.ok) throw new Error(json?.error || `HTTP ${resp.status}`);
+        return json;
+      } finally {
+        clearTimeout(timer);
+      }
+    },
+  },
 ];
 
 function formatGhostAuditSummary(audit) {
