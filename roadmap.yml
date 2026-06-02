@@ -1,0 +1,859 @@
+ghosts:
+  - id: 1-loading-bars-ux-path-picker-folder-browser-server-side
+    tier: null
+    title: Loading bars + UX path picker + folder browser server-side
+    description: ''
+    status: materialized
+    expectedBy: null
+    expectedLinks:
+      - kind: path
+        value: /listdir
+      - kind: label
+        value: DropZone.LoadingCard
+      - kind: label
+        value: RepoAnalyzer
+    dependsOn: []
+  - id: 10-growth-chart-counts-par-cat-gorie-sur-le-temps-svg-natif
+    tier: null
+    title: Growth chart (counts par catégorie sur le temps, SVG natif)
+    description: ''
+    status: materialized
+    expectedBy: null
+    expectedLinks:
+      - kind: path
+        value: /growth
+      - kind: path
+        value: GrowthChart.tsx
+    dependsOn: []
+  - id: 11-lifespan-analysis-foundational-recent-discontinued-ephemeral
+    tier: null
+    title: Lifespan analysis (foundational/recent/discontinued/ephemeral)
+    description: ''
+    status: materialized
+    expectedBy: null
+    expectedLinks:
+      - kind: path
+        value: /lifespan
+      - kind: path
+        value: LifespanPanel.tsx
+    dependsOn: []
+  - id: 12-entropy-structural-health-badge-dans-la-timeline-densit-tren
+    tier: null
+    title: Entropy / structural health badge dans la Timeline (densité + trend)
+    description: ''
+    status: materialized
+    expectedBy: null
+    expectedLinks:
+      - kind: path
+        value: /entropy
+      - kind: path
+        value: EntropyBadge.tsx
+    dependsOn: []
+  - id: 13-csv-export-sur-churn-coupling-growth-lifespan-entropy-owners
+    tier: null
+    title: CSV export sur churn/coupling/growth/lifespan/entropy/ownership
+    description: ''
+    status: materialized
+    expectedBy: null
+    expectedLinks:
+      - kind: path
+        value: '?format=csv'
+      - kind: path
+        value: docker-server-csv.mjs
+    dependsOn: []
+  - id: 14-ownership-bus-factor-per-file-commit-share-repo-level-summar
+    tier: null
+    title: Ownership / bus factor (per-file commit-share + repo-level summary)
+    description: ''
+    status: materialized
+    expectedBy: null
+    expectedLinks:
+      - kind: path
+        value: /ownership
+      - kind: path
+        value: OwnershipPanel.tsx
+    dependsOn: []
+  - id: 15-dissonance-declared-domains-vs-detected-communities-purity-s
+    tier: null
+    title: Dissonance (declared domains vs detected communities, purity score, misplaced files)
+    description: ''
+    status: materialized
+    expectedBy: null
+    expectedLinks:
+      - kind: path
+        value: /dissonance
+      - kind: path
+        value: DissonancePanel.tsx
+      - kind: path
+        value: patches/example-gitnexus-domains.json
+    dependsOn: []
+  - id: 16-semantic-labels-llm-generated-cluster-names-cached-on-disk-i
+    tier: null
+    title: Semantic labels (LLM-generated cluster names, cached on disk, integrated into Dissonance UI)
+    description: ''
+    status: materialized
+    expectedBy: null
+    expectedLinks:
+      - kind: path
+        value: /semantic-labels
+      - kind: path
+        value: semantic-labeler.ts
+    dependsOn: []
+  - id: 17-cross-repo-coupling-git-log-bucketing-multi-repo-jaccard-ui-
+    tier: null
+    title: Cross-repo coupling (git-log bucketing, multi-repo Jaccard) + UI toggle
+    description: ''
+    status: materialized
+    expectedBy: null
+    expectedLinks:
+      - kind: path
+        value: /coupling/cross
+      - kind: label
+        value: CouplingPanel
+    dependsOn: []
+  - id: 18-cross-repo-growth-union-timeline-per-repo-step-lines-label-s
+    tier: null
+    title: Cross-repo growth (union timeline, per-repo step lines, label switcher)
+    description: ''
+    status: materialized
+    expectedBy: null
+    expectedLinks:
+      - kind: path
+        value: /growth/cross
+      - kind: label
+        value: GrowthChart
+    dependsOn: []
+  - id: 19-what-if-simulator-rename-move-delete-symbolic-mutations-prev
+    tier: null
+    title: What-if simulator (rename / move / delete symbolic mutations, preview via diff coloring)
+    description: ''
+    status: materialized
+    expectedBy: null
+    expectedLinks:
+      - kind: path
+        value: services/mutation-engine.ts
+      - kind: path
+        value: WhatIfPanel.tsx
+    dependsOn: []
+  - id: 2-export-import-index-only-bundle-register-only-mode
+    tier: null
+    title: Export / Import (index-only + bundle) + register-only mode
+    description: ''
+    status: materialized
+    expectedBy: null
+    expectedLinks:
+      - kind: path
+        value: /export
+      - kind: path
+        value: '/import?registerOnly'
+      - kind: label
+        value: BulkSnapshotModal
+    dependsOn: []
+  - id: 20-vscode-extension-v0-1-status-bar-bus-factor-for-the-active-f
+    tier: null
+    title: VSCode extension v0.1 (status-bar bus factor for the active file)
+    description: ''
+    status: materialized
+    expectedBy: null
+    expectedLinks:
+      - kind: path
+        value: vscode-extension/
+    dependsOn: []
+  - id: 21-cross-repo-similarity-v1-structural-temporal-cube-5-dim-iden
+    tier: null
+    title: 'Cross-repo similarity v1 (structural × temporal cube, 5-dim identity vector, `.gitnexus-policy.json`, auto warnings) — semantic axis pending v1.1'
+    description: ''
+    status: materialized
+    expectedBy: null
+    expectedLinks:
+      - kind: path
+        value: /similarity
+      - kind: path
+        value: SimilarityPanel.tsx
+      - kind: path
+        value: patches/example-gitnexus-policy.json
+    dependsOn: []
+  - id: 22-cross-repo-similarity-v1-b-axe-s-mantique-lexical-cosine-bow
+    tier: null
+    title: 'Cross-repo similarity v1.b : axe sémantique lexical (cosine BoW sur labels LLM cachés) → cube 2×2×2 complet, partial-coverage handling'
+    description: ''
+    status: materialized
+    expectedBy: null
+    expectedLinks:
+      - kind: path
+        value: '/similarity?lexicalSemantic=…'
+      - kind: label
+        value: SimilarityPanel
+    dependsOn: []
+  - id: 23-cross-repo-similarity-v1-b-bis-vrais-embeddings-drop-in-upgr
+    tier: null
+    title: 'Cross-repo similarity v1.b.bis : vrais embeddings (drop-in upgrade du lexical) — `createEmbeddingsModel` mirror `createChatModel`, button ✨ "Embed labels" dans SimilarityPanel, centroid cosine quand ≥80% des labels d''un repo sont embeddés'
+    description: ''
+    status: materialized
+    expectedBy: null
+    expectedLinks:
+      - kind: path
+        value: core/llm/agent.ts
+      - kind: label
+        value: createEmbeddingsModel
+      - kind: path
+        value: services/semantic-labeler.ts
+      - kind: label
+        value: embedSemanticLabels
+      - kind: path
+        value: docker-server-semantic-labels.mjs
+      - kind: path
+        value: /similarity
+    dependsOn: []
+  - id: 24-cross-repo-similarity-v1-c-identity-vector-v2-10-dims-v1-gro
+    tier: null
+    title: 'Cross-repo similarity v1.c : Identity Vector v2 (10 dims = v1 + `growthRate`, `churnConcentration`, `fileSizePareto`, `languageDiversity`, `treeDepth`), opt-out via `?identityVersion=1`'
+    description: ''
+    status: materialized
+    expectedBy: null
+    expectedLinks:
+      - kind: path
+        value: '/similarity?identityVersion=…'
+    dependsOn: []
+  - id: 25-galaxy-view-tier-2-6-projection-2d-pca-des-identity-vectors-
+    tier: null
+    title: 'Galaxy view (Tier 2.6) : projection 2D PCA des identity vectors (SVG scatter avec edges pour les paires fortes, click-to-select-nearest-pair). Power-iteration pure JS, zéro dep'
+    description: ''
+    status: materialized
+    expectedBy: null
+    expectedLinks:
+      - kind: path
+        value: /similarity
+      - kind: label
+        value: 'galaxyXY[]'
+      - kind: label
+        value: galaxyProjection
+      - kind: label
+        value: SimilarityPanel
+      - kind: label
+        value: '<GalaxyView>'
+    dependsOn: []
+  - id: 26-galaxy-umap-tier-2-6-bis-toggle-pca-umap-dans-le-panel-calcu
+    tier: null
+    title: 'Galaxy UMAP (Tier 2.6.bis) : toggle PCA/UMAP dans le panel, calcul client-side (dynamic import de `umap-js` → out-of-bundle pour les users qui n''ouvrent jamais la galaxy), seed mulberry32 keyé sur le repo-set pour stabilité, nNeighbors adaptatif'
+    description: ''
+    status: materialized
+    expectedBy: null
+    expectedLinks:
+      - kind: label
+        value: 'umap-js@^1.4.0'
+      - kind: label
+        value: 'setMethod(''pca'' \| ''umap'')'
+    dependsOn: []
+  - id: 27-mcp-analytics-sidecar-tier-2bis-1-serveur-stdio-json-rpc-2-0
+    tier: null
+    title: 'MCP analytics sidecar (Tier 2bis.1) : serveur stdio JSON-RPC 2.0 pure Node zéro-dep, 13 tools wrappant les endpoints REST (`list_repos`, `entropy`, `churn`, `coupling`, `growth`, `lifespan`, `ownership`, `dissonance`, `semantic_labels`, `coupling_cross`, `growth_cross`, `similarity`, `repo_by_id`). Sibling de `npx gitnexus mcp` upstream. Smoke 6/6 ✓ contre la stack live'
+    description: ''
+    status: materialized
+    expectedBy: null
+    expectedLinks:
+      - kind: path
+        value: mcp-server/server.mjs
+      - kind: path
+        value: mcp-server/README.md
+      - kind: path
+        value: mcp-server/smoke.mjs
+    dependsOn: []
+  - id: 28-unified-gitnexus-json-config-tier-2bis-4-un-seul-fichier-par
+    tier: null
+    title: 'Unified `.gitnexus.json` config (Tier 2bis.4) : un seul fichier par repo avec sections `domains` / `policy` / `budgets` (réservé 3.6) / `watches` (réservé 2bis.3). Backward-compat sur `.gitnexus-domains.json` + `.gitnexus-policy.json` avec deprecation warning stderr. JSON (pas YAML) par cohérence avec le reste du codebase'
+    description: ''
+    status: materialized
+    expectedBy: null
+    expectedLinks:
+      - kind: path
+        value: upstream/docker-server-config.mjs
+      - kind: path
+        value: patches/example-gitnexus.json
+    dependsOn: []
+  - id: 29-stable-repoid-tier-2bis-5-identifiant-16-hex-chars-sha256-fi
+    tier: null
+    title: 'Stable repoId (Tier 2bis.5) : identifiant 16 hex chars = `sha256(firstCommitSha + normalizedRemote)[:16]`. Cache `<repoPath>/.gitnexus/repo-id.json`. Surface dans `/similarity` (`response.repos[].repoId` + `normalizedRemote`) et résoluble via `GET /repos/by-id/:repoId`. Survit aux re-clones et débloque la détection FN-2 de 2.5 (legacy + rewrite)'
+    description: ''
+    status: materialized
+    expectedBy: null
+    expectedLinks:
+      - kind: path
+        value: upstream/docker-server-repo-id.mjs
+      - kind: path
+        value: '/repos/by-id/:repoId'
+      - kind: label
+        value: gitnexus_repo_by_id
+    dependsOn: []
+  - id: 3-diff-visuel-entre-2-repos-rouge-vert-gris-sur-le-graphe
+    tier: null
+    title: Diff visuel entre 2 repos (rouge/vert/gris sur le graphe)
+    description: ''
+    status: materialized
+    expectedBy: null
+    expectedLinks:
+      - kind: path
+        value: /api/graph
+      - kind: path
+        value: graph-diff.ts
+      - kind: label
+        value: useSigma
+    dependsOn: []
+  - id: 30-commit-level-entropy-delta-tier-2bis-2-get-entropy-commits-r
+    tier: null
+    title: 'Commit-level entropy delta (Tier 2bis.2) : `GET /entropy/commits?repo=<base>&days=N` (ou `from/to` = SHA ou ISO date) attribue à chaque commit sa part du delta entropy observé entre snapshots bracketants (proportionnel à filesTouched). MVP par interpolation, pas de Leiden in-memory — assume des snapshots suffisamment denses. Stragglers (commits hors fenêtre snapshot) retournés avec `attributedDensityDelta: null`'
+    description: ''
+    status: materialized
+    expectedBy: null
+    expectedLinks:
+      - kind: path
+        value: /entropy/commits
+      - kind: label
+        value: gitnexus_entropy_commits
+    dependsOn: []
+  - id: 31-watches-webhooks-tier-2bis-3-mvp-cron-interne-toutes-les-wat
+    tier: null
+    title: 'Watches + webhooks (Tier 2bis.3 MVP) : cron interne toutes les `WATCH_INTERVAL_MS` (5 min default), debounce `WATCH_DEBOUNCE_MS` (1h default), POST webhook Slack-compatible quand seuil franchi. Watches déclarées dans `.gitnexus.json > watches` (déjà parsées par 2bis.4). 5 métriques supportées : entropy.{density,modularity}, ownership.{busFactor,topAuthorShare}, dissonance.purity. `GET /watches` liste les watches + leur dernier état'
+    description: ''
+    status: materialized
+    expectedBy: null
+    expectedLinks:
+      - kind: path
+        value: /watches
+      - kind: label
+        value: gitnexus_watches
+    dependsOn: []
+  - id: 32-commit-sparkline-frontend-tier-2bis-2-ui-entropycommittimeli
+    tier: null
+    title: 'Commit Δ sparkline frontend (Tier 2bis.2 UI) : `EntropyCommitTimeline.tsx` au-dessus de la Timeline. Toggle Commit Δ dans la Timeline. SVG sparkline avec bars verticaux (rouge = dégradation / vert = amélioration / gris = straggler), boundaries snapshot marquées en dashed amber, drill-down par commit (sha + author + date + filesTouched + window deltas + copy-SHA + git-show snippet). Switch metric density/modularity. Window input'
+    description: ''
+    status: materialized
+    expectedBy: null
+    expectedLinks:
+      - kind: path
+        value: components/EntropyCommitTimeline.tsx
+    dependsOn: []
+  - id: 33-snapshot-preload-play-smoothness-bouton-preload-dans-la-time
+    tier: null
+    title: 'Snapshot preload (Play smoothness) : bouton Preload dans la Timeline, fetch parallel pool=3 de tous les snapshots du base repo en mémoire, switchRepo sert depuis le cache → frame swap instantané (pas de LoadingOverlay entre frames du Play loop). Badge "N/M" cached + bouton clear + cancel-able. Invalidation auto au switch de base repo'
+    description: ''
+    status: materialized
+    expectedBy: null
+    expectedLinks:
+      - kind: label
+        value: useAppState
+      - kind: label
+        value: Timeline
+    dependsOn: []
+  - id: 34-commit-overlay-tier-2bis-2-follow-up-get-commit-footprint-re
+    tier: null
+    title: 'Commit overlay (Tier 2bis.2 follow-up) : `GET /commit/footprint?repo=&sha=` retourne files touched + status (A/M/D) via `git show --name-status`. Bouton "Show on graph" dans le drill-down de EntropyCommitTimeline → résout files → node IDs (par `filePath` match dans le graph chargé) → `setHighlightedNodeIds`. Banner partial-match si fichiers non-résolus (deletions, renames, configs non-tracked). MCP tool `gitnexus_commit_footprint`. Honest framing : ce n''est PAS le graph reconstruit au commit, c''est le footprint highlighté sur le snapshot le plus proche. Pour le vrai per-commit graph → snapshot incremental (chantier suivant)'
+    description: ''
+    status: materialized
+    expectedBy: null
+    expectedLinks:
+      - kind: path
+        value: /commit/footprint
+      - kind: label
+        value: EntropyCommitTimeline
+    dependsOn: []
+  - id: 35-auto-snapshot-aux-pics-phase-a-post-snapshot-auto-repo-qui-1
+    tier: null
+    title: 'Auto-snapshot aux pics — Phase A : `POST /snapshot/auto?repo=` qui (1) attribue les deltas entropy par commit (réutilise l''algo de /entropy/commits), (2) garde top-P% par \'
+    description: ''
+    status: materialized
+    expectedBy: null
+    expectedLinks:
+      - kind: label
+        value: 'dryRun: true'
+      - kind: label
+        value: '.gitnexus.json > auto_snapshot'
+      - kind: label
+        value: gitnexus_snapshot_auto
+      - kind: path
+        value: /snapshot/auto
+      - kind: path
+        value: upstream/docker-server-snapshot-auto.mjs
+    dependsOn: []
+  - id: 36-pr-mode-snapshot-on-demand-phase-b-post-snapshot-from-pr-rep
+    tier: null
+    title: 'PR-mode snapshot on-demand — Phase B : `POST /snapshot/from-pr?repo=&base=&head=` qui résout 2 refs (branches/tags/SHAs/HEAD~N), snapshotte les 2 si pas déjà, retourne `{ base, head, diffUrl }`. Pas de GitHub API — refs génériques, agnostique de la forge. `dryRun: true` valide les refs sans payer le coût. Degenerate case (base==head) géré avec `warning`. MCP tool `gitnexus_snapshot_from_pr` (18 tools)'
+    description: ''
+    status: materialized
+    expectedBy: null
+    expectedLinks:
+      - kind: path
+        value: /snapshot/from-pr
+      - kind: path
+        value: upstream/docker-server-snapshot-from-pr.mjs
+    dependsOn: []
+  - id: 37-roadmap-predictive-core-tier-3-x-foundation-parser-roadmap-m
+    tier: null
+    title: 'Roadmap-predictive CORE (Tier 3.x foundation) : parser `ROADMAP.md` → `ghosts.json` sidecars (table rows "Déjà livré" + Tier sections détectés, status `materialized` ✅ / `cancelled` 🗑️ / `planned` / `expired`). 3 endpoints (`POST /ghosts/sync`, `GET /ghosts`, `GET /ghosts/at`), auto-sync à chaque snapshot (4 entry points). Plugin-aware registry `registerGhostSource()` (builtin `roadmap-md` toujours présent, externes mergent par id avec builtin-wins). YAML serializer déterministe. `expectedBy` warning-on-missing (durcissement Update review externe). CLI wrapper `scripts/sync-ghosts.mjs`'
+    description: ''
+    status: materialized
+    expectedBy: null
+    expectedLinks:
+      - kind: path
+        value: /ghosts
+      - kind: path
+        value: /ghosts/sync
+      - kind: path
+        value: /ghosts/at
+      - kind: path
+        value: upstream/docker-server-ghosts-core.mjs
+      - kind: path
+        value: upstream/docker-server-ghosts.mjs
+      - kind: path
+        value: scripts/sync-ghosts.mjs
+    dependsOn: []
+  - id: 38-roadmap-predictive-audit-view-6-m-triques-agr-g-es-summary-l
+    tier: null
+    title: 'Roadmap predictive — Audit view : 6 métriques agrégées (summary, lead time, slippage vs expectedBy, plan churn cross-snapshot, velocity 28j, expired). `GET /ghost-audit?repo=` + cache disque mtime-invalidé + MCP tool `gitnexus_ghost_audit` (19ème) + `AuditPanel.tsx` avec 6 sous-composants (summary cards, histogram, slippage bar, sparkline, churn list, ghost table). Update 2 placementAccuracy deferred — nécessite Leiden communities backend non disponibles aujourd''hui.'
+    description: ''
+    status: materialized
+    expectedBy: null
+    expectedLinks:
+      - kind: path
+        value: /ghost-audit
+      - kind: path
+        value: upstream/docker-server-ghost-audit-core.mjs
+      - kind: path
+        value: upstream/docker-server-ghost-audit.mjs
+      - kind: path
+        value: upstream/gitnexus-web/src/components/AuditPanel.tsx
+      - kind: path
+        value: 'audit/*'
+    dependsOn: []
+  - id: 39-roadmap-predictive-augmented-graph-toggle-show-ghosts-dans-f
+    tier: null
+    title: 'Roadmap predictive — Augmented graph : toggle "Show ghosts" dans Filters (FileTreePanel), ghosts planifiés/expired affichés sur le graph Sigma (anchored à leurs `expectedLinks` matchés, satellite cluster top-right pour les unmatched). Encodage par Tier + opacité time-decaying (4 alertLevels : fresh ≥0.5 / mature 0.4 / late 0.3 orange / critical 0.2 rouge). Popup au click avec matched/unmatched + button "Open in ROADMAP.md". Pure frontend, zéro backend modifié. Sigma 3 NodeCircleProgram + canvas dashed outline (pragmatic v1, no new sigma dep).'
+    description: ''
+    status: materialized
+    expectedBy: null
+    expectedLinks:
+      - kind: path
+        value: upstream/gitnexus-web/src/lib/ghost-layout.ts
+      - kind: path
+        value: upstream/gitnexus-web/src/services/ghosts-client.ts
+      - kind: path
+        value: upstream/gitnexus-web/src/lib/ghost-node-program.ts
+      - kind: path
+        value: 'upstream/gitnexus-web/src/components/{GhostTooltip,GhostFiltersSection,GraphCanvas,FileTreePanel}.tsx'
+      - kind: path
+        value: 'upstream/gitnexus-web/src/hooks/{useSigma,useAppState}.tsx'
+    dependsOn: []
+  - id: 4-stale-lbug-connection-fix-c-t-serveur-patch-upstream-via-scr
+    tier: null
+    title: 'Stale-lbug-connection fix côté serveur (patch upstream via [`scripts/patch-lbug-staleness.mjs`](scripts/patch-lbug-staleness.mjs))'
+    description: ''
+    status: materialized
+    expectedBy: null
+    expectedLinks:
+      - kind: label
+        value: Dockerfile.cli
+    dependsOn: []
+  - id: 40-roadmap-predictive-cleanup-multi-tool-connectors-a-post-ghos
+    tier: null
+    title: 'Roadmap predictive — Cleanup + Multi-tool connectors : (a) `POST /ghosts/cleanup-prompt?repo=` retourne les ghosts expirés (computeExpired) + un prompt LLM pré-construit par ghost (title, description, expectedBy, expectedLinks, matched nodes, recent commits). (b) Connector framework `connectors/` avec Plane primary (full Plane REST API impl), Linear/GitHub/Jira stubs (fail gracefully). `GET /ghosts/connector-suggestions?repo=` lit `.gitnexus.json > connectors.*`, fetch open + closed tickets, fuzzy-matche par Jaccard sur titre+description, retourne suggestions reaffirm/cancel. `CleanupModal.tsx` ouvert via 6ème card "Expired" de AuditSummary. LLM call : v1 le frontend copie le prompt (auto-call follow-up).'
+    description: ''
+    status: materialized
+    expectedBy: null
+    expectedLinks:
+      - kind: path
+        value: /ghosts/cleanup-prompt
+      - kind: path
+        value: /ghosts/connector-suggestions
+      - kind: path
+        value: upstream/docker-server-ghost-cleanup-core.mjs
+      - kind: path
+        value: upstream/docker-server-ghost-cleanup.mjs
+      - kind: path
+        value: upstream/docker-server-connectors-core.mjs
+      - kind: path
+        value: upstream/docker-server-connectors.mjs
+      - kind: path
+        value: 'upstream/connectors/{plane,linear,github,jira}.mjs'
+      - kind: path
+        value: upstream/gitnexus-web/src/components/audit/CleanupModal.tsx
+    dependsOn: []
+  - id: 41-incremental-snapshots-phase-c-poc-post-snapshot-incremental-
+    tier: null
+    title: 'Incremental snapshots — Phase C PoC : `POST /snapshot/incremental?repo=&commit=` génère un diff per-commit en re-utilisant le machinery incremental natif de gitnexus (patch `patch-incremental-dump.mjs` dumpe le subgraph avant write-back LBugDB). 6 filtres paramétrables (dropGlobalNodes / dropEmptyFields / filterRelationships / includeLabels / includeRelationshipTypes / maxNodes / compress) + flag `reuseDump` (re-filtre sans re-analyze, 1ms). Benché 10 commits × 6 combos : default Standard = 40 KB/commit gzippé (39 MB/1000 commits), gzip = levier dominant (17×).'
+    description: ''
+    status: materialized
+    expectedBy: null
+    expectedLinks:
+      - kind: path
+        value: /snapshot/incremental
+      - kind: path
+        value: upstream/docker-server-snapshot-incremental.mjs
+      - kind: path
+        value: scripts/patch-incremental-dump.mjs
+      - kind: path
+        value: scripts/poc-incremental-bench.mjs
+      - kind: label
+        value: Dockerfile.cli
+    dependsOn: []
+  - id: 42-roadmap-predictive-gantt-op-rationnel-vue-calendaire-des-gho
+    tier: null
+    title: 'Roadmap predictive — Gantt opérationnel : vue calendaire des ghosts (1 row par ghost, axe X = temps, 4 styles de bar : solid matérialisé / dashed planifié futur / dot planifié sans deadline / grey annulé). Couleur par Tier + time-decaying color sur les dashed (Update 1 : `late` → orange #e67e22, `critical` → rouge #c0392b). Toggle swimlanes (flat vs groupé par Tier major). Filtres via prop `ghostFilters` (réutilise `passesFilter` + `DEFAULT_GHOST_FILTERS` d''Augmented). Sort plannedAsc/tierAsc/status. Export CSV client-side. Pure frontend, zéro backend.'
+    description: ''
+    status: materialized
+    expectedBy: null
+    expectedLinks:
+      - kind: path
+        value: upstream/gitnexus-web/src/lib/gantt-layout.ts
+      - kind: path
+        value: 'upstream/gitnexus-web/src/components/{GanttPanel,gantt/GanttAxis,gantt/GanttBar,gantt/GanttRow}.tsx'
+    dependsOn: []
+  - id: 43-roadmap-predictive-brainstorm-hook-script-scripts-ghost-from
+    tier: null
+    title: 'Roadmap predictive — Brainstorm-hook : script `scripts/ghost-from-spec.mjs` qui parse un spec markdown (extrait id depuis filename, title H1, description, tier regex, expectedLinks heuristique paths) puis upsert un row dans la section managée `## 🧪 From spec brainstorms` de ROADMAP.md (markers `<!-- specs:start --> ... <!-- specs:end -->`). Idempotent. CORE parser étendu pour reconnaître cette section comme source de ghosts `planned`. Wizard `scripts/install-brainstorm-hooks.mjs` configure 3 triggers convergents (Claude PostToolUse / git post-commit / GitHub Actions). npm scripts `ghost:from-spec` + `setup:hooks`.'
+    description: ''
+    status: materialized
+    expectedBy: null
+    expectedLinks:
+      - kind: path
+        value: scripts/ghost-from-spec.mjs
+      - kind: path
+        value: scripts/ghost-from-spec-parser.mjs
+      - kind: path
+        value: scripts/ghost-from-spec-roadmap.mjs
+      - kind: path
+        value: scripts/install-brainstorm-hooks.mjs
+      - kind: path
+        value: upstream/docker-server-ghosts-core.mjs
+    dependsOn: []
+  - id: 44-roadmap-predictive-sysml-export-bonus-get-sysml-export-repo-
+    tier: null
+    title: 'Roadmap predictive — SysML export (bonus) : `GET /sysml-export?repo=&format=plantuml'
+    description: ''
+    status: materialized
+    expectedBy: null
+    expectedLinks:
+      - kind: path
+        value: ' retourne le graph augmenté en PlantUML SysML 1.7 ou Mermaid (fallback). Mapping : File → block, Ghost planned/expired → requirement, ghost.links → <<satisfy>>, dependsOn → <<deriveReqt>>, Tier sections → packages. v1 ne consomme PAS le graph gitnexus complet (juste les fichiers que les ghosts satisfont) pour éviter l''explosion combinatoire. Importable dans Capella / Cameo / VSCode PlantUML extension. | '
+      - kind: label
+        value: , 
+      - kind: label
+        value: , 
+    dependsOn: []
+  - id: 45-incremental-snapshots-phase-c-reconstruction-get-graph-at-co
+    tier: null
+    title: 'Incremental snapshots — Phase C reconstruction : `GET /graph/at-commit?repo=&commit=[&lazy=true]` reconstruit le graph à n''importe quel commit = baseline snapshot ancêtre le plus proche + replay des diffs per-commit (delete writeSet files → insert subgraph → prune dangling rels). 409 + liste si diffs manquants, `?lazy=true` les génère à la volée. Fidelity validée : 4387/4387 nodes structurels exacts (label par label) vs full snapshot, même avec chaîne à filtres mixtes ; seuls les globaux Community/Process restent baseline-stale (design, cf §2.2). Reconstruction 4-commit en 1.8s. Identity case (chain=0) = baseline exact.'
+    description: ''
+    status: materialized
+    expectedBy: null
+    expectedLinks:
+      - kind: path
+        value: /graph/at-commit
+      - kind: label
+        value: handleGraphAtCommitRoute
+      - kind: label
+        value: applyDiff
+      - kind: label
+        value: findNearestBaseline
+      - kind: path
+        value: upstream/docker-server-snapshot-incremental.mjs
+    dependsOn: []
+  - id: 46-incremental-snapshots-phase-c-frontend-rebuild-commit-bouton
+    tier: null
+    title: 'Incremental snapshots — Phase C frontend (Rebuild @ commit) : bouton Rebuild @ commit dans le drill-down de `EntropyCommitTimeline` (à côté de "Show on graph"). Fetch `/graph/at-commit`, swap le `KnowledgeGraph` complet sur le canvas (vs footprint = highlight overlay), préserve le graph live pour le restore. Banner violet "Reconstructed graph @ <sha>" avec counts + baseline distance + warning "mixed filters", bouton Back to live. 409 → strip ambre "N diff(s) missing" + bouton Generate & retry (relance avec `?lazy=true`).'
+    description: ''
+    status: materialized
+    expectedBy: null
+    expectedLinks:
+      - kind: label
+        value: useAppState
+      - kind: label
+        value: loadGraphAtCommit
+      - kind: label
+        value: exitGraphAtCommit
+      - kind: label
+        value: 'atCommit*'
+      - kind: path
+        value: components/EntropyCommitTimeline.tsx
+    dependsOn: []
+  - id: 47-timeline-zoom-2-cursors-a-b-phase-1-sur-2-drag-cursors-blue-
+    tier: null
+    title: 'Timeline zoom + 2 cursors A/B (Phase 1 sur 2) : drag cursors blue/orange directement sur la Timeline (auto-swap A≤B), bouton "Zoom to window" qui stretche [A,B] sur la largeur complète + mini-map collapsible (visible quand zoomed, état persisté localStorage), indicateur de durée adaptatif "[A]→[B] · Δ X (hours/days/years) · N snapshots", bouton "Compare A↔B" qui toggle graphMode (état mutuellement exclusif avec cross-repo diffMode), raccourcis clavier Z (zoom) + Shift+D (compare). `diffBetweenSnapshots` alias dans graph-diff.ts. Task 11 (wiring du diff visuel intra-repo en App.tsx + useSigma) reste DEFERRED — graphMode=''diff'' set l''état mais le canvas ne reflète pas encore (follow-up). Phase 2 — filtre temporel du graphe à la fenêtre — parquée out-of-scope.'
+    description: ''
+    status: materialized
+    expectedBy: null
+    expectedLinks:
+      - kind: path
+        value: Timeline.tsx
+      - kind: path
+        value: lib/timeline-zoom.ts
+      - kind: path
+        value: 'lib/graph-diff.ts::diffBetweenSnapshots'
+      - kind: path
+        value: useAppState.tsx
+    dependsOn: []
+  - id: 48-roadmap-predictive-ghost-cluster-granularit-interm-diaire-co
+    tier: null
+    title: 'Roadmap predictive — Ghost Cluster (granularité intermédiaire) : convention markdown `## 🔗 Clusters` dans ROADMAP.md + auto-derivation Union-Find sur dependsOn[] connected components (≥ 2 ghosts). 4 surfaces UI : Augmented halo SVG overlay (convex hull) + Gantt swimlanes 3-state mode + Audit ClustersCard 7ème + Filters 3 toggles hiérarchiques. Sidecar `.gitnexus/clusters.json` + roadmap.yml clusters: section reflection. `GET /clusters?repo=&source=declared'
+    description: ''
+    status: materialized
+    expectedBy: null
+    expectedLinks:
+      - kind: label
+        value:  + MCP tool 
+      - kind: path
+        value: ' (20ème). Status synthétisé (shipped/planned/cancelled/expired) avec declaredStatus override. | '
+      - kind: label
+        value: , 
+      - kind: label
+        value:  (parseClusters, deriveAutoClusters, computeClusterStatus), 
+      - kind: label
+        value: , 
+      - kind: label
+        value: , 
+      - kind: label
+        value: , 
+      - kind: label
+        value: , 
+    dependsOn: []
+  - id: 49-roadmap-predictive-augmented-timeline-timeline-existante-dev
+    tier: null
+    title: 'Roadmap predictive — Augmented Timeline : Timeline existante devient ghost-time-aware. Cursor < HEAD → ghosts au snapshot le plus proche (closest-prior). 3 activation triggers : (1) auto-detect (default, cursor < HEAD - 60s ⇒ time-aware), (2) Lock toggle Filters "Lock ghosts to today''s view", (3) Animate roadmap button Timeline (auto-cursor earliest + auto-play + ghost overlay). Cross-fade 200ms via `useSigma.opacityOverride` + rAF loop quand un ghost matérialise pendant Play. Pure frontend, snapshot ghosts cache parallel pool (50 max, TTL 30s). 0 endpoint serveur (réutilise `/ghosts/at` du CORE).'
+    description: ''
+    status: materialized
+    expectedBy: null
+    expectedLinks:
+      - kind: path
+        value: upstream/gitnexus-web/src/lib/augmented-timeline.ts
+      - kind: path
+        value: upstream/gitnexus-web/src/services/snapshot-ghosts-cache.ts
+      - kind: path
+        value: 'upstream/gitnexus-web/src/components/{Timeline,GraphCanvas,GhostFiltersSection,FileTreePanel}.tsx'
+      - kind: path
+        value: 'upstream/gitnexus-web/src/hooks/{useSigma,useAppState}.tsx'
+    dependsOn: []
+  - id: 5-snapshots-manuels-d-un-repo-un-commit-donn
+    tier: null
+    title: 'Snapshots manuels d''un repo à un commit donné'
+    description: ''
+    status: materialized
+    expectedBy: null
+    expectedLinks:
+      - kind: path
+        value: /snapshot
+      - kind: path
+        value: /snapshots
+    dependsOn: []
+  - id: 6-snapshots-bulk-n-commits-sur-y-jours-sse-progress
+    tier: null
+    title: Snapshots bulk (N commits sur Y jours, SSE progress)
+    description: ''
+    status: materialized
+    expectedBy: null
+    expectedLinks:
+      - kind: path
+        value: /snapshot/bulk
+      - kind: label
+        value: BulkSnapshotModal
+    dependsOn: []
+  - id: 7-timeline-ui-slider-play-pause-auto-animation
+    tier: null
+    title: Timeline UI (slider + play/pause auto-animation)
+    description: ''
+    status: materialized
+    expectedBy: null
+    expectedLinks:
+      - kind: path
+        value: Timeline.tsx
+    dependsOn: []
+  - id: 8-churn-heatmap-volatilit-des-nodes-sur-le-timeline
+    tier: null
+    title: Churn heatmap (volatilité des nodes sur le timeline)
+    description: ''
+    status: materialized
+    expectedBy: null
+    expectedLinks:
+      - kind: path
+        value: /churn
+      - kind: label
+        value: useSigma.churnColor
+    dependsOn: []
+  - id: 9-coupling-temporel-paires-de-fichiers-qui-changent-ensemble
+    tier: null
+    title: Coupling temporel (paires de fichiers qui changent ensemble)
+    description: ''
+    status: materialized
+    expectedBy: null
+    expectedLinks:
+      - kind: path
+        value: /coupling
+      - kind: path
+        value: CouplingPanel.tsx
+    dependsOn: []
+  - id: tier-1-1-bus-factor-knowledge-silos
+    tier: 1.1
+    title: Bus factor + knowledge silos
+    description: ''
+    status: materialized
+    expectedBy: null
+    expectedLinks: []
+    dependsOn: []
+  - id: tier-1-2-cross-repo-coupling
+    tier: 1.2
+    title: Cross-repo coupling
+    description: ''
+    status: materialized
+    expectedBy: null
+    expectedLinks: []
+    dependsOn: []
+  - id: tier-1-3-migration-des-centres-de-gravit
+    tier: 1.3
+    title: Migration des centres de gravité
+    description: ''
+    status: materialized
+    expectedBy: null
+    expectedLinks: []
+    dependsOn: []
+  - id: tier-1-4-entropie-structurelle
+    tier: 1.4
+    title: Entropie structurelle
+    description: ''
+    status: materialized
+    expectedBy: null
+    expectedLinks: []
+    dependsOn: []
+  - id: tier-1-5-export-csv-json-pour-analyse-externe
+    tier: 1.5
+    title: Export CSV/JSON pour analyse externe
+    description: ''
+    status: materialized
+    expectedBy: null
+    expectedLinks: []
+    dependsOn: []
+  - id: tier-2-1-annotation-s-mantique-des-clusters
+    tier: 2.1
+    title: Annotation sémantique des clusters
+    description: ''
+    status: materialized
+    expectedBy: null
+    expectedLinks: []
+    dependsOn: []
+  - id: tier-2-2-dissonance-score
+    tier: 2.2
+    title: Dissonance score
+    description: ''
+    status: materialized
+    expectedBy: null
+    expectedLinks: []
+    dependsOn: []
+  - id: tier-2-3-what-if-simulator-statique
+    tier: 2.3
+    title: What-if simulator (statique)
+    description: ''
+    status: materialized
+    expectedBy: null
+    expectedLinks: []
+    dependsOn: []
+  - id: tier-2-4-vscode-cursor-extension-mvp-v0-1
+    tier: 2.4
+    title: VSCode/Cursor extension ✅ (MVP v0.1)
+    description: ''
+    status: planned
+    expectedBy: null
+    expectedLinks: []
+    dependsOn: []
+  - id: tier-2-5-cross-repo-similarity-score-de-correspondance
+    tier: 2.5
+    title: Cross-repo similarity (Score de Correspondance)
+    description: ''
+    status: planned
+    expectedBy: null
+    expectedLinks: []
+    dependsOn: []
+  - id: tier-2-6-galaxie-oss-carte-de-l-cosyst-me
+    tier: 2.6
+    title: 'Galaxie OSS / Carte de l''écosystème'
+    description: ''
+    status: planned
+    expectedBy: null
+    expectedLinks: []
+    dependsOn: []
+  - id: tier-3-1-dead-code-via-instrumentation-runtime
+    tier: 3.1
+    title: Dead code via instrumentation runtime
+    description: ''
+    status: planned
+    expectedBy: null
+    expectedLinks: []
+    dependsOn: []
+  - id: tier-3-10-plugin-architecture-pour-analytics
+    tier: 3.10
+    title: Plugin architecture pour analytics
+    description: ''
+    status: planned
+    expectedBy: null
+    expectedLinks: []
+    dependsOn: []
+  - id: tier-3-2-mutation-tracking-profils-de-devs
+    tier: 3.2
+    title: Mutation tracking / profils de devs
+    description: ''
+    status: planned
+    expectedBy: null
+    expectedLinks: []
+    dependsOn: []
+  - id: tier-3-3-conway-s-law-audit
+    tier: 3.3
+    title: 'Conway''s Law audit'
+    description: ''
+    status: planned
+    expectedBy: null
+    expectedLinks: []
+    dependsOn: []
+  - id: tier-3-4-auto-pr-de-refactoring
+    tier: 3.4
+    title: Auto-PR de refactoring
+    description: ''
+    status: planned
+    expectedBy: null
+    expectedLinks: []
+    dependsOn: []
+  - id: tier-3-5-mod-le-pr-dictif-de-bugs
+    tier: 3.5
+    title: Modèle prédictif de bugs
+    description: ''
+    status: planned
+    expectedBy: null
+    expectedLinks: []
+    dependsOn: []
+  - id: tier-3-6-architectural-ci
+    tier: 3.6
+    title: Architectural CI
+    description: ''
+    status: planned
+    expectedBy: null
+    expectedLinks: []
+    dependsOn: []
+  - id: tier-3-7-ai-guided-tour-architect-s-copilot
+    tier: 3.7
+    title: 'AI-guided tour (Architect''s Copilot)'
+    description: ''
+    status: planned
+    expectedBy: null
+    expectedLinks: []
+    dependsOn: []
+  - id: tier-3-8-domain-specific-ast-extractors
+    tier: 3.8
+    title: Domain-specific AST extractors
+    description: ''
+    status: planned
+    expectedBy: null
+    expectedLinks: []
+    dependsOn: []
+  - id: tier-3-9-public-reference-dataset-industry-baselines
+    tier: 3.9
+    title: Public reference dataset / industry baselines
+    description: ''
+    status: planned
+    expectedBy: null
+    expectedLinks: []
+    dependsOn: []
