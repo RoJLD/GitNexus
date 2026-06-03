@@ -36,3 +36,15 @@ describe('graph-templates registry', () => {
     expect(() => sanitizeSource('../../etc', root)).toThrow(/outside/);
   });
 });
+
+import { getTemplate as gt2 } from '../../upstream/docker-server-graph-templates-core.mjs';
+
+describe('template kinds + ddl', () => {
+  it('research-artifacts is an import template with Kùzu DDL', () => {
+    const t = gt2('research-artifacts');
+    expect(t.kind).toBe('import');
+    expect(Array.isArray(t.ddl)).toBe(true);
+    expect(t.ddl.join(' ')).toMatch(/CREATE NODE TABLE Artifact/);
+    expect(t.ddl.join(' ')).toMatch(/CREATE REL TABLE Link/);
+  });
+});

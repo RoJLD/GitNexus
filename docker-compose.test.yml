@@ -61,11 +61,27 @@ services:
       # The browser reaches the server via the host-mapped port.
       - VITE_GITNEXUS_BACKEND_URL=http://localhost:${TEST_PORT:-4747}
       - GITNEXUS_HOME=/data/gitnexus
+      - GRAPHS_URL=http://gitnexus-graphs-test:4749
     volumes:
       # graph-templates routes run IN the web container: the research-fs
       # importer reads /data/projects/<source> and the JSON store writes under
       # /data/gitnexus/research-graphs (mirrors the dev web service mounts).
       - ${TEST_PROJECTS_ROOT:-./tests/fixtures/sample-repo-extracted}:/data/projects:ro
+      - gitnexus-test-data:/data/gitnexus
+
+  # Kùzu sidecar (our image) — owns /data/gitnexus/graphs/<name>.kuzu. The web
+  # container proxies to it at GRAPHS_URL. Shares the data volume; the server
+  # container initializes /data/gitnexus perms.
+  gitnexus-graphs-test:
+    build:
+      context: .
+      dockerfile: Dockerfile.graphs
+    image: gitnexus-graphs-test:local
+    container_name: gitnexus-graphs-test
+    restart: "no"
+    environment:
+      - GRAPHS_DIR=/data/gitnexus/graphs
+    volumes:
       - gitnexus-test-data:/data/gitnexus
 
 volumes:

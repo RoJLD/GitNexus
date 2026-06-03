@@ -32,3 +32,15 @@ describe('researchGraphToGraphology', () => {
     expect(g.size).toBe(0);
   });
 });
+
+describe('adapter on sidecar render payload', () => {
+  it('renders {nodes,edges} from the sidecar (no schema_type field)', () => {
+    const payload = {
+      nodes: [{ id: 'h1', type: 'hypothesis', label: 'H1', path: 'a/h1.md', stage: 'a' }],
+      edges: [{ source: 'h1', target: 'h1b', kind: 'validates', id: 'e1' }],
+    };
+    const g = researchGraphToGraphology(payload); // defensive: missing edge endpoint skipped, node colored by type
+    expect(g.order).toBe(1);
+    expect(g.getNodeAttribute('h1', 'color')).toBe('#a855f7');
+  });
+});

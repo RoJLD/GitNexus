@@ -82,6 +82,9 @@ services:
       dockerfile: Dockerfile.web
     image: gitnexus-web-derived:1.6.5-patched
     container_name: gitnexus-web
+    environment:
+      # Graph-templates routes proxy to the Kùzu sidecar (compose DNS name).
+      GRAPHS_URL: http://gitnexus-graphs:4749
     ports:
       - "4173:4173"
     volumes:
@@ -98,6 +101,20 @@ services:
       # one when source isn't there). The API server reads registry.json
       # fresh on every /api/repos call, so writes from this container show
       # up immediately on the next list.
+      - gitnexus-data:/data/gitnexus
+    restart: unless-stopped
+
+  # Graph-templates Kùzu sidecar (our image, no upstream coupling). Owns
+  # /data/gitnexus/graphs/<name>.kuzu. Internal-only; the web container proxies.
+  gitnexus-graphs:
+    build:
+      context: .
+      dockerfile: Dockerfile.graphs
+    image: gitnexus-graphs:local
+    container_name: gitnexus-graphs
+    environment:
+      GRAPHS_DIR: /data/gitnexus/graphs
+    volumes:
       - gitnexus-data:/data/gitnexus
     restart: unless-stopped
 

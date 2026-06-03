@@ -4816,10 +4816,10 @@ index 00000000..f30716c8
 +}
 diff --git a/docker-server-graph-templates-core.mjs b/docker-server-graph-templates-core.mjs
 new file mode 100644
-index 00000000..4fdbf597
+index 00000000..580d4001
 --- /dev/null
 +++ b/docker-server-graph-templates-core.mjs
-@@ -0,0 +1,104 @@
+@@ -0,0 +1,143 @@
 +/**
 + * Graph-templates engine (web container, pure Node — no Kùzu).
 + * Registry + built-in template descriptors + JSON store on the gitnexus-data
@@ -4843,7 +4843,7 @@ index 00000000..4fdbf597
 +  if (registry.has(tpl.id) && BUILTINS.has(tpl.id)) {
 +    throw new Error(`cannot override builtin template "${tpl.id}"`);
 +  }
-+  registry.set(tpl.id, { exclude: [], include: [], visual: {}, ...tpl });
++  registry.set(tpl.id, { kind: 'import', exclude: [], include: [], visual: {}, ...tpl });
 +  return registry.get(tpl.id);
 +}
 +
@@ -4910,6 +4910,7 @@ index 00000000..4fdbf597
 +
 +registerTemplate({
 +  id: 'research-artifacts',
++  kind: 'import',
 +  label: 'Research Artifacts',
 +  schema_type: 'research-artifacts',
 +  description:
@@ -4917,6 +4918,10 @@ index 00000000..4fdbf597
 +  importer: 'research-fs',
 +  include: ['**/*.ipynb', '**/*.md'],
 +  exclude: ['.git', 'node_modules', '.gitnexus', '.ipynb_checkpoints'],
++  ddl: [
++    'CREATE NODE TABLE Artifact(id STRING, type STRING, label STRING, path STRING, stage STRING, PRIMARY KEY(id))',
++    'CREATE REL TABLE Link(FROM Artifact TO Artifact, id STRING, kind STRING)',
++  ],
 +  visual: {
 +    nodeColors: {
 +      notebook: '#3b82f6', experiment: '#f59e0b', hypothesis: '#a855f7',
@@ -4924,70 +4929,86 @@ index 00000000..4fdbf597
 +    },
 +  },
 +});
++
++// ---- sidecar client helpers --------------------------------------------
++
++const GRAPHS_URL = process.env.GRAPHS_URL || 'http://gitnexus-graphs:4749';
++
++async function graphsFetch(path, init) {
++  const res = await fetch(`${GRAPHS_URL}${path}`, init);
++  const body = await res.json().catch(() => ({}));
++  if (!res.ok) throw new Error(body.error || `graphs sidecar ${res.status}`);
++  return body;
++}
++export async function sidecarCreate(name, ddl) {
++  return graphsFetch(`/g/${encodeURIComponent(name)}/create`, {
++    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ddl }),
++  });
++}
++export async function sidecarIngest(name, nodes, edges) {
++  return graphsFetch(`/g/${encodeURIComponent(name)}/ingest`, {
++    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ nodes, edges }),
++  });
++}
++export async function sidecarRender(name) {
++  return graphsFetch(`/g/${encodeURIComponent(name)}/render`, { method: 'GET' });
++}
++
++// ---- B2 mapper ---------------------------------------------------------
++
++/** Map a ResearchGraph ({nodes,edges}) to the sidecar ingest shape for the Artifact/Link schema. */
++export function researchGraphToIngest(rg) {
++  return {
++    nodes: (rg.nodes || []).map((n) => ({ table: 'Artifact', props: { id: n.id, type: n.type, label: n.label, path: n.path, stage: n.stage } })),
++    edges: (rg.edges || []).map((e) => ({ table: 'Link', from: e.source, to: e.target, props: { id: e.id, kind: e.kind } })),
++  };
++}
 diff --git a/docker-server-graph-templates.mjs b/docker-server-graph-templates.mjs
 new file mode 100644
-index 00000000..d2dfc116
+index 00000000..dc676561
 --- /dev/null
 +++ b/docker-server-graph-templates.mjs
-@@ -0,0 +1,97 @@
+@@ -0,0 +1,67 @@
 +/**
-+ * Graph templates routes (web container):
-+ *   GET  /graph/templates              -> { templates: [...] }
-+ *   POST /graph/scaffold               -> { record }            body: { templateId, name, source }
-+ *   POST /graph/import                 -> { report }            body: { name }
-+ *   GET  /graph/research               -> { graphs: [...] }
-+ *   GET  /graph/research/:name         -> ResearchGraph JSON
++ * Graph templates routes (web container) — sidecar-backed (Kùzu).
++ *   GET  /graph/templates              -> { templates }
++ *   POST /graph/scaffold {templateId,name,source} -> { record }   (creates Kùzu graph via sidecar)
++ *   POST /graph/import   {name}        -> { report }              (importer -> sidecar ingest)
++ *   GET  /graph/research               -> { graphs }              (index records)
++ *   GET  /graph/research/:name         -> { nodes, edges }        (sidecar render)
 + */
 +import {
 +  listTemplates, getTemplate, sanitizeSource,
-+  readIndex, writeIndexRecord, writeGraph, readGraph,
++  readIndex, writeIndexRecord,
++  sidecarCreate, sidecarIngest, sidecarRender, researchGraphToIngest,
 +} from './docker-server-graph-templates-core.mjs';
 +import { importResearchFs } from './docker-server-research-fs-importer.mjs';
 +
-+function sendJson(res, code, obj) {
-+  res.writeHead(code, { 'Content-Type': 'application/json' });
-+  res.end(JSON.stringify(obj));
-+}
-+
-+async function readBody(req) {
-+  let body = '';
-+  for await (const chunk of req) body += chunk;
-+  if (!body) return {};
-+  return JSON.parse(body);
-+}
-+
++function sendJson(res, code, obj) { res.writeHead(code, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(obj)); }
++async function readBody(req) { let b = ''; for await (const c of req) b += c; return b ? JSON.parse(b) : {}; }
 +const IMPORTERS = { 'research-fs': importResearchFs };
 +
 +export async function handleGraphTemplatesRoute(req, url, res, _opts) {
 +  const path = url.pathname;
 +
-+  if (path === '/graph/templates' && req.method === 'GET') {
-+    sendJson(res, 200, { templates: listTemplates() });
-+    return true;
-+  }
++  if (path === '/graph/templates' && req.method === 'GET') { sendJson(res, 200, { templates: listTemplates() }); return true; }
 +
 +  if (path === '/graph/scaffold' && req.method === 'POST') {
-+    let body;
-+    try { body = await readBody(req); } catch { sendJson(res, 400, { error: 'invalid JSON body' }); return true; }
++    let body; try { body = await readBody(req); } catch { sendJson(res, 400, { error: 'invalid JSON body' }); return true; }
 +    const { templateId, name, source } = body;
 +    const tpl = getTemplate(templateId);
 +    if (!tpl) { sendJson(res, 400, { error: `unknown template: ${templateId}` }); return true; }
 +    if (!name || !source) { sendJson(res, 400, { error: 'name and source are required' }); return true; }
 +    try { sanitizeSource(source); } catch (e) { sendJson(res, 400, { error: e.message }); return true; }
 +    const record = { name, template: tpl.id, schema_type: tpl.schema_type, source, created: new Date().toISOString() };
-+    try {
-+      await writeIndexRecord(record);
-+    } catch (e) {
-+      sendJson(res, 500, { error: `scaffold failed to write index: ${e.message}` });
-+      return true;
-+    }
++    try { await sidecarCreate(name, tpl.ddl || []); await writeIndexRecord(record); }
++    catch (e) { sendJson(res, 500, { error: `scaffold failed: ${e.message}` }); return true; }
 +    sendJson(res, 201, { record });
 +    return true;
 +  }
 +
 +  if (path === '/graph/import' && req.method === 'POST') {
-+    let body;
-+    try { body = await readBody(req); } catch { sendJson(res, 400, { error: 'invalid JSON body' }); return true; }
++    let body; try { body = await readBody(req); } catch { sendJson(res, 400, { error: 'invalid JSON body' }); return true; }
 +    const { name } = body;
 +    const index = await readIndex();
 +    const record = index.graphs.find((g) => g.name === name);
@@ -4995,36 +5016,24 @@ index 00000000..d2dfc116
 +    const tpl = getTemplate(record.template);
 +    const importer = tpl && IMPORTERS[tpl.importer];
 +    if (!importer) { sendJson(res, 400, { error: `no importer for template ${record.template}` }); return true; }
-+    let abs;
-+    try { abs = sanitizeSource(record.source); } catch (e) { sendJson(res, 400, { error: e.message }); return true; }
-+    let graph;
++    let abs; try { abs = sanitizeSource(record.source); } catch (e) { sendJson(res, 400, { error: e.message }); return true; }
 +    try {
-+      graph = await importer(abs, { include: tpl.include, exclude: tpl.exclude });
-+      graph.name = name;
-+      graph.source = record.source;
-+      await writeGraph(name, graph); // replace = idempotent overwrite
-+    } catch (e) {
-+      sendJson(res, 500, { error: `import failed: ${e.message}` });
-+      return true;
-+    }
-+    sendJson(res, 200, { report: graph.report });
++      const rg = await importer(abs, { include: tpl.include, exclude: tpl.exclude });
++      const ing = researchGraphToIngest(rg);
++      await sidecarIngest(name, ing.nodes, ing.edges);
++      sendJson(res, 200, { report: rg.report });
++    } catch (e) { sendJson(res, 500, { error: `import failed: ${e.message}` }); return true; }
 +    return true;
 +  }
 +
-+  if (path === '/graph/research' && req.method === 'GET') {
-+    const index = await readIndex();
-+    sendJson(res, 200, { graphs: index.graphs });
-+    return true;
-+  }
++  if (path === '/graph/research' && req.method === 'GET') { sendJson(res, 200, { graphs: (await readIndex()).graphs }); return true; }
 +
 +  if (path.startsWith('/graph/research/') && req.method === 'GET') {
 +    const name = decodeURIComponent(path.slice('/graph/research/'.length));
-+    const graph = await readGraph(name);
-+    if (!graph) { sendJson(res, 404, { error: `graph "${name}" not found (scaffold + import first)` }); return true; }
-+    sendJson(res, 200, graph);
++    try { sendJson(res, 200, await sidecarRender(name)); }
++    catch (e) { sendJson(res, 404, { error: `graph "${name}" not available: ${e.message}` }); return true; }
 +    return true;
 +  }
-+
 +  return false;
 +}
 diff --git a/docker-server-group-graph-core.mjs b/docker-server-group-graph-core.mjs
