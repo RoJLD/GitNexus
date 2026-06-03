@@ -118,6 +118,28 @@ In short:
 
 L'outil générique multi-repo vit désormais dans le dépôt frère `fork-cohabitation` (CLI `cohabit`). Les 3 scripts `scripts/check-patch-drift.mjs` / `check-upstream-releases.mjs` / `bump-upstream.mjs` de gitnexus sont CONSERVÉS et GELÉS (référence autonome + oracle de parité) : toute évolution de leur logique va désormais dans `fork-cohabitation`. Consolidation (suppression au profit du seul outil central) conditionnée à l'onboarding d'un 2ᵉ repo. Voir le spec Phase 3 : `docs/superpowers/specs/2026-05-29-fork-cohabitation-extraction-design.md`.
 
+## Recurrence-prevention (2026-06-03)
+
+On **2026-05-31** the multigraph commit series (`dc32b89b..21a2be15`) regenerated
+these diffs from a **partial/inconsistent `upstream/` clone**, gutting them
+(`additive-files.diff` 914 KB → 5.6 KB, `inplace-edits.diff` 7722 → 102 lines).
+The result: the patches no longer reproduced a building `gitnexus-web` frontend
+(the infra files — `useAppState`/`backend-client`/`agent` — were dropped while
+the components stayed). It went unnoticed because **every CI job was
+`continue-on-error: true`** and the live deployment ran an old cached image.
+Restored from the last-good commit `d2a9234a` on 2026-06-03.
+
+To stop this recurring:
+
+1. **Local guard — before committing ANY `upstream/` edit:** run
+   `cohabit drift gitnexus` (from the sibling `fork-cohabitation` repo) **or**
+   `node scripts/check-patch-drift.mjs`. Both must exit 0 (committed diffs ==
+   clone). Regenerate the diffs per "Regenerate the diffs" above first.
+2. **CI gate — `build-gate` job** (`.github/workflows/test.yml`) is **NOT**
+   `continue-on-error`: it applies the committed patches to a fresh clone and
+   `docker compose build`s the web image. A gutted/inconsistent patch set makes
+   it go red and blocks the workflow.
+
 ## Why not a git submodule?
 
 A submodule would be the textbook answer, but it'd force every user of

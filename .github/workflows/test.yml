@@ -6,10 +6,32 @@ on:
   workflow_dispatch:
 
 env:
-  GITNEXUS_VERSION: ${{ vars.GITNEXUS_VERSION || 'v1.6.3' }}
+  GITNEXUS_VERSION: ${{ vars.GITNEXUS_VERSION || 'v1.6.5' }}
   NODE_VERSION: '22.11.0'
 
 jobs:
+  # Recurrence guard (added 2026-06-03). On 2026-05-31 the patch files were
+  # accidentally gutted (regenerated from a partial clone), leaving a frontend
+  # that does not compile — and because every other job is continue-on-error,
+  # nothing blocked. This job is intentionally NOT continue-on-error: it fails
+  # the workflow if the committed patches do not produce a building web image.
+  # Locally, run `cohabit drift gitnexus` (fork-cohabitation) BEFORE committing
+  # any upstream/ edit, and regenerate the diffs per patches/README.md.
+  build-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: Apply upstream patches to a fresh clone
+        run: node scripts/apply-upstream-patches.mjs
+      - name: Pre-pull upstream image
+        run: docker pull ghcr.io/abhigyanpatwari/gitnexus:${{ env.GITNEXUS_VERSION }}
+      - name: Build derived images (FAILS if patches don't produce a building image)
+        run: docker compose -f docker-compose.test.yml build
+
   inventory-check:
     runs-on: ubuntu-latest
     continue-on-error: true
