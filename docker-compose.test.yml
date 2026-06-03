@@ -38,10 +38,14 @@ services:
       - gitnexus-test-hf-cache:/data/hf-cache
       - ${TEST_PROJECTS_ROOT:-./tests/fixtures/sample-repo-extracted}:/data/projects:ro
     healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://localhost:4747/health"]
+      # The CLI serves /api/health (200); /health is 404. Wrong endpoint here is
+      # why the server was stuck "unhealthy" and blocked dependents. start_period
+      # gives the lbug/HF boot (~30-60s) grace before failures count.
+      test: ["CMD", "curl", "-fsS", "http://localhost:4747/api/health"]
       interval: 5s
       timeout: 3s
-      retries: 20
+      retries: 30
+      start_period: 60s
 
   gitnexus-web-test:
     build:
