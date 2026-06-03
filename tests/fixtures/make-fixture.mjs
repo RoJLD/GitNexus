@@ -221,15 +221,37 @@ commit({
 sh('git gc --quiet --prune=all');
 sh('git read-tree HEAD');
 
+// Build academic-corpus alongside sample-repo (non-breaking: separate dir,
+// sample-repo untouched). academic-corpus/ is NOT a git repo and is not
+// analyzed — it simply provides papers.json for the academic-literature
+// integ test at /data/projects/academic-corpus/papers.json.
+const buildParent = join(REPO, '..');          // …/tests/fixtures/_build
+const academicDir = join(buildParent, 'academic-corpus');
+console.log('Building academic-corpus fixture…');
+mkdirSync(academicDir, { recursive: true });
+writeFileSync(
+  join(academicDir, 'papers.json'),
+  JSON.stringify(
+    { papers: [
+      { id: 'kyle1985', title: 'Continuous Auctions and Insider Trading', year: 1985,
+        path: 'kyle.pdf', authors: ['Albert S. Kyle'], topics: ['market microstructure'] },
+      { id: 'fama1970', title: 'Efficient Capital Markets', year: 1970,
+        path: 'fama.pdf', authors: ['Eugene F. Fama'], topics: ['market efficiency'] },
+      { id: 'famafrench1993', title: 'Common Risk Factors', year: 1993,
+        path: 'ff.pdf', authors: ['Eugene F. Fama', 'Kenneth R. French'], topics: ['market efficiency'] },
+    ] },
+    null, 0,
+  ) + '\n',
+);
+
 console.log('Packing tarball…');
 // Windows tar.exe (GNU tar on Git for Windows) does not accept
 // drive-letter paths (e.g. C:\...) in -f or -C arguments.
 // Work around: cd into _build (parent of sample-repo) and write
 // the tarball with a relative path so no drive letter appears.
-const buildParent = join(REPO, '..');          // …/tests/fixtures/_build
 const tarRelOut   = '../sample-repo.tar.gz';  // Fix B: POSIX literal — avoids Windows backslash
 execSync(
-  `tar -czf "${tarRelOut}" --sort=name --mtime='2025-01-30T11:00:00Z' --owner=0 --group=0 --numeric-owner sample-repo`,
+  `tar -czf "${tarRelOut}" --sort=name --mtime='2025-01-30T11:00:00Z' --owner=0 --group=0 --numeric-owner sample-repo academic-corpus`,
   { cwd: buildParent, stdio: 'inherit' },
 );
 console.log(`Wrote ${TARBALL}`);

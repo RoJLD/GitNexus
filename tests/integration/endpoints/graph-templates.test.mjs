@@ -51,4 +51,28 @@ describe('graph-templates routes', () => {
     });
     expect(res.status).toBe(400);
   });
+
+  it('scaffolds, imports, and serves a multi-table academic-literature graph', async () => {
+    const name = 'it-academic';
+    const scaffold = await fetch(`${BASE}/graph/scaffold`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ templateId: 'academic-literature', name, source: 'academic-corpus' }),
+    });
+    expect(scaffold.status).toBe(201);
+
+    const imp = await fetch(`${BASE}/graph/import`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name }),
+    });
+    expect(imp.status).toBe(200);
+    const report = (await imp.json()).report;
+    expect(report.nodes).toBe(8);   // 3 Paper + 3 Author + 2 Topic
+    expect(report.edges).toBe(7);   // 4 AUTHORED + 3 ABOUT
+
+    const graph = await (await fetch(`${BASE}/graph/research/${name}`)).json();
+    const types = new Set(graph.nodes.map((n) => n.type));
+    expect(types.has('Paper')).toBe(true);
+    expect(types.has('Author')).toBe(true);
+    expect(types.has('Topic')).toBe(true);
+  });
 });
