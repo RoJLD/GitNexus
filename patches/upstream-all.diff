@@ -4934,16 +4934,18 @@ index 00000000..f30716c8
 +}
 diff --git a/docker-server-graph-templates-core.mjs b/docker-server-graph-templates-core.mjs
 new file mode 100644
-index 00000000..580d4001
+index 00000000..3e9dd3b9
 --- /dev/null
 +++ b/docker-server-graph-templates-core.mjs
-@@ -0,0 +1,143 @@
+@@ -0,0 +1,124 @@
 +/**
 + * Graph-templates engine (web container, pure Node — no Kùzu).
-+ * Registry + built-in template descriptors + JSON store on the gitnexus-data
-+ * volume. See docs/superpowers/specs/2026-06-02-graph-templates-design.md.
++ * Registry + built-in descriptors + index store + Kùzu sidecar client. Graphs
++ * themselves live in the gitnexus-graphs sidecar (Kùzu); this module only keeps
++ * a lightweight index (name -> template/source). See
++ * docs/superpowers/specs/2026-06-03-graph-platform-p0-kuzu-sidecar-design.md.
 + */
-+import { mkdir, readFile, writeFile, stat } from 'node:fs/promises';
++import { mkdir, readFile, writeFile } from 'node:fs/promises';
 +import { dirname, join, resolve, sep } from 'node:path';
 +
 +const HOME = process.env.GITNEXUS_HOME || '/data/gitnexus';
@@ -5001,27 +5003,6 @@ index 00000000..580d4001
 +  await mkdir(dirname(INDEX_PATH), { recursive: true });
 +  await writeFile(INDEX_PATH, JSON.stringify(index, null, 2), 'utf8');
 +  return record;
-+}
-+
-+export function graphPath(name) {
-+  return join(RESEARCH_DIR, `${name}.json`);
-+}
-+
-+export async function writeGraph(name, graph) {
-+  await mkdir(RESEARCH_DIR, { recursive: true });
-+  await writeFile(graphPath(name), JSON.stringify(graph, null, 2), 'utf8');
-+}
-+
-+export async function readGraph(name) {
-+  try {
-+    return JSON.parse(await readFile(graphPath(name), 'utf8'));
-+  } catch {
-+    return null;
-+  }
-+}
-+
-+export async function graphExists(name) {
-+  return !!(await stat(graphPath(name)).catch(() => null));
 +}
 +
 +// ---- built-in templates ------------------------------------------------

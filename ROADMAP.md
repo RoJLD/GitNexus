@@ -1041,6 +1041,7 @@ fin. Tout ce qui suit s'appuie sur Tier 1 + Tier 2.1-2.4 ✅ déjà livrés.
 | **P2** | **Boîte à outils théorie-des-graphes** | Centralités (PageRank/betweenness/eigenvector), communautés, chemins/cycles, points d'articulation, embeddings — exposés par graphe (endpoints + MCP + overlays). | 📋 Planifié |
 | **P3** | **Paradigmes de visualisation** | Layouts hiérarchique (DAG/Sugiyama), matrice d'adjacence, 3D (`react-force-graph-3d`), nav multigraph (méta→graphe→nœud→inspecteur), sélecteur de layout par type de graphe. | 📋 Planifié |
 | → | **Domaines** | Recherche étendue (académique, zettelkasten, lignée d'expériences/hypothèses), lenses code-intel (call-graph/deps/API/infra/test-coverage), crypto/finance (Experiment.Crypto). **S'empilent comme templates une fois P0–P1 là.** | 📋 Backlog |
+| 🔭 | **IA / Model as graph & as code** *(vision long-terme, à brainstormer)* | Un modèle IA *est* un graphe (couches / opérateurs / poids) → le **visualiser** dans gitnexus, faire de l'**observabilité** (quelles zones/couches/neurones s'activent à l'inférence) et de l'**optimisation** au même titre que du code. Pistes : import-template « model graph » (ONNX / safetensors / PyTorch-FX → nœuds = ops/layers, arêtes = tensors), lens « activations » (overlay runtime du graphe), théorie des graphes (chemins critiques, nœuds morts = dead-weights, centralité = hot-paths). Slogan : **« Model as graph / as code »**. Synergie directe avec P2 (théorie) + P3 (viz) + le SDK import/lens. | 💡 À brainstormer |
 
 ---
 
