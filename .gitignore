@@ -19,3 +19,6 @@ Thumbs.db
 
 # Superpowers brainstorming visual companion (per-session, ephemeral)
 .superpowers/
+
+# Graphs sidecar deps (installed in the image / locally; never committed)
+graphs-sidecar/node_modules/

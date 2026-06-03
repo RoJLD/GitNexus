@@ -158,6 +158,11 @@ Pré-requis local : Rancher Desktop running, **Node ≥ 22 LTS**. CI : `.github/
 | Graph templates | `integration/endpoints/graph-templates.test.mjs` | `/graph/templates` + scaffold -> import -> `/graph/research/:name` + 400 unknown template |
 | Graph template tools | `integration/mcp/graph_templates.test.mjs` | 3 new tools present + list_graph_templates returns research-artifacts |
 
+### Sidecar integration
+| Test | Fichier | Couvre |
+|---|---|---|
+| Graphs sidecar | `integration/sidecar/graphs-sidecar.test.mjs` | build image + create/ingest/render round-trip + 500-on-bad-cypher (server stays up) |
+
 ### UI flows e2e
 | Test | Fichier | Couvre |
 |---|---|---|

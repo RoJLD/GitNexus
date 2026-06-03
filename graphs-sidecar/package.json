@@ -1,0 +1,8 @@
+{
+  "name": "gitnexus-graphs-sidecar",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "kuzu": "0.11.3"
+  }
+}
