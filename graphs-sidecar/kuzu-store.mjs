@@ -59,11 +59,15 @@ export async function ingest(name, nodes, edges) {
       const r = await run(conn, `MERGE (x:${n.table} {id: $id})${setClause}`, n.props);
       r.close?.();
     }
+    const RESERVED = new Set(['id', 'from', 'to']);
     for (const e of edges || []) {
+      const props = { ...(e.props || {}), id: e.props?.id ?? `${e.from}->${e.to}` };
+      const keys = Object.keys(props).filter((k) => !RESERVED.has(k));
+      const setClause = keys.length ? ` SET ${keys.map((k) => `r.${k} = $${k}`).join(', ')}` : '';
       const r = await run(
         conn,
-        `MATCH (a {id: $from}), (b {id: $to}) MERGE (a)-[r:${e.table} {id: $id}]->(b) SET r.kind = $kind`,
-        { from: e.from, to: e.to, id: e.props?.id ?? `${e.from}->${e.to}`, kind: e.props?.kind ?? '' },
+        `MATCH (a {id: $from}), (b {id: $to}) MERGE (a)-[r:${e.table} {id: $id}]->(b)${setClause}`,
+        { from: e.from, to: e.to, ...props },
       );
       r.close?.();
     }
@@ -81,9 +85,22 @@ export async function cypher(name, query, params = {}) {
   });
 }
 
-/** Default render projection: all nodes + all edges as {nodes,edges}. */
+/** Default render projection: all nodes + all edges, schema-agnostic. */
 export async function render(name) {
-  const nodes = await cypher(name, 'MATCH (n) RETURN n.id AS id, n.type AS type, n.label AS label, n.path AS path, n.stage AS stage');
-  const edges = await cypher(name, 'MATCH (a)-[r]->(b) RETURN a.id AS source, b.id AS target, r.kind AS kind, r.id AS id');
+  // label(n)/label(r) instead of n._label: kuzu 0.11.3 does not expose _label on returned rows.
+  const nrows = await cypher(name, 'MATCH (n) RETURN n, label(n) AS lbl');
+  const nodes = nrows.map(({ n, lbl }) => ({
+    id: n.id,
+    type: n.type ?? lbl ?? '',
+    label: n.label ?? n.title ?? n.name ?? String(n.id),
+    path: n.path ?? '',
+    stage: n.stage ?? '',
+  }));
+  const erows = await cypher(name, 'MATCH (a)-[r]->(b) RETURN a.id AS source, b.id AS target, r, label(r) AS lbl');
+  const edges = erows.map(({ source, target, r, lbl }) => ({
+    source, target,
+    kind: r.kind ?? lbl ?? '',
+    id: r.id ?? `${source}->${target}`,
+  }));
   return { nodes, edges };
 }

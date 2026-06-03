@@ -35,6 +35,32 @@ describe('graphs sidecar', () => {
     expect(g.edges[0].kind).toBe('validates');
   });
 
+  it('round-trips a multi-table graph (no kind column on edges)', async () => {
+    await fetch(`${BASE}/g/acad/create`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ddl: [
+        'CREATE NODE TABLE Paper (id STRING, title STRING, year INT64, path STRING, PRIMARY KEY(id))',
+        'CREATE NODE TABLE Author(id STRING, name STRING, PRIMARY KEY(id))',
+        'CREATE REL TABLE AUTHORED(FROM Author TO Paper, id STRING)',
+      ] }) });
+    await fetch(`${BASE}/g/acad/ingest`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        nodes: [
+          { table: 'Paper',  props: { id: 'p1', title: 'Kyle 1985', year: 1985, path: 'kyle.pdf' } },
+          { table: 'Author', props: { id: 'a1', name: 'Albert Kyle' } },
+        ],
+        edges: [{ table: 'AUTHORED', from: 'a1', to: 'p1', props: { id: 'a1->p1' } }],
+      }) });
+    const g = await (await fetch(`${BASE}/g/acad/render`)).json();
+    const paper = g.nodes.find((n) => n.id === 'p1');
+    const author = g.nodes.find((n) => n.id === 'a1');
+    expect(paper.type).toBe('Paper');
+    expect(paper.label).toBe('Kyle 1985');
+    expect(author.type).toBe('Author');
+    expect(author.label).toBe('Albert Kyle');
+    expect(g.edges).toHaveLength(1);
+    expect(g.edges[0]).toMatchObject({ source: 'a1', target: 'p1', kind: 'AUTHORED' });
+  });
+
   it('errors return JSON 500, server stays up', async () => {
     const r = await fetch(`${BASE}/g/t1/cypher`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ query: 'NOT VALID CYPHER' }) });
     expect(r.status).toBe(500);
