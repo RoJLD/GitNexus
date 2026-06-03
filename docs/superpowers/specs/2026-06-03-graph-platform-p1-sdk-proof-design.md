@@ -264,6 +264,9 @@ Two refinements discovered while writing/executing the plan:
    so the existing `research-graph-adapter` + the URL-driven render path render
    it unchanged — the lens reaches the canvas via `?lens=<id>&repo=<repo>`.
 
+3. **Lens test landed at the unit tier.** §5 placed the lens-endpoint test ("against a mocked `/api/graph`") in the *Integration* tier; it shipped as a unit test with a stubbed `fetch` (`tests/unit/graph-lens-handler.test.mjs`, covering the 200 projection + 404/400/502/500 paths). This is a deliberate, defensible choice for a pure fetch+projection handler.
+4. **The offline extractor is filename-only.** §3.3 component C describes "PDF metadata heuristics"; the shipped `tools/academic-extract.mjs` reads no PDF content — it derives title/year from the filename and always emits `authors: []` (reliable author/citation parsing from raw PDFs is out of scope for P1, per §6). Topics come from a title-keyword heuristic.
+
 Implemented across commits 981b0368 (sidecar), 7adbfe73 (academic importer),
 fabd9ca6 (G1 contract), 6f9d8270 (academic template), 67e4abe2 (lens),
 f4dcaa36 (frontend), ef3a13bf (extractor).

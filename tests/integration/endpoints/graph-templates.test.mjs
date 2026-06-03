@@ -10,6 +10,13 @@ describe('graph-templates routes', () => {
     expect(body.templates.map((t) => t.id)).toContain('research-artifacts');
   });
 
+  it('lists the P1 academic-literature import + imports-deps lens templates', async () => {
+    const body = await (await fetch(`${BASE}/graph/templates`)).json();
+    const byId = Object.fromEntries(body.templates.map((t) => [t.id, t]));
+    expect(byId['academic-literature']?.kind).toBe('import');
+    expect(byId['imports-deps']?.kind).toBe('lens');
+  });
+
   it('scaffolds, imports, and serves a research graph end to end', async () => {
     const name = 'it-research';
     const scaffold = await fetch(`${BASE}/graph/scaffold`, {

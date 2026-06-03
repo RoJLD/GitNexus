@@ -58,4 +58,11 @@ describe('template kinds + ddl', () => {
     expect(acad.ddl.some((s) => /CREATE NODE TABLE Topic/.test(s))).toBe(true);
     expect(acad.ddl.some((s) => /CREATE REL TABLE ABOUT/.test(s))).toBe(true);
   });
+
+  it('registers the imports-deps lens descriptor', () => {
+    const lens = listTemplates().find((t) => t.id === 'imports-deps');
+    expect(lens).toBeTruthy();
+    expect(lens.kind).toBe('lens');
+    expect(lens.target).toBe('astkg');
+  });
 });

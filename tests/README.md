@@ -80,6 +80,11 @@ Pré-requis local : Rancher Desktop running, **Node ≥ 22 LTS**. CI : `.github/
 | Graph templates registry | `unit/graph-templates-registry.test.mjs` | registry list/get + builtin-protect + sanitizeSource |
 | Research-fs importer | `unit/research-fs-importer.test.mjs` | walk + frontmatter types + link resolution + unresolved report |
 | Research graph adapter | `unit/research-graph-adapter.test.mjs` | ResearchGraph -> graphology nodes/colors/edges |
+| Academic JSON importer | `unit/academic-json-importer.test.mjs` | generic ingest shape + author/topic dedup + edge dedup + report counts + skipped |
+| Graph lens — core projection | `unit/graph-lens-core.test.mjs` | `projectImports` IMPORTS filter + file-level roll-up + self-loop/dedup drop |
+| Graph lens — route handler | `unit/graph-lens-handler.test.mjs` | `handleGraphLensRoute` 200 projection + 404/400/502/500 paths (stubbed fetch) |
+| Research client — applyLens | `unit/research-client.test.mjs` | `applyLens` GET /graph/lens/:id?repo= + return shape |
+| Academic extract heuristics | `unit/academic-extract.test.mjs` | `guessMetaFromFilename` year/title + `keywordTopics` |
 
 ### Components React (unit)
 | Test | Fichier | Couvre |

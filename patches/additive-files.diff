@@ -101,10 +101,10 @@ index 00000000..69d006d8
 +}
 diff --git a/docker-server-academic-json-importer.mjs b/docker-server-academic-json-importer.mjs
 new file mode 100644
-index 00000000..afc40173
+index 00000000..8f6dee08
 --- /dev/null
 +++ b/docker-server-academic-json-importer.mjs
-@@ -0,0 +1,52 @@
+@@ -0,0 +1,55 @@
 +/**
 + * academic-json importer: read papers.json from the source dir and emit the
 + * generic sidecar ingest shape for the academic-literature schema
@@ -129,6 +129,7 @@ index 00000000..afc40173
 +  const topics = new Map();
 +
 +  const skipped = [];
++  const seenEdges = new Set();
 +  for (const p of papers) {
 +    if (p.id == null || p.id === '') { skipped.push({ reason: 'missing id', title: p.title ?? null }); continue; }
 +    const paperId = String(p.id);
@@ -136,12 +137,14 @@ index 00000000..afc40173
 +    for (const a of p.authors || []) {
 +      const id = `author:${slug(a)}`;
 +      if (!authors.has(id)) { authors.set(id, { table: 'Author', props: { id, name: norm(a) } }); }
-+      edges.push({ table: 'AUTHORED', from: id, to: paperId, props: { id: `${id}->${paperId}` } });
++      const aEdgeId = `${id}->${paperId}`;
++      if (!seenEdges.has(aEdgeId)) { seenEdges.add(aEdgeId); edges.push({ table: 'AUTHORED', from: id, to: paperId, props: { id: aEdgeId } }); }
 +    }
 +    for (const t of p.topics || []) {
 +      const id = `topic:${slug(t)}`;
 +      if (!topics.has(id)) { topics.set(id, { table: 'Topic', props: { id, label: norm(t) } }); }
-+      edges.push({ table: 'ABOUT', from: paperId, to: id, props: { id: `${paperId}->${id}` } });
++      const tEdgeId = `${paperId}->${id}`;
++      if (!seenEdges.has(tEdgeId)) { seenEdges.add(tEdgeId); edges.push({ table: 'ABOUT', from: paperId, to: id, props: { id: tEdgeId } }); }
 +    }
 +  }
 +  nodes.push(...authors.values(), ...topics.values());

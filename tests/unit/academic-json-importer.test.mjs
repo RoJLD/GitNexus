@@ -41,4 +41,12 @@ describe('importAcademicJson', () => {
     expect(rg.report.skipped).toHaveLength(1);
     expect(rg.report.skipped[0]).toMatchObject({ reason: 'missing id' });
   });
+
+  it('dedups repeated authors/topics within one paper (report.edges matches stored)', async () => {
+    const dir = join(dirname(fileURLToPath(import.meta.url)), '../fixtures/academic-dup');
+    const rg = await importAcademicJson(dir);
+    expect(rg.edges.filter((e) => e.table === 'AUTHORED')).toHaveLength(1);
+    expect(rg.edges.filter((e) => e.table === 'ABOUT')).toHaveLength(1);
+    expect(rg.report.edges).toBe(rg.edges.length);
+  });
 });
