@@ -1036,7 +1036,7 @@ fin. Tout ce qui suit s'appuie sur Tier 1 + Tier 2.1-2.4 ✅ déjà livrés.
 
 | # | Sous-projet | Contenu | État |
 |---|---|---|---|
-| **P0** | **Template SDK + sidecar Kùzu** | Conteneur `gitnexus-graphs` (Kùzu, à nous, cohabitation-safe — zéro patch backend) ; SDK (import + lens) ; migration de `research-artifacts` sur Kùzu ; rendu via le canvas single-graph. | ✏️ **Designé** — [spec](docs/superpowers/specs/2026-06-03-graph-platform-p0-kuzu-sidecar-design.md) |
+| **P0** | **Template SDK + sidecar Kùzu** | Conteneur `gitnexus-graphs` (Kùzu, à nous, cohabitation-safe — zéro patch backend) ; SDK (import + lens, `kind`+`ddl`) ; `research-artifacts` migré sur Kùzu ; rendu via le canvas single-graph. | ✅ **Livré 2026-06-03** — vérifié E2E (scaffold→import→render sur Kùzu via le sidecar). [spec](docs/superpowers/specs/2026-06-03-graph-platform-p0-kuzu-sidecar-design.md) · [plan](docs/superpowers/plans/2026-06-03-graph-platform-p0-kuzu-sidecar.md) |
 | **P1** | **SDK prouvé sur 2 sortes** | 1 import-template (ex. littérature académique) + 1 lens-template (ex. call-graph/deps sur l'ASTKG) ; débloque lens-sur-ASTKG (compat version Kùzu). | 📋 Planifié |
 | **P2** | **Boîte à outils théorie-des-graphes** | Centralités (PageRank/betweenness/eigenvector), communautés, chemins/cycles, points d'articulation, embeddings — exposés par graphe (endpoints + MCP + overlays). | 📋 Planifié |
 | **P3** | **Paradigmes de visualisation** | Layouts hiérarchique (DAG/Sugiyama), matrice d'adjacence, 3D (`react-force-graph-3d`), nav multigraph (méta→graphe→nœud→inspecteur), sélecteur de layout par type de graphe. | 📋 Planifié |
