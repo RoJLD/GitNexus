@@ -243,3 +243,27 @@ infrastructure (per workspace CLAUDE.md test discipline).
   exact keyword list/heuristic is an implementation detail for the plan.
 - **Preprocessor C test treatment** (light synthetic-PDF unit test vs. excluded
   offline tool) — to settle at plan time; must not gate the suite.
+
+## Update 2026-06-03 — sidecar generalization + lens output shape (plan-time)
+
+Two refinements discovered while writing/executing the plan:
+
+1. **The sidecar is part of G1.** G1 (§3.1) covered the *importer* contract, but
+   the sidecar `ingest`/`render` were themselves single-schema: `ingest`
+   hardcoded `SET r.kind` on every edge (breaks on `AUTHORED`/`ABOUT`, which have
+   no `kind` column) and `render` projected the fixed `Artifact` columns. The
+   implementation generalizes both (`graphs-sidecar/kuzu-store.mjs`): edges set
+   arbitrary props; render uses `MATCH (n) RETURN n, label(n) AS lbl` with a
+   property-or-table-name fallback (`type = n.type ?? label(n)`, `kind = r.kind
+   ?? label(r)`). (kuzu 0.11.3 does not expose `_label` on returned rows, so the
+   `label()` function form is used.) Component table §3.3 should be read as
+   including `graphs-sidecar/kuzu-store.mjs`.
+2. **Lens output shape.** §3.2 sketched `{nodes:[{id,label,kind:'file'}],...}`.
+   The implementation instead returns the **research-render shape**
+   (`{nodes:[{id,type:'file',label,path,stage}], edges:[{id,source,target,kind:'imports'}]}`)
+   so the existing `research-graph-adapter` + the URL-driven render path render
+   it unchanged — the lens reaches the canvas via `?lens=<id>&repo=<repo>`.
+
+Implemented across commits 981b0368 (sidecar), 7adbfe73 (academic importer),
+fabd9ca6 (G1 contract), 6f9d8270 (academic template), 67e4abe2 (lens),
+f4dcaa36 (frontend), ef3a13bf (extractor).
