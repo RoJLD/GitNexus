@@ -217,6 +217,64 @@ index 00000000..69d006d8
 +  if (/done|complete|closed|cancel/i.test(lc)) return 'closed';
 +  return 'open';
 +}
+diff --git a/docker-server-academic-json-importer.mjs b/docker-server-academic-json-importer.mjs
+new file mode 100644
+index 00000000..afc40173
+--- /dev/null
++++ b/docker-server-academic-json-importer.mjs
+@@ -0,0 +1,52 @@
++/**
++ * academic-json importer: read papers.json from the source dir and emit the
++ * generic sidecar ingest shape for the academic-literature schema
++ * (Paper/Author/Topic + AUTHORED/ABOUT). Pure Node, deterministic, offline.
++ * The PDF->papers.json extraction is a separate offline tool (tools/academic-extract.mjs).
++ */
++import { readFile } from 'node:fs/promises';
++import { join } from 'node:path';
++
++const norm = (s) => String(s || '').trim().replace(/\s+/g, ' ');
++const slug = (s) => norm(s).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
++
++export async function importAcademicJson(absSourceDir) {
++  let doc;
++  try { doc = JSON.parse(await readFile(join(absSourceDir, 'papers.json'), 'utf8')); }
++  catch (e) { throw new Error(`cannot read papers.json in source: ${e.message}`); }
++  const papers = Array.isArray(doc.papers) ? doc.papers : [];
++
++  const nodes = [];
++  const edges = [];
++  const authors = new Map();
++  const topics = new Map();
++
++  const skipped = [];
++  for (const p of papers) {
++    if (p.id == null || p.id === '') { skipped.push({ reason: 'missing id', title: p.title ?? null }); continue; }
++    const paperId = String(p.id);
++    nodes.push({ table: 'Paper', props: { id: paperId, title: norm(p.title), year: Number(p.year) || 0, path: String(p.path || '') } });
++    for (const a of p.authors || []) {
++      const id = `author:${slug(a)}`;
++      if (!authors.has(id)) { authors.set(id, { table: 'Author', props: { id, name: norm(a) } }); }
++      edges.push({ table: 'AUTHORED', from: id, to: paperId, props: { id: `${id}->${paperId}` } });
++    }
++    for (const t of p.topics || []) {
++      const id = `topic:${slug(t)}`;
++      if (!topics.has(id)) { topics.set(id, { table: 'Topic', props: { id, label: norm(t) } }); }
++      edges.push({ table: 'ABOUT', from: paperId, to: id, props: { id: `${paperId}->${id}` } });
++    }
++  }
++  nodes.push(...authors.values(), ...topics.values());
++
++  const byTable = {};
++  for (const n of nodes) byTable[n.table] = (byTable[n.table] || 0) + 1;
++  const byKind = {};
++  for (const e of edges) byKind[e.table] = (byKind[e.table] || 0) + 1;
++
++  return {
++    schema_type: 'academic-literature', template: 'academic-literature', name: null, source: null, // name/source filled in by the caller (scaffold record)
++    nodes, edges,
++    report: { nodes: nodes.length, edges: edges.length, byType: byTable, byKind, unresolvedLinks: [], skipped },
++  };
++}
 diff --git a/docker-server-auto-reindex.mjs b/docker-server-auto-reindex.mjs
 new file mode 100644
 index 00000000..dcc5e953

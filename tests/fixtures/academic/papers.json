@@ -1,0 +1,8 @@
+{ "papers": [
+  { "id": "kyle1985", "title": "Continuous Auctions and Insider Trading", "year": 1985,
+    "path": "kyle.pdf", "authors": ["Albert S. Kyle"], "topics": ["market microstructure"] },
+  { "id": "fama1970", "title": "Efficient Capital Markets", "year": 1970,
+    "path": "fama.pdf", "authors": ["Eugene F. Fama"], "topics": ["market efficiency"] },
+  { "id": "famafrench1993", "title": "Common Risk Factors", "year": 1993,
+    "path": "ff.pdf", "authors": ["Eugene F. Fama", "Kenneth R. French"], "topics": ["market efficiency"] }
+]}

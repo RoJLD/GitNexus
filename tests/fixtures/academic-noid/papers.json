@@ -1,0 +1,1 @@
+{ "papers": [ { "title": "No Id Paper", "authors": ["X"], "topics": ["t"] }, { "id": "ok1", "title": "OK", "year": 2000, "path": "ok.pdf", "authors": ["Y"], "topics": ["t"] } ] }
