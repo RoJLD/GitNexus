@@ -32,6 +32,62 @@ jobs:
       - name: Build derived images (FAILS if patches don't produce a building image)
         run: docker compose -f docker-compose.test.yml build
 
+  # Blocking guard (added 2026-06-03) for the missing-Dockerfile-COPY boot-crash
+  # class. build-gate BUILDS the web image but never BOOTS it, so a route module
+  # absent from Dockerfile.web's explicit per-file COPY list (docker-server.mjs
+  # imports it at boot via registerGitnexusRoutes) passes build-gate green and
+  # only crash-loops at runtime with ERR_MODULE_NOT_FOUND (hit during P1, fixed
+  # in 10879d77). This job boots the stack and curls the web container's
+  # /graph/templates — which loads ALL route modules — so a missing COPY turns it
+  # red. Intentionally NOT continue-on-error.
+  boot-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: Apply upstream patches to a fresh clone
+        run: node scripts/apply-upstream-patches.mjs
+      - name: Pre-pull upstream image
+        run: docker pull ghcr.io/abhigyanpatwari/gitnexus:${{ env.GITNEXUS_VERSION }}
+      - name: Build derived images
+        run: docker compose -f docker-compose.test.yml build
+      - name: Extract a projects root for the mount
+        run: mkdir -p /tmp/boot-proj && tar -xzf tests/fixtures/sample-repo.tar.gz -C /tmp/boot-proj
+      - name: Boot the stack
+        run: TEST_PROJECTS_ROOT=/tmp/boot-proj docker compose -f docker-compose.test.yml up -d
+      - name: Smoke — web boots and serves /graph/templates (loads all route modules)
+        run: |
+          ok=0
+          for i in $(seq 1 60); do
+            if curl -fsS http://localhost:4173/graph/templates >/dev/null 2>&1; then ok=1; break; fi
+            sleep 3
+          done
+          if [ "$ok" != "1" ]; then
+            echo "::error::web /graph/templates never came up — boot crash (missing Dockerfile.web COPY?)"
+            docker compose -f docker-compose.test.yml logs --no-color gitnexus-web-test | tail -50
+            exit 1
+          fi
+          # Assert the P1 route modules actually registered (proves graph-lens +
+          # academic-json + graph-templates all loaded, not just that the server is up).
+          body="$(curl -fsS http://localhost:4173/graph/templates)"
+          echo "$body" | grep -q 'imports-deps' || { echo "::error::imports-deps lens absent — a route module failed to load"; exit 1; }
+          echo "$body" | grep -q 'academic-literature' || { echo "::error::academic-literature absent — a route module failed to load"; exit 1; }
+          echo "boot smoke OK"
+      - name: Dump logs on failure
+        if: failure()
+        run: docker compose -f docker-compose.test.yml logs --no-color > boot-logs.txt
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: boot-smoke-logs
+          path: boot-logs.txt
+      - name: Teardown
+        if: always()
+        run: docker compose -f docker-compose.test.yml down -v
+
   inventory-check:
     runs-on: ubuntu-latest
     continue-on-error: true
