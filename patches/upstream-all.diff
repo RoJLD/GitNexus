@@ -4990,12 +4990,90 @@ index 00000000..f30716c8
 +    filesTouched: Array.isArray(c.files) ? c.files.length : 0,
 +  }));
 +}
+diff --git a/docker-server-graph-lens-core.mjs b/docker-server-graph-lens-core.mjs
+new file mode 100644
+index 00000000..344e37d0
+--- /dev/null
++++ b/docker-server-graph-lens-core.mjs
+@@ -0,0 +1,37 @@
++/**
++ * Lens projections over a /api/graph KnowledgeGraph JSON. Pure, no I/O.
++ * Output is shaped like a research render ({nodes:[{id,type,label,path,stage}],
++ * edges:[{id,source,target,kind}]}) so the existing research-graph-adapter
++ * renders it unchanged. See spec 2026-06-03-graph-platform-p1-sdk-proof-design.md.
++ */
++
++/** Project a KnowledgeGraph to a file-level IMPORTS dependency graph. */
++export function projectImports(graph) {
++  const nodes = Array.isArray(graph?.nodes) ? graph.nodes : [];
++  const rels = Array.isArray(graph?.relationships) ? graph.relationships : [];
++  const fileOf = new Map();
++  for (const n of nodes) {
++    const fp = n?.properties?.filePath;
++    if (typeof fp === 'string' && fp) fileOf.set(n.id, fp);
++  }
++  const seen = new Set();
++  const edges = [];
++  const usedFiles = new Set();
++  for (const r of rels) {
++    if (r?.type !== 'IMPORTS') continue;
++    const s = fileOf.get(r.sourceId);
++    const t = fileOf.get(r.targetId);
++    if (!s || !t || s === t) continue;
++    const key = `${s}\0${t}`;
++    if (seen.has(key)) continue;
++    seen.add(key);
++    edges.push({ id: `${s}->${t}`, source: s, target: t, kind: 'imports' });
++    usedFiles.add(s); usedFiles.add(t);
++  }
++  const fileNodes = [...usedFiles].map((fp) => ({ id: fp, type: 'file', label: fp.split('/').pop() || fp, path: fp, stage: '' }));
++  return {
++    schema_type: 'imports-deps', template: 'imports-deps', name: null, source: null,
++    nodes: fileNodes, edges,
++    report: { nodes: fileNodes.length, edges: edges.length },
++  };
++}
+diff --git a/docker-server-graph-lens.mjs b/docker-server-graph-lens.mjs
+new file mode 100644
+index 00000000..c353cb6e
+--- /dev/null
++++ b/docker-server-graph-lens.mjs
+@@ -0,0 +1,29 @@
++/**
++ * Lens routes (web container). A lens is a saved projection over an EXISTING
++ * graph (target 'astkg' = the CLI's KnowledgeGraph, read via /api/graph JSON —
++ * no Kùzu-file coupling). Modelled on docker-server-group-graph.mjs.
++ *   GET /graph/lens/:id?repo=<repo> -> { nodes, edges }  (research-render shape)
++ */
++import { projectImports } from './docker-server-graph-lens-core.mjs';
++
++const GITNEXUS_API = process.env.GITNEXUS_API || 'http://gitnexus:4747';
++const LENSES = { 'imports-deps': projectImports };
++
++function sendJson(res, code, body) { res.writeHead(code, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(body)); }
++
++export async function handleGraphLensRoute(req, url, res) {
++  // non-GET lens requests fall through intentionally (consistent with group-graph)
++  if (!url.pathname.startsWith('/graph/lens/') || req.method !== 'GET') return false;
++  const id = decodeURIComponent(url.pathname.slice('/graph/lens/'.length));
++  const project = LENSES[id];
++  if (!project) { sendJson(res, 404, { error: `unknown lens: ${id}` }); return true; }
++  const repo = url.searchParams.get('repo');
++  if (!repo) { sendJson(res, 400, { error: 'missing repo' }); return true; }
++  try {
++    const r = await fetch(`${GITNEXUS_API}/api/graph?repo=${encodeURIComponent(repo)}`);
++    if (!r.ok) { sendJson(res, 502, { error: `upstream /api/graph ${r.status}` }); return true; }
++    const graph = await r.json();
++    sendJson(res, 200, project(graph));
++  } catch (e) { sendJson(res, 500, { error: `lens failed: ${e.message}` }); return true; }
++  return true;
++}
 diff --git a/docker-server-graph-templates-core.mjs b/docker-server-graph-templates-core.mjs
 new file mode 100644
-index 00000000..6972fe56
+index 00000000..ea4f34d1
 --- /dev/null
 +++ b/docker-server-graph-templates-core.mjs
-@@ -0,0 +1,133 @@
+@@ -0,0 +1,142 @@
 +/**
 + * Graph-templates engine (web container, pure Node — no Kùzu).
 + * Registry + built-in descriptors + index store + Kùzu sidecar client. Graphs
@@ -5011,7 +5089,7 @@ index 00000000..6972fe56
 +export const INDEX_PATH = join(RESEARCH_DIR, 'index.json');
 +export const PROJECTS_ROOT = process.env.GITNEXUS_PROJECTS || '/data/projects';
 +
-+const BUILTINS = new Set(['research-artifacts', 'academic-literature']);
++const BUILTINS = new Set(['research-artifacts', 'academic-literature', 'imports-deps']);
 +
 +const registry = new Map();
 +
@@ -5104,6 +5182,15 @@ index 00000000..6972fe56
 +    'CREATE REL TABLE ABOUT   (FROM Paper  TO Topic, id STRING)',
 +  ],
 +  visual: { nodeColors: { Paper: '#3b82f6', Author: '#f59e0b', Topic: '#10b981' } },
++});
++
++registerTemplate({
++  id: 'imports-deps',
++  kind: 'lens',
++  target: 'astkg',
++  label: 'Imports / Dependencies',
++  schema_type: 'imports-deps',
++  description: 'File-level import/dependency projection over an indexed repo\'s code graph (ASTKG). Read-only lens; no new graph is created.',
 +});
 +
 +// ---- sidecar client helpers --------------------------------------------
@@ -7564,10 +7651,10 @@ index 00000000..5648a585
 +}
 diff --git a/docker-server-routes.mjs b/docker-server-routes.mjs
 new file mode 100644
-index 00000000..a7d2b7f0
+index 00000000..0b521832
 --- /dev/null
 +++ b/docker-server-routes.mjs
-@@ -0,0 +1,83 @@
+@@ -0,0 +1,85 @@
 +import { handleSnapshotRoute } from './docker-server-snapshots.mjs';
 +import { handleSnapshotBulkRoute } from './docker-server-snapshots-bulk.mjs';
 +import { handleChurnRoute } from './docker-server-churn.mjs';
@@ -7604,6 +7691,7 @@ index 00000000..a7d2b7f0
 +import { handleGroupRoute } from './docker-server-group.mjs';
 +import { handleGroupGraphRoute } from './docker-server-group-graph.mjs';
 +import { handleGraphTemplatesRoute } from './docker-server-graph-templates.mjs';
++import { handleGraphLensRoute } from './docker-server-graph-lens.mjs';
 +
 +// Returns true once a handler claims (responds to) the request; false if no route matched.
 +export async function registerGitnexusRoutes(req, reqUrl, res, ctx) {
@@ -7643,6 +7731,7 @@ index 00000000..a7d2b7f0
 +  if (await handlePrewarmRoute(req, reqUrl, res, ctx)) return true;
 +  if (await handleGroupRoute(req, reqUrl, res)) return true;
 +  if (await handleGroupGraphRoute(req, reqUrl, res)) return true;
++  if (await handleGraphLensRoute(req, reqUrl, res)) return true;
 +  if (await handleGraphTemplatesRoute(req, reqUrl, res, ctx)) return true;
 +  return false;
 +}
