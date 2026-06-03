@@ -13856,7 +13856,7 @@ index 211bb65c..49a1c7ae 100644
      "@vitejs/plugin-react": "^5.1.4",
      "@vitest/coverage-v8": "^4.1.5",
 diff --git a/gitnexus-web/src/App.tsx b/gitnexus-web/src/App.tsx
-index 2ee3569a..6e3aca29 100644
+index 2ee3569a..2dde773a 100644
 --- a/gitnexus-web/src/App.tsx
 +++ b/gitnexus-web/src/App.tsx
 @@ -1,11 +1,27 @@
@@ -13937,7 +13937,7 @@ index 2ee3569a..6e3aca29 100644
  
    const handleServerConnect = useCallback(
      async (result: ConnectResult): Promise<void> => {
-@@ -187,6 +224,19 @@ const AppContent = () => {
+@@ -187,6 +224,26 @@ const AppContent = () => {
      graphCanvasRef.current?.focusNode(nodeId);
    }, []);
  
@@ -13945,6 +13945,13 @@ index 2ee3569a..6e3aca29 100644
 +    const templates = await listTemplates();
 +    const templateId = window.prompt(`Template id (${templates.map((t) => t.id).join(', ')})`, 'research-artifacts');
 +    if (!templateId) return;
++    const tpl = templates.find((t) => t.id === templateId);
++    if (tpl?.kind === 'lens') {
++      const repo = window.prompt('Repo to project (indexed repo name)', projectName ?? '');
++      if (!repo) return;
++      window.location.search = `?lens=${encodeURIComponent(templateId)}&repo=${encodeURIComponent(repo)}`;
++      return;
++    }
 +    const name = window.prompt('New graph name');
 +    if (!name) return;
 +    const source = window.prompt('Source dir (relative to /data/projects)');
@@ -13952,12 +13959,12 @@ index 2ee3569a..6e3aca29 100644
 +    await scaffoldGraph(templateId, name, source);
 +    await importGraph(name);
 +    window.location.search = `?research=${encodeURIComponent(name)}`;
-+  }, []);
++  }, [projectName]);
 +
    // Handle settings saved - refresh and reinitialize agent
    // NOTE: Must be defined BEFORE any conditional returns (React hooks rule)
    const handleSettingsSaved = useCallback(() => {
-@@ -194,6 +244,21 @@ const AppContent = () => {
+@@ -194,6 +251,21 @@ const AppContent = () => {
      initializeAgent();
    }, [refreshLLMSettings, initializeAgent]);
  
@@ -13979,7 +13986,7 @@ index 2ee3569a..6e3aca29 100644
    // ── Server heartbeat: detect when server goes down while exploring ────────
    // Uses SSE (EventSource) for instant detection — no polling delay.
    // On disconnect: show a reconnecting banner instead of resetting to onboarding.
-@@ -250,22 +315,84 @@ const AppContent = () => {
+@@ -250,22 +322,84 @@ const AppContent = () => {
            // Retry once after 1s if the repo isn't found yet (server may still
            // be reinitializing after the worker completed).
            const url = serverBaseUrl ?? 'http://localhost:4747';
@@ -14065,7 +14072,7 @@ index 2ee3569a..6e3aca29 100644
                fetchRepos()
                  .then((repos) => setAvailableRepos(repos))
                  .catch(() => {});
-@@ -281,7 +408,129 @@ const AppContent = () => {
+@@ -281,7 +415,129 @@ const AppContent = () => {
  
          {/* Graph area - takes remaining space */}
          <div className="relative min-w-0 flex-1">
@@ -14196,7 +14203,7 @@ index 2ee3569a..6e3aca29 100644
  
            {/* Code References Panel (overlay) - does NOT resize the graph, it overlaps on top */}
            {isCodePanelOpen && (codeReferences.length > 0 || !!selectedNode) && (
-@@ -289,12 +538,27 @@ const AppContent = () => {
+@@ -289,12 +545,27 @@ const AppContent = () => {
                <CodeReferencesPanel onFocusNode={handleFocusNode} />
              </div>
            )}
@@ -14224,7 +14231,7 @@ index 2ee3569a..6e3aca29 100644
        <StatusBar />
  
        {serverDisconnected && (
-@@ -309,6 +573,38 @@ const AppContent = () => {
+@@ -309,6 +580,38 @@ const AppContent = () => {
          onClose={() => setSettingsPanelOpen(false)}
          onSettingsSaved={handleSettingsSaved}
        />
@@ -18238,7 +18245,7 @@ index 00000000..05e76180
 +  );
 +};
 diff --git a/gitnexus-web/src/components/GraphCanvas.tsx b/gitnexus-web/src/components/GraphCanvas.tsx
-index e34fd434..71757404 100644
+index e34fd434..31014c0e 100644
 --- a/gitnexus-web/src/components/GraphCanvas.tsx
 +++ b/gitnexus-web/src/components/GraphCanvas.tsx
 @@ -1,4 +1,4 @@
@@ -18284,7 +18291,7 @@ index e34fd434..71757404 100644
 +} from '../lib/augmented-timeline';
 +import { prefetchSnapshotGhosts } from '../services/snapshot-ghosts-cache';
 +import { researchGraphToGraphology, type ResearchGraph } from '../lib/research-graph-adapter';
-+import { getResearchGraph } from '../services/research-client';
++import { getResearchGraph, applyLens } from '../services/research-client';
  
  export interface GraphCanvasHandle {
    focusNode: (nodeId: string) => void;
@@ -18295,7 +18302,7 @@ index e34fd434..71757404 100644
    const {
      graph,
      setSelectedNode,
-@@ -46,9 +71,74 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -46,9 +71,83 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
      clearAICitationHighlights,
      clearBlastRadius,
      animatedNodes,
@@ -18350,6 +18357,15 @@ index e34fd434..71757404 100644
 +    getResearchGraph(researchName).then(setResearchData).catch((e) => console.error('research graph load failed', e));
 +  }, [researchName]);
 +
++  // Lens — URL-driven projection for ?lens=<id>&repo=<repo>. Reuses researchData +
++  // the research render path (the lens result is shaped like a research graph).
++  const lensId = new URLSearchParams(window.location.search).get('lens');
++  const lensRepo = new URLSearchParams(window.location.search).get('repo');
++  useEffect(() => {
++    if (!lensId || !lensRepo) return;
++    applyLens(lensId, lensRepo).then(setResearchData).catch((e) => console.error('lens load failed', e));
++  }, [lensId, lensRepo]);
++
 +  // Augmented graph (Section D — Task 9 / Section F — Task 12).
 +  // `ghosts` is the payload fetched from /ghosts (via the cached
 +  // ghosts-client) whenever the active repo changes; `selectedGhostId`
@@ -18371,7 +18387,7 @@ index e34fd434..71757404 100644
    const effectiveHighlightedNodeIds = useMemo(() => {
      if (!isAIHighlightsEnabled) return highlightedNodeIds;
      const next = new Set(highlightedNodeIds);
-@@ -82,6 +172,23 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -82,6 +181,23 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
  
    const handleNodeClick = useCallback(
      (nodeId: string) => {
@@ -18395,7 +18411,7 @@ index e34fd434..71757404 100644
        if (!graph) return;
        const node = nodeById.get(nodeId);
        if (node) {
-@@ -89,6 +196,7 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -89,6 +205,7 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
          openCodePanel();
        }
      },
@@ -18403,7 +18419,7 @@ index e34fd434..71757404 100644
      [graph, nodeById, setSelectedNode, openCodePanel],
    );
  
-@@ -130,6 +238,7 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -130,6 +247,7 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
      containerRef,
      sigmaRef,
      setGraph: setSigmaGraph,
@@ -18411,7 +18427,7 @@ index e34fd434..71757404 100644
      zoomIn,
      zoomOut,
      resetZoom,
-@@ -139,6 +248,12 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -139,6 +257,12 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
      stopLayout,
      selectedNode: sigmaSelectedNode,
      setSelectedNode: setSigmaSelectedNode,
@@ -18424,7 +18440,7 @@ index e34fd434..71757404 100644
    } = useSigma({
      onNodeClick: handleNodeClick,
      onNodeHover: handleNodeHover,
-@@ -147,6 +262,10 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -147,6 +271,10 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
      blastRadiusNodeIds: effectiveBlastRadiusNodeIds,
      animatedNodes: effectiveAnimatedNodes,
      visibleEdgeTypes,
@@ -18435,16 +18451,16 @@ index e34fd434..71757404 100644
    });
  
    // Expose focusNode to parent via ref
-@@ -170,6 +289,8 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -170,6 +298,8 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
  
    // Update Sigma graph when KnowledgeGraph changes
    useEffect(() => {
 +    if (groupGraphActive) return;
-+    if (researchName) return; // research view owns the canvas
++    if (researchName || lensId) return; // research/lens view owns the canvas
      if (!graph) return;
  
      // Build communityMemberships map from MEMBER_OF relationships
-@@ -189,8 +310,34 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -189,8 +319,37 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
      });
  
      const sigmaGraph = knowledgeGraphToGraphology(graph, communityMemberships);
@@ -18462,12 +18478,15 @@ index e34fd434..71757404 100644
 +    setSigmaGraph(g, { cacheKey: `group:${groupGraphData.group}` });
 +  }, [groupGraphActive, groupGraphData, setSigmaGraph]);
 +
-+  // Research graph — mount JSON-derived graph when ?research=<name> is set
++  // Research graph / lens — mount the JSON-derived graph for ?research=<name> OR ?lens=<id>&repo=<repo>.
++  // Both paths populate researchData; the lens output is research-shaped, so the same adapter renders it.
 +  useEffect(() => {
-+    if (!researchName || !researchData) return;
++    if (!researchData) return;
++    if (!researchName && !lensId) return;
 +    const g = researchGraphToGraphology(researchData);
-+    setSigmaGraph(g, { cacheKey: `research:${researchName}` });
-+  }, [researchName, researchData, setSigmaGraph]);
++    const cacheKey = researchName ? `research:${researchName}` : `lens:${lensId}:${lensRepo}`;
++    setSigmaGraph(g, { cacheKey });
++  }, [researchName, lensId, lensRepo, researchData, setSigmaGraph]);
 +
 +  // Expose useSigma.recomputeLayout up to useAppState so the Header
 +  // "Recompute layout" button can fire it. The action lives on
@@ -18481,7 +18500,7 @@ index e34fd434..71757404 100644
  
    // Update node visibility when filters change
    useEffect(() => {
-@@ -205,6 +352,198 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -205,6 +364,198 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
      // eslint-disable-next-line react-hooks/exhaustive-deps -- sigmaRef identity never changes
    }, [visibleLabels, depthFilter, appSelectedNode]);
  
@@ -18680,7 +18699,7 @@ index e34fd434..71757404 100644
    // Sync app selected node with sigma
    useEffect(() => {
      if (appSelectedNode) {
-@@ -249,6 +588,130 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -249,6 +600,130 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
          className="sigma-container h-full w-full cursor-grab active:cursor-grabbing"
        />
  
@@ -18811,7 +18830,7 @@ index e34fd434..71757404 100644
        {/* Hovered node tooltip - only show when NOT selected */}
        {hoveredNodeName && !sigmaSelectedNode && (
          <div className="pointer-events-none absolute top-4 left-1/2 z-20 -translate-x-1/2 animate-fade-in rounded-lg border border-border-subtle bg-elevated/95 px-3 py-1.5 backdrop-blur-sm">
-@@ -350,8 +813,50 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -350,8 +825,50 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
        {/* Query FAB */}
        <QueryFAB />
  
@@ -31523,10 +31542,10 @@ index 00000000..02e6bf4e
 +}
 diff --git a/gitnexus-web/src/services/research-client.ts b/gitnexus-web/src/services/research-client.ts
 new file mode 100644
-index 00000000..1245b478
+index 00000000..03e6944d
 --- /dev/null
 +++ b/gitnexus-web/src/services/research-client.ts
-@@ -0,0 +1,46 @@
+@@ -0,0 +1,52 @@
 +import type { ResearchGraph } from '../lib/research-graph-adapter';
 +
 +export interface GraphTemplate {
@@ -31535,6 +31554,8 @@ index 00000000..1245b478
 +  schema_type: string;
 +  description?: string;
 +  visual?: { nodeColors?: Record<string, string> };
++  kind?: 'import' | 'lens';
++  target?: string;
 +}
 +export interface ResearchRecord {
 +  name: string;
@@ -31572,6 +31593,10 @@ index 00000000..1245b478
 +    body: JSON.stringify({ name }),
 +  });
 +  return (await jsonOrThrow(res)).report;
++}
++
++export async function applyLens(id: string, repo: string): Promise<ResearchGraph> {
++  return jsonOrThrow(await fetch(`/graph/lens/${encodeURIComponent(id)}?repo=${encodeURIComponent(repo)}`));
 +}
 diff --git a/gitnexus-web/src/services/semantic-labeler.ts b/gitnexus-web/src/services/semantic-labeler.ts
 new file mode 100644
