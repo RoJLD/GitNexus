@@ -47,4 +47,15 @@ describe('template kinds + ddl', () => {
     expect(t.ddl.join(' ')).toMatch(/CREATE NODE TABLE Artifact/);
     expect(t.ddl.join(' ')).toMatch(/CREATE REL TABLE Link/);
   });
+
+  it('registers the academic-literature import template with a multi-table DDL', () => {
+    const acad = listTemplates().find((t) => t.id === 'academic-literature');
+    expect(acad).toBeTruthy();
+    expect(acad.kind).toBe('import');
+    expect(acad.importer).toBe('academic-json');
+    expect(acad.ddl.some((s) => /CREATE NODE TABLE Paper/.test(s))).toBe(true);
+    expect(acad.ddl.some((s) => /CREATE REL TABLE AUTHORED/.test(s))).toBe(true);
+    expect(acad.ddl.some((s) => /CREATE NODE TABLE Topic/.test(s))).toBe(true);
+    expect(acad.ddl.some((s) => /CREATE REL TABLE ABOUT/.test(s))).toBe(true);
+  });
 });

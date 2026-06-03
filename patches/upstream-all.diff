@@ -4992,10 +4992,10 @@ index 00000000..f30716c8
 +}
 diff --git a/docker-server-graph-templates-core.mjs b/docker-server-graph-templates-core.mjs
 new file mode 100644
-index 00000000..b4db55d5
+index 00000000..6972fe56
 --- /dev/null
 +++ b/docker-server-graph-templates-core.mjs
-@@ -0,0 +1,114 @@
+@@ -0,0 +1,133 @@
 +/**
 + * Graph-templates engine (web container, pure Node — no Kùzu).
 + * Registry + built-in descriptors + index store + Kùzu sidecar client. Graphs
@@ -5011,7 +5011,7 @@ index 00000000..b4db55d5
 +export const INDEX_PATH = join(RESEARCH_DIR, 'index.json');
 +export const PROJECTS_ROOT = process.env.GITNEXUS_PROJECTS || '/data/projects';
 +
-+const BUILTINS = new Set(['research-artifacts']);
++const BUILTINS = new Set(['research-artifacts', 'academic-literature']);
 +
 +const registry = new Map();
 +
@@ -5087,6 +5087,25 @@ index 00000000..b4db55d5
 +  },
 +});
 +
++registerTemplate({
++  id: 'academic-literature',
++  kind: 'import',
++  label: 'Academic Literature',
++  schema_type: 'academic-literature',
++  description: 'Graph of academic papers (Paper/Author/Topic) built from a papers.json the offline extractor produces from a PDF corpus. AUTHORED + ABOUT edges; no citations in P1.',
++  importer: 'academic-json',
++  include: ['papers.json'],
++  exclude: [],
++  ddl: [
++    'CREATE NODE TABLE Paper (id STRING, title STRING, year INT64, path STRING, PRIMARY KEY(id))',
++    'CREATE NODE TABLE Author(id STRING, name STRING, PRIMARY KEY(id))',
++    'CREATE NODE TABLE Topic (id STRING, label STRING, PRIMARY KEY(id))',
++    'CREATE REL TABLE AUTHORED(FROM Author TO Paper, id STRING)',
++    'CREATE REL TABLE ABOUT   (FROM Paper  TO Topic, id STRING)',
++  ],
++  visual: { nodeColors: { Paper: '#3b82f6', Author: '#f59e0b', Topic: '#10b981' } },
++});
++
 +// ---- sidecar client helpers --------------------------------------------
 +
 +const GRAPHS_URL = process.env.GRAPHS_URL || 'http://gitnexus-graphs:4749';
@@ -5112,10 +5131,10 @@ index 00000000..b4db55d5
 +}
 diff --git a/docker-server-graph-templates.mjs b/docker-server-graph-templates.mjs
 new file mode 100644
-index 00000000..c3fbd364
+index 00000000..6bf6721c
 --- /dev/null
 +++ b/docker-server-graph-templates.mjs
-@@ -0,0 +1,66 @@
+@@ -0,0 +1,67 @@
 +/**
 + * Graph templates routes (web container) — sidecar-backed (Kùzu).
 + *   GET  /graph/templates              -> { templates }
@@ -5130,10 +5149,11 @@ index 00000000..c3fbd364
 +  sidecarCreate, sidecarIngest, sidecarRender,
 +} from './docker-server-graph-templates-core.mjs';
 +import { importResearchFs } from './docker-server-research-fs-importer.mjs';
++import { importAcademicJson } from './docker-server-academic-json-importer.mjs';
 +
 +function sendJson(res, code, obj) { res.writeHead(code, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(obj)); }
 +async function readBody(req) { let b = ''; for await (const c of req) b += c; return b ? JSON.parse(b) : {}; }
-+const IMPORTERS = { 'research-fs': importResearchFs };
++const IMPORTERS = { 'research-fs': importResearchFs, 'academic-json': importAcademicJson };
 +
 +export async function handleGraphTemplatesRoute(req, url, res, _opts) {
 +  const path = url.pathname;
