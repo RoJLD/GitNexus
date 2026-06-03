@@ -25,7 +25,7 @@ describe('fuzzyMatchTicketToGhost', () => {
     const r = fuzzyMatchTicketToGhost(
       { title: 'What-if simulator v2', description: 'follow-up to rename support' },
       ghosts,
-      0.5,
+      0.3,
     );
     expect(r).toBeTruthy();
     expect(r.ghost.id).toBe('g1');

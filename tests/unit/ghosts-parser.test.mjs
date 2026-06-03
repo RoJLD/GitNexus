@@ -130,7 +130,7 @@ describe('parseRoadmap — Tier sections', () => {
     '### 1.4 — Entropie structurelle ✅',
     '**Promesse** : un seul chiffre — le **Coefficient de Cohérence Structurelle**.',
     '',
-    '**Premier pas** : `GET /entropy?repo=<base>` qui calcule un score par snapshot.',
+    '**Premier pas** : `/entropy?repo=<base>` qui calcule un score par snapshot.',
     '',
     '### 2.3 — What-if simulator',
     '**Promesse** : "Si je renomme `validateUser`...", mutations symboliques.',

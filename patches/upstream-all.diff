@@ -16909,10 +16909,10 @@ index 98c20c68..50a414e4 100644
              <h3 className="mb-3 text-xs font-medium tracking-wide text-text-secondary uppercase">
 diff --git a/gitnexus-web/src/components/GanttPanel.tsx b/gitnexus-web/src/components/GanttPanel.tsx
 new file mode 100644
-index 00000000..614d86c3
+index 00000000..2a41629a
 --- /dev/null
 +++ b/gitnexus-web/src/components/GanttPanel.tsx
-@@ -0,0 +1,461 @@
+@@ -0,0 +1,463 @@
 +/**
 + * GanttPanel — fetch /ghosts, compute Gantt layout, render SVG + CSV export.
 + *
@@ -16935,7 +16935,6 @@ index 00000000..614d86c3
 +} from '../lib/gantt-layout';
 +import { fetchGhosts, type GhostRuntime } from '../services/ghosts-client';
 +import {
-+  passesFilter,
 +  derivedStatus,
 +  DEFAULT_GHOST_FILTERS,
 +  type GhostFilters,
@@ -17153,22 +17152,18 @@ index 00000000..614d86c3
 +  }, [repo, swimlaneMode]);
 +
 +  // Filter the runtime ghosts BEFORE projecting into layout inputs.
-+  // Reuses `passesFilter` from ghost-layout so the Gantt agrees with
-+  // the Augmented graph on what's visible (Tier/status gating).
++  // Gantt-local gating: unlike the Augmented graph (passesFilter), the
++  // Gantt SHOWS materialized ghosts as solid bars (spec 2026-05-26-...-gantt-design).
 +  const filteredRuntime = useMemo<GhostRuntime[]>(() => {
 +    if (!ghosts) return [];
-+    return ghosts.filter((g) =>
-+      passesFilter(
-+        {
-+          id: g.id ?? '',
-+          title: g.declared?.title ?? '',
-+          tier: g.declared?.tier ?? null,
-+          status: derivedStatus(g),
-+          expectedLinks: g.declared?.expectedLinks ?? [],
-+        },
-+        effectiveFilters,
-+      ),
-+    );
++    return ghosts.filter((g) => {
++      if (!effectiveFilters.showGhosts) return false;
++      const status = derivedStatus(g);
++      if (status === 'cancelled' && !effectiveFilters.showCancelled) return false;
++      const tier = g.declared?.tier ?? null;
++      if (tier && !effectiveFilters.tiers.includes(String(tier).split('.')[0])) return false;
++      return true;
++    });
 +  }, [ghosts, effectiveFilters]);
 +
 +  const inputs = useMemo<GhostInput[]>(
@@ -17232,7 +17227,14 @@ index 00000000..614d86c3
 +    // Cluster lanes via the pure `assignSwimlanes` helper, which sorts
 +    // clusters by min(plannedAt) ASC and folds the unclustered ghosts
 +    // into a final "Unclustered" lane.
-+    const lanes = assignSwimlanes(rows, clusters ?? []);
++    // Bridge the GanttRow shape to what assignSwimlanes expects: `id`
++    // (mapped from ghostId) and `plannedAt` (mapped from bars[0].startDate).
++    const swimRows = rows.map((r) => ({
++      ...r,
++      id: r.ghostId,
++      plannedAt: r.bars[0]?.startDate ? { date: r.bars[0].startDate } : null,
++    }));
++    const lanes = assignSwimlanes(swimRows, clusters ?? []);
 +    for (const lane of lanes) {
 +      // Look up the matching cluster object so the header can carry
 +      // the synthesizedStatus + completion %. `Unclustered` has no

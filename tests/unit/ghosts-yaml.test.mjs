@@ -29,7 +29,7 @@ describe('renderRoadmapYml', () => {
   it('escapes characters that would break YAML (backticks, apostrophes, colons)', () => {
     const ghost = { ...sampleGhost, description: "It's a key: a value with `backticks`" };
     const out = renderRoadmapYml([ghost]);
-    expect(out).toContain("It's a key");
+    expect(out).toContain("It''s a key");
     expect(out).toContain('backticks');
   });
 
