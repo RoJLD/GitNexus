@@ -4874,10 +4874,10 @@ index 00000000..f30716c8
 +}
 diff --git a/docker-server-graph-templates-core.mjs b/docker-server-graph-templates-core.mjs
 new file mode 100644
-index 00000000..3e9dd3b9
+index 00000000..b4db55d5
 --- /dev/null
 +++ b/docker-server-graph-templates-core.mjs
-@@ -0,0 +1,124 @@
+@@ -0,0 +1,114 @@
 +/**
 + * Graph-templates engine (web container, pure Node — no Kùzu).
 + * Registry + built-in descriptors + index store + Kùzu sidecar client. Graphs
@@ -4992,22 +4992,12 @@ index 00000000..3e9dd3b9
 +export async function sidecarRender(name) {
 +  return graphsFetch(`/g/${encodeURIComponent(name)}/render`, { method: 'GET' });
 +}
-+
-+// ---- B2 mapper ---------------------------------------------------------
-+
-+/** Map a ResearchGraph ({nodes,edges}) to the sidecar ingest shape for the Artifact/Link schema. */
-+export function researchGraphToIngest(rg) {
-+  return {
-+    nodes: (rg.nodes || []).map((n) => ({ table: 'Artifact', props: { id: n.id, type: n.type, label: n.label, path: n.path, stage: n.stage } })),
-+    edges: (rg.edges || []).map((e) => ({ table: 'Link', from: e.source, to: e.target, props: { id: e.id, kind: e.kind } })),
-+  };
-+}
 diff --git a/docker-server-graph-templates.mjs b/docker-server-graph-templates.mjs
 new file mode 100644
-index 00000000..dc676561
+index 00000000..c3fbd364
 --- /dev/null
 +++ b/docker-server-graph-templates.mjs
-@@ -0,0 +1,67 @@
+@@ -0,0 +1,66 @@
 +/**
 + * Graph templates routes (web container) — sidecar-backed (Kùzu).
 + *   GET  /graph/templates              -> { templates }
@@ -5019,7 +5009,7 @@ index 00000000..dc676561
 +import {
 +  listTemplates, getTemplate, sanitizeSource,
 +  readIndex, writeIndexRecord,
-+  sidecarCreate, sidecarIngest, sidecarRender, researchGraphToIngest,
++  sidecarCreate, sidecarIngest, sidecarRender,
 +} from './docker-server-graph-templates-core.mjs';
 +import { importResearchFs } from './docker-server-research-fs-importer.mjs';
 +
@@ -5058,8 +5048,7 @@ index 00000000..dc676561
 +    let abs; try { abs = sanitizeSource(record.source); } catch (e) { sendJson(res, 400, { error: e.message }); return true; }
 +    try {
 +      const rg = await importer(abs, { include: tpl.include, exclude: tpl.exclude });
-+      const ing = researchGraphToIngest(rg);
-+      await sidecarIngest(name, ing.nodes, ing.edges);
++      await sidecarIngest(name, rg.nodes, rg.edges);
 +      sendJson(res, 200, { report: rg.report });
 +    } catch (e) { sendJson(res, 500, { error: `import failed: ${e.message}` }); return true; }
 +    return true;
@@ -7287,7 +7276,7 @@ index 00000000..ae8e0f6a
 +}
 diff --git a/docker-server-research-fs-importer.mjs b/docker-server-research-fs-importer.mjs
 new file mode 100644
-index 00000000..3f6a698a
+index 00000000..5648a585
 --- /dev/null
 +++ b/docker-server-research-fs-importer.mjs
 @@ -0,0 +1,144 @@
@@ -7430,8 +7419,8 @@ index 00000000..3f6a698a
 +    name: null,
 +    source: null,
 +    generated: new Date().toISOString(),
-+    nodes,
-+    edges,
++    nodes: nodes.map((n) => ({ table: 'Artifact', props: { id: n.id, type: n.type, label: n.label, path: n.path, stage: n.stage } })),
++    edges: edges.map((e) => ({ table: 'Link', from: e.source, to: e.target, props: { id: e.id, kind: e.kind } })),
 +    report: { nodes: nodes.length, edges: edges.length, byType, byKind, unresolvedLinks, skipped: [] },
 +  };
 +}

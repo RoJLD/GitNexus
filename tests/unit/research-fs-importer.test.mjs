@@ -22,16 +22,19 @@ afterAll(async () => { await rm(dir, { recursive: true, force: true }); });
 describe('importResearchFs', () => {
   it('builds nodes from files, honors frontmatter types, and resolves links', async () => {
     const g = await importResearchFs(dir, { include: ['**/*.ipynb', '**/*.md'], exclude: ['.ipynb_checkpoints'] });
-    const byId = Object.fromEntries(g.nodes.map((n) => [n.id, n]));
-    expect(byId.h1.type).toBe('hypothesis');
-    expect(byId.h1.label).toBe('Mean reversion');
-    expect(byId.r1.type).toBe('result');
-    expect(byId.e1.type).toBe('experiment');
-    expect(byId.h1.stage).toBe('01_exploration');
-    const edge = g.edges.find((e) => e.source === 'h1' && e.target === 'r1');
-    expect(edge.kind).toBe('validates');
-    expect(g.nodes.some((n) => n.path.includes('.ipynb_checkpoints'))).toBe(false);
+    const byId = Object.fromEntries(g.nodes.map((n) => [n.props.id, n]));
+    expect(byId.h1.props.type).toBe('hypothesis');
+    expect(byId.h1.props.label).toBe('Mean reversion');
+    expect(byId.r1.props.type).toBe('result');
+    expect(byId.e1.props.type).toBe('experiment');
+    expect(byId.h1.props.stage).toBe('01_exploration');
+    const edge = g.edges.find((e) => e.from === 'h1' && e.to === 'r1');
+    expect(edge.props.kind).toBe('validates');
+    expect(g.nodes.some((n) => n.props.path.includes('.ipynb_checkpoints'))).toBe(false);
     expect(g.report.byType.hypothesis).toBe(1);
+    // generic ingest shape (post-G1): nodes carry table:'Artifact', edges table:'Link'
+    expect(g.nodes.every((n) => n.table === 'Artifact' && typeof n.props.id === 'string')).toBe(true);
+    expect(g.edges.every((e) => e.table === 'Link' && 'from' in e && 'to' in e)).toBe(true);
   });
 
   it('records unresolved links instead of throwing', async () => {
