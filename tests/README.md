@@ -155,6 +155,8 @@ Pré-requis local : Rancher Desktop running, **Node ≥ 22 LTS**. CI : `.github/
 | MCP ghost_audit | `integration/mcp/ghost_audit.test.mjs` | stdio JSON-RPC tool call |
 | Clusters endpoint | `integration/endpoints/clusters.test.mjs` | `GET /clusters` 200/400/404 + filter |
 | Group graph endpoints | `integration/endpoints/group-graph.test.mjs` | `GET /groups` 200 array shape + `GET /group/status` 400 + `POST /group/sync` 400 + `GET /graph/merged` 400 missing-group + 404 unsynced-group |
+| Graph templates | `integration/endpoints/graph-templates.test.mjs` | `/graph/templates` + scaffold -> import -> `/graph/research/:name` + 400 unknown template |
+| Graph template tools | `integration/mcp/graph_templates.test.mjs` | 3 new tools present + list_graph_templates returns research-artifacts |
 
 ### UI flows e2e
 | Test | Fichier | Couvre |

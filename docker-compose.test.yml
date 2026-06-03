@@ -60,6 +60,13 @@ services:
       # machine's loopback (where the browser runs), NOT the container's.
       # The browser reaches the server via the host-mapped port.
       - VITE_GITNEXUS_BACKEND_URL=http://localhost:${TEST_PORT:-4747}
+      - GITNEXUS_HOME=/data/gitnexus
+    volumes:
+      # graph-templates routes run IN the web container: the research-fs
+      # importer reads /data/projects/<source> and the JSON store writes under
+      # /data/gitnexus/research-graphs (mirrors the dev web service mounts).
+      - ${TEST_PROJECTS_ROOT:-./tests/fixtures/sample-repo-extracted}:/data/projects:ro
+      - gitnexus-test-data:/data/gitnexus
 
 volumes:
   gitnexus-test-data:
