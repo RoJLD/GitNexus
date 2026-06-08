@@ -78,10 +78,43 @@ describe('mcp-server/server.mjs — Task 11.13 smoke', () => {
       'gitnexus_similarity',
       'gitnexus_regression',
       'query_meta_graph',
+      'gitnexus_graph_metrics',
     ];
     for (const name of expectedTools) {
       assert.ok(src.includes(`'${name}'`), `Missing tool registration: ${name}`);
     }
+  });
+
+  // ── gitnexus_graph_metrics (P2.1 graph-theory) ────────────────────
+  it("registers 'gitnexus_graph_metrics' tool in TOOLS array", () => {
+    assert.ok(
+      src.includes("name: 'gitnexus_graph_metrics'"),
+      "TOOLS array must contain name: 'gitnexus_graph_metrics'",
+    );
+  });
+
+  it('gitnexus_graph_metrics inputSchema requires name property', () => {
+    // The tool input must declare `name` as required. Assert the schema
+    // fragment from source — consistent with how other tools are tested above.
+    // (Registration is covered by the dedicated registration test above.)
+    assert.ok(
+      src.includes("required: ['name']"),
+      "inputSchema must declare required: ['name']",
+    );
+    // Handler must call /graph/metrics/ endpoint on WEB_URL
+    assert.ok(
+      src.includes('/graph/metrics/'),
+      'handler must fetch /graph/metrics/ from WEB_URL',
+    );
+  });
+
+  it('gitnexus_graph_metrics handler references encodeURIComponent for the name param', () => {
+    // Assert the PRECISE handler path — a bare includes('encodeURIComponent')
+    // is vacuously true (the snapshot handler also uses it).
+    assert.ok(
+      src.includes('/graph/metrics/${encodeURIComponent(name)}'),
+      'handler must encode the name param into the /graph/metrics/ path',
+    );
   });
 
   it('query_meta_graph inputSchema enumerates valid layer values', () => {

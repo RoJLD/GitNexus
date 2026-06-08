@@ -563,6 +563,19 @@ const TOOLS = [
       }
     },
   },
+  {
+    name: 'gitnexus_graph_metrics',
+    description: 'Graph-theory metrics (degree + PageRank centrality + Louvain communities) for a sidecar graph by name. Returns a summary + per-node metrics.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'Sidecar graph name (as registered via gitnexus_create_graph_from_template).' },
+      },
+      required: ['name'],
+      additionalProperties: false,
+    },
+    handler: ({ name }) => callWeb(`/graph/metrics/${encodeURIComponent(name)}`),
+  },
 ];
 
 function formatGhostAuditSummary(audit) {
