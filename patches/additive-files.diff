@@ -23284,13 +23284,15 @@ index 00000000..c57b5944
 +export const RESEARCH_FALLBACK_COLOR = '#9ca3af';
 diff --git a/gitnexus-web/src/lib/research-graph-adapter.ts b/gitnexus-web/src/lib/research-graph-adapter.ts
 new file mode 100644
-index 00000000..41f38f12
+index 00000000..a2520e1b
 --- /dev/null
 +++ b/gitnexus-web/src/lib/research-graph-adapter.ts
-@@ -0,0 +1,75 @@
+@@ -0,0 +1,87 @@
 +import Graph from 'graphology';
 +import type { SigmaNodeAttributes, SigmaEdgeAttributes } from './graph-adapter';
 +import { RESEARCH_COLORS, RESEARCH_FALLBACK_COLOR } from './research-colors';
++
++const COMMUNITY_PALETTE = ['#60a5fa','#f59e0b','#34d399','#f472b6','#a78bfa','#fb7185','#22d3ee','#facc15','#4ade80','#c084fc'];
 +
 +export interface ResearchNode {
 +  id: string;
@@ -23325,22 +23327,32 @@ index 00000000..41f38f12
 + */
 +export function researchGraphToGraphology(
 +  rg: ResearchGraph,
++  metricsById?: Map<string, { pagerank: number; community: number }>,
 +): Graph<SigmaNodeAttributes, SigmaEdgeAttributes> {
 +  const graph = new Graph<SigmaNodeAttributes, SigmaEdgeAttributes>();
 +  const nodes = rg.nodes || [];
 +  const total = Math.max(1, nodes.length);
 +  const radius = Math.sqrt(total) * 30;
 +
++  const maxPr = metricsById
++    ? Math.max(...[...metricsById.values()].map((v) => v.pagerank), 1e-9)
++    : 1;
++
 +  let i = 0;
 +  for (const node of nodes) {
 +    if (graph.hasNode(node.id)) continue;
 +    const angle = (i / total) * 2 * Math.PI;
 +    const r = radius * (0.5 + ((i % 50) / 50) * 0.5);
++    const m = metricsById?.get(node.id);
++    const color = m
++      ? COMMUNITY_PALETTE[m.community % COMMUNITY_PALETTE.length]
++      : (RESEARCH_COLORS[node.type] || RESEARCH_FALLBACK_COLOR);
++    const size = m ? 4 + 16 * Math.sqrt(m.pagerank / maxPr) : 5;
 +    graph.addNode(node.id, {
 +      x: Math.cos(angle) * r,
 +      y: Math.sin(angle) * r,
-+      size: 5,
-+      color: RESEARCH_COLORS[node.type] || RESEARCH_FALLBACK_COLOR,
++      size,
++      color,
 +      label: node.label,
 +      nodeType: 'CodeElement',
 +      filePath: node.path,
@@ -23815,6 +23827,21 @@ index 00000000..607b24cf
 + */
 +export function _seedCacheForTests(repo: string, data: GhostsResponse, atMs: number = Date.now()) {
 +  CACHE.set(repo, { at: atMs, data });
++}
+diff --git a/gitnexus-web/src/services/graph-theory-client.ts b/gitnexus-web/src/services/graph-theory-client.ts
+new file mode 100644
+index 00000000..d6415605
+--- /dev/null
++++ b/gitnexus-web/src/services/graph-theory-client.ts
+@@ -0,0 +1,9 @@
++export interface GraphMetricNode { id: string; degree: number; pagerank: number; community: number; }
++export interface GraphMetrics { nodes: GraphMetricNode[]; summary: { nodeCount: number; edgeCount: number; communityCount: number; modularity: number }; }
++
++export async function getGraphMetrics(name: string): Promise<GraphMetrics> {
++  const res = await fetch(`/graph/metrics/${encodeURIComponent(name)}`);
++  const body = await res.json().catch(() => ({}));
++  if (!res.ok) throw new Error((body as { error?: string }).error || `HTTP ${res.status}`);
++  return body as GraphMetrics;
 +}
 diff --git a/gitnexus-web/src/services/mutation-engine.ts b/gitnexus-web/src/services/mutation-engine.ts
 new file mode 100644

@@ -18528,7 +18528,7 @@ index 00000000..05e76180
 +  );
 +};
 diff --git a/gitnexus-web/src/components/GraphCanvas.tsx b/gitnexus-web/src/components/GraphCanvas.tsx
-index e34fd434..31014c0e 100644
+index e34fd434..15679748 100644
 --- a/gitnexus-web/src/components/GraphCanvas.tsx
 +++ b/gitnexus-web/src/components/GraphCanvas.tsx
 @@ -1,4 +1,4 @@
@@ -18545,7 +18545,7 @@ index e34fd434..31014c0e 100644
  } from '@/lib/lucide-icons';
  import { useSigma } from '../hooks/useSigma';
  import { useAppState } from '../hooks/useAppState';
-@@ -18,15 +19,39 @@ import {
+@@ -18,15 +19,40 @@ import {
    SigmaNodeAttributes,
    SigmaEdgeAttributes,
  } from '../lib/graph-adapter';
@@ -18575,6 +18575,7 @@ index e34fd434..31014c0e 100644
 +import { prefetchSnapshotGhosts } from '../services/snapshot-ghosts-cache';
 +import { researchGraphToGraphology, type ResearchGraph } from '../lib/research-graph-adapter';
 +import { getResearchGraph, applyLens } from '../services/research-client';
++import { getGraphMetrics } from '../services/graph-theory-client';
  
  export interface GraphCanvasHandle {
    focusNode: (nodeId: string) => void;
@@ -18585,7 +18586,7 @@ index e34fd434..31014c0e 100644
    const {
      graph,
      setSelectedNode,
-@@ -46,9 +71,83 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -46,9 +72,107 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
      clearAICitationHighlights,
      clearBlastRadius,
      animatedNodes,
@@ -18640,6 +18641,10 @@ index e34fd434..31014c0e 100644
 +    getResearchGraph(researchName).then(setResearchData).catch((e) => console.error('research graph load failed', e));
 +  }, [researchName]);
 +
++  // Metrics overlay state — toggle + cached metrics payload for the sidecar graph
++  const [metricsOn, setMetricsOn] = useState(false);
++  const [metricsById, setMetricsById] = useState<Map<string, { pagerank: number; community: number }> | null>(null);
++
 +  // Lens — URL-driven projection for ?lens=<id>&repo=<repo>. Reuses researchData +
 +  // the research render path (the lens result is shaped like a research graph).
 +  const lensId = new URLSearchParams(window.location.search).get('lens');
@@ -18648,6 +18653,26 @@ index e34fd434..31014c0e 100644
 +    if (!lensId || !lensRepo) return;
 +    applyLens(lensId, lensRepo).then(setResearchData).catch((e) => console.error('lens load failed', e));
 +  }, [lensId, lensRepo]);
++
++  // Metrics fetch — load /graph/metrics/:name when the toggle is on and a sidecar graph is active
++  useEffect(() => {
++    if (!metricsOn || !researchName) {
++      setMetricsById(null);
++      return;
++    }
++    let cancelled = false;
++    getGraphMetrics(researchName)
++      .then((m) => {
++        if (cancelled) return;
++        setMetricsById(new Map(m.nodes.map((n) => [n.id, { pagerank: n.pagerank, community: n.community }])));
++      })
++      .catch((e) => {
++        if (!cancelled) console.error('graph metrics load failed', e);
++      });
++    return () => {
++      cancelled = true;
++    };
++  }, [metricsOn, researchName]);
 +
 +  // Augmented graph (Section D — Task 9 / Section F — Task 12).
 +  // `ghosts` is the payload fetched from /ghosts (via the cached
@@ -18670,7 +18695,7 @@ index e34fd434..31014c0e 100644
    const effectiveHighlightedNodeIds = useMemo(() => {
      if (!isAIHighlightsEnabled) return highlightedNodeIds;
      const next = new Set(highlightedNodeIds);
-@@ -82,6 +181,23 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -82,6 +206,23 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
  
    const handleNodeClick = useCallback(
      (nodeId: string) => {
@@ -18694,7 +18719,7 @@ index e34fd434..31014c0e 100644
        if (!graph) return;
        const node = nodeById.get(nodeId);
        if (node) {
-@@ -89,6 +205,7 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -89,6 +230,7 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
          openCodePanel();
        }
      },
@@ -18702,7 +18727,7 @@ index e34fd434..31014c0e 100644
      [graph, nodeById, setSelectedNode, openCodePanel],
    );
  
-@@ -130,6 +247,7 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -130,6 +272,7 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
      containerRef,
      sigmaRef,
      setGraph: setSigmaGraph,
@@ -18710,7 +18735,7 @@ index e34fd434..31014c0e 100644
      zoomIn,
      zoomOut,
      resetZoom,
-@@ -139,6 +257,12 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -139,6 +282,12 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
      stopLayout,
      selectedNode: sigmaSelectedNode,
      setSelectedNode: setSigmaSelectedNode,
@@ -18723,7 +18748,7 @@ index e34fd434..31014c0e 100644
    } = useSigma({
      onNodeClick: handleNodeClick,
      onNodeHover: handleNodeHover,
-@@ -147,6 +271,10 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -147,6 +296,10 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
      blastRadiusNodeIds: effectiveBlastRadiusNodeIds,
      animatedNodes: effectiveAnimatedNodes,
      visibleEdgeTypes,
@@ -18734,7 +18759,7 @@ index e34fd434..31014c0e 100644
    });
  
    // Expose focusNode to parent via ref
-@@ -170,6 +298,8 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -170,6 +323,8 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
  
    // Update Sigma graph when KnowledgeGraph changes
    useEffect(() => {
@@ -18743,7 +18768,7 @@ index e34fd434..31014c0e 100644
      if (!graph) return;
  
      // Build communityMemberships map from MEMBER_OF relationships
-@@ -189,8 +319,37 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -189,8 +344,37 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
      });
  
      const sigmaGraph = knowledgeGraphToGraphology(graph, communityMemberships);
@@ -18766,10 +18791,10 @@ index e34fd434..31014c0e 100644
 +  useEffect(() => {
 +    if (!researchData) return;
 +    if (!researchName && !lensId) return;
-+    const g = researchGraphToGraphology(researchData);
-+    const cacheKey = researchName ? `research:${researchName}` : `lens:${lensId}:${lensRepo}`;
++    const g = researchGraphToGraphology(researchData, metricsOn ? (metricsById ?? undefined) : undefined);
++    const cacheKey = (researchName ? `research:${researchName}` : `lens:${lensId}:${lensRepo}`) + (metricsOn ? ':metrics' : '');
 +    setSigmaGraph(g, { cacheKey });
-+  }, [researchName, lensId, lensRepo, researchData, setSigmaGraph]);
++  }, [researchName, lensId, lensRepo, researchData, setSigmaGraph, metricsOn, metricsById]);
 +
 +  // Expose useSigma.recomputeLayout up to useAppState so the Header
 +  // "Recompute layout" button can fire it. The action lives on
@@ -18783,7 +18808,7 @@ index e34fd434..31014c0e 100644
  
    // Update node visibility when filters change
    useEffect(() => {
-@@ -205,6 +364,198 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -205,6 +389,198 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
      // eslint-disable-next-line react-hooks/exhaustive-deps -- sigmaRef identity never changes
    }, [visibleLabels, depthFilter, appSelectedNode]);
  
@@ -18982,7 +19007,7 @@ index e34fd434..31014c0e 100644
    // Sync app selected node with sigma
    useEffect(() => {
      if (appSelectedNode) {
-@@ -249,6 +600,130 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -249,6 +625,130 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
          className="sigma-container h-full w-full cursor-grab active:cursor-grabbing"
        />
  
@@ -19113,7 +19138,7 @@ index e34fd434..31014c0e 100644
        {/* Hovered node tooltip - only show when NOT selected */}
        {hoveredNodeName && !sigmaSelectedNode && (
          <div className="pointer-events-none absolute top-4 left-1/2 z-20 -translate-x-1/2 animate-fade-in rounded-lg border border-border-subtle bg-elevated/95 px-3 py-1.5 backdrop-blur-sm">
-@@ -350,8 +825,50 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -350,8 +850,64 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
        {/* Query FAB */}
        <QueryFAB />
  
@@ -19155,6 +19180,20 @@ index e34fd434..31014c0e 100644
 +
 +      {/* Top Right: 2D/3D toggle + AI Highlights */}
 +      <div className="absolute top-4 right-4 z-20 flex items-center gap-2">
++        {researchName && (
++          <button
++            onClick={() => setMetricsOn((v) => !v)}
++            className={
++              metricsOn
++                ? 'flex h-10 items-center gap-1.5 rounded-lg border border-indigo-400/40 bg-indigo-500/15 px-3 text-indigo-200 transition-colors hover:border-indigo-300/60 hover:bg-indigo-500/20'
++                : 'flex h-10 items-center gap-1.5 rounded-lg border border-border-subtle bg-elevated px-3 text-text-secondary transition-colors hover:bg-hover hover:text-text-primary'
++            }
++            title={metricsOn ? 'Hide PageRank / community colours' : 'Show PageRank / community colours'}
++            data-testid="metrics-toggle"
++          >
++            <span className="font-mono text-xs font-semibold">Metrics: {metricsOn ? 'on' : 'off'}</span>
++          </button>
++        )}
 +        <button
 +          onClick={toggleViewDimension}
 +          className="flex h-10 items-center gap-1.5 rounded-lg border border-border-subtle bg-elevated px-3 text-text-secondary transition-colors hover:bg-hover hover:text-text-primary"
@@ -31027,13 +31066,15 @@ index 00000000..c57b5944
 +export const RESEARCH_FALLBACK_COLOR = '#9ca3af';
 diff --git a/gitnexus-web/src/lib/research-graph-adapter.ts b/gitnexus-web/src/lib/research-graph-adapter.ts
 new file mode 100644
-index 00000000..41f38f12
+index 00000000..a2520e1b
 --- /dev/null
 +++ b/gitnexus-web/src/lib/research-graph-adapter.ts
-@@ -0,0 +1,75 @@
+@@ -0,0 +1,87 @@
 +import Graph from 'graphology';
 +import type { SigmaNodeAttributes, SigmaEdgeAttributes } from './graph-adapter';
 +import { RESEARCH_COLORS, RESEARCH_FALLBACK_COLOR } from './research-colors';
++
++const COMMUNITY_PALETTE = ['#60a5fa','#f59e0b','#34d399','#f472b6','#a78bfa','#fb7185','#22d3ee','#facc15','#4ade80','#c084fc'];
 +
 +export interface ResearchNode {
 +  id: string;
@@ -31068,22 +31109,32 @@ index 00000000..41f38f12
 + */
 +export function researchGraphToGraphology(
 +  rg: ResearchGraph,
++  metricsById?: Map<string, { pagerank: number; community: number }>,
 +): Graph<SigmaNodeAttributes, SigmaEdgeAttributes> {
 +  const graph = new Graph<SigmaNodeAttributes, SigmaEdgeAttributes>();
 +  const nodes = rg.nodes || [];
 +  const total = Math.max(1, nodes.length);
 +  const radius = Math.sqrt(total) * 30;
 +
++  const maxPr = metricsById
++    ? Math.max(...[...metricsById.values()].map((v) => v.pagerank), 1e-9)
++    : 1;
++
 +  let i = 0;
 +  for (const node of nodes) {
 +    if (graph.hasNode(node.id)) continue;
 +    const angle = (i / total) * 2 * Math.PI;
 +    const r = radius * (0.5 + ((i % 50) / 50) * 0.5);
++    const m = metricsById?.get(node.id);
++    const color = m
++      ? COMMUNITY_PALETTE[m.community % COMMUNITY_PALETTE.length]
++      : (RESEARCH_COLORS[node.type] || RESEARCH_FALLBACK_COLOR);
++    const size = m ? 4 + 16 * Math.sqrt(m.pagerank / maxPr) : 5;
 +    graph.addNode(node.id, {
 +      x: Math.cos(angle) * r,
 +      y: Math.sin(angle) * r,
-+      size: 5,
-+      color: RESEARCH_COLORS[node.type] || RESEARCH_FALLBACK_COLOR,
++      size,
++      color,
 +      label: node.label,
 +      nodeType: 'CodeElement',
 +      filePath: node.path,
@@ -31628,6 +31679,21 @@ index 00000000..607b24cf
 + */
 +export function _seedCacheForTests(repo: string, data: GhostsResponse, atMs: number = Date.now()) {
 +  CACHE.set(repo, { at: atMs, data });
++}
+diff --git a/gitnexus-web/src/services/graph-theory-client.ts b/gitnexus-web/src/services/graph-theory-client.ts
+new file mode 100644
+index 00000000..d6415605
+--- /dev/null
++++ b/gitnexus-web/src/services/graph-theory-client.ts
+@@ -0,0 +1,9 @@
++export interface GraphMetricNode { id: string; degree: number; pagerank: number; community: number; }
++export interface GraphMetrics { nodes: GraphMetricNode[]; summary: { nodeCount: number; edgeCount: number; communityCount: number; modularity: number }; }
++
++export async function getGraphMetrics(name: string): Promise<GraphMetrics> {
++  const res = await fetch(`/graph/metrics/${encodeURIComponent(name)}`);
++  const body = await res.json().catch(() => ({}));
++  if (!res.ok) throw new Error((body as { error?: string }).error || `HTTP ${res.status}`);
++  return body as GraphMetrics;
 +}
 diff --git a/gitnexus-web/src/services/mutation-engine.ts b/gitnexus-web/src/services/mutation-engine.ts
 new file mode 100644
