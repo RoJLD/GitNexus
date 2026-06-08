@@ -5358,6 +5358,32 @@ index 00000000..0778f454
 +    },
 +  };
 +}
+diff --git a/docker-server-graph-theory.mjs b/docker-server-graph-theory.mjs
+new file mode 100644
+index 00000000..4620699d
+--- /dev/null
++++ b/docker-server-graph-theory.mjs
+@@ -0,0 +1,20 @@
++/**
++ * Graph-theory metrics route (web container). GET /graph/metrics/:name →
++ * fetch the sidecar render of <name> → computeMetrics (pure-JS engine).
++ *   { nodes:[{id,degree,pagerank,community}], summary:{nodeCount,edgeCount,communityCount,modularity} }
++ */
++import { sidecarRender } from './docker-server-graph-templates-core.mjs';
++import { computeMetrics } from './docker-server-graph-theory-core.mjs';
++
++function sendJson(res, code, body) { res.writeHead(code, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(body)); }
++
++export async function handleGraphMetricsRoute(req, url, res) {
++  if (!url.pathname.startsWith('/graph/metrics/') || req.method !== 'GET') return false;
++  const name = decodeURIComponent(url.pathname.slice('/graph/metrics/'.length));
++  let graph;
++  try { graph = await sidecarRender(name); }
++  catch (e) { sendJson(res, 404, { error: `graph "${name}" not available: ${e.message}` }); return true; }
++  try { sendJson(res, 200, computeMetrics(graph)); }
++  catch (e) { sendJson(res, 500, { error: `metrics failed: ${e.message}` }); return true; }
++  return true;
++}
 diff --git a/docker-server-group-graph-core.mjs b/docker-server-group-graph-core.mjs
 new file mode 100644
 index 00000000..a532f08d
@@ -7775,10 +7801,10 @@ index 00000000..ea950ca6
 +}
 diff --git a/docker-server-routes.mjs b/docker-server-routes.mjs
 new file mode 100644
-index 00000000..0b521832
+index 00000000..6628f4aa
 --- /dev/null
 +++ b/docker-server-routes.mjs
-@@ -0,0 +1,85 @@
+@@ -0,0 +1,87 @@
 +import { handleSnapshotRoute } from './docker-server-snapshots.mjs';
 +import { handleSnapshotBulkRoute } from './docker-server-snapshots-bulk.mjs';
 +import { handleChurnRoute } from './docker-server-churn.mjs';
@@ -7816,6 +7842,7 @@ index 00000000..0b521832
 +import { handleGroupGraphRoute } from './docker-server-group-graph.mjs';
 +import { handleGraphTemplatesRoute } from './docker-server-graph-templates.mjs';
 +import { handleGraphLensRoute } from './docker-server-graph-lens.mjs';
++import { handleGraphMetricsRoute } from './docker-server-graph-theory.mjs';
 +
 +// Returns true once a handler claims (responds to) the request; false if no route matched.
 +export async function registerGitnexusRoutes(req, reqUrl, res, ctx) {
@@ -7855,6 +7882,7 @@ index 00000000..0b521832
 +  if (await handlePrewarmRoute(req, reqUrl, res, ctx)) return true;
 +  if (await handleGroupRoute(req, reqUrl, res)) return true;
 +  if (await handleGroupGraphRoute(req, reqUrl, res)) return true;
++  if (await handleGraphMetricsRoute(req, reqUrl, res)) return true;
 +  if (await handleGraphLensRoute(req, reqUrl, res)) return true;
 +  if (await handleGraphTemplatesRoute(req, reqUrl, res, ctx)) return true;
 +  return false;
