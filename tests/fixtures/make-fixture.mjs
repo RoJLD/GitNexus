@@ -244,6 +244,37 @@ writeFileSync(
   ) + '\n',
 );
 
+// Build research-graph-corpus alongside sample-repo + academic-corpus (non-breaking:
+// separate dir, others untouched). research-graph-corpus/ is NOT a git repo — it simply
+// provides research-graph.json for the research-graph integ test at
+// /data/projects/research-graph-corpus/research-graph.json.
+const researchGraphDir = join(buildParent, 'research-graph-corpus');
+console.log('Building research-graph-corpus fixture…');
+mkdirSync(researchGraphDir, { recursive: true });
+writeFileSync(
+  join(researchGraphDir, 'research-graph.json'),
+  JSON.stringify(
+    { schema: { node_types: ["Hypothesis","Experiment","Verdict","SDR"], edge_types: ["tests","validates","produces","gated_by","decided_by"], statuses: ["open","active","validated","planned"] },
+      nodes: [
+        { id: "H1", type: "Hypothesis", title: "BTC-ETH sync", status: "validated" },
+        { id: "H2", type: "Hypothesis", title: "Basket aggregation", status: "open" },
+        { id: "exp001", type: "Experiment", title: "TradFi link", status: "active", anchor: "notes/decisions.md#2026-05-15-exp001" },
+        { id: "exp002", type: "Experiment", title: "Multivariate", status: "planned" },
+        { id: "v1", type: "Verdict", title: "H1 validated", status: "validated" },
+        { id: "sdr-a", type: "SDR", title: "exp001 scope", status: "active" },
+      ],
+      edges: [
+        { from: "exp001", to: "H1", type: "tests" },
+        { from: "exp002", to: "H2", type: "tests" },
+        { from: "v1", to: "H1", type: "validates" },
+        { from: "exp001", to: "v1", type: "produces" },
+        { from: "exp002", to: "v1", type: "gated_by" },
+        { from: "exp001", to: "sdr-a", type: "decided_by" },
+      ] },
+    null, 0,
+  ) + '\n',
+);
+
 console.log('Packing tarball…');
 // Windows tar.exe (GNU tar on Git for Windows) does not accept
 // drive-letter paths (e.g. C:\...) in -f or -C arguments.
@@ -251,7 +282,7 @@ console.log('Packing tarball…');
 // the tarball with a relative path so no drive letter appears.
 const tarRelOut   = '../sample-repo.tar.gz';  // Fix B: POSIX literal — avoids Windows backslash
 execSync(
-  `tar -czf "${tarRelOut}" --sort=name --mtime='2025-01-30T11:00:00Z' --owner=0 --group=0 --numeric-owner sample-repo academic-corpus`,
+  `tar -czf "${tarRelOut}" --sort=name --mtime='2025-01-30T11:00:00Z' --owner=0 --group=0 --numeric-owner sample-repo academic-corpus research-graph-corpus`,
   { cwd: buildParent, stdio: 'inherit' },
 );
 console.log(`Wrote ${TARBALL}`);

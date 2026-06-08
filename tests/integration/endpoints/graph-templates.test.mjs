@@ -75,4 +75,25 @@ describe('graph-templates routes', () => {
     expect(types.has('Author')).toBe(true);
     expect(types.has('Topic')).toBe(true);
   });
+
+  it('scaffolds, imports, and serves a research-graph (generic Entity/Relates)', async () => {
+    const name = 'it-research-graph';
+    const scaffold = await fetch(`${BASE}/graph/scaffold`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ templateId: 'research-graph', name, source: 'research-graph-corpus' }),
+    });
+    expect(scaffold.status).toBe(201);
+    const imp = await fetch(`${BASE}/graph/import`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }),
+    });
+    expect(imp.status).toBe(200);
+    const report = (await imp.json()).report;
+    expect(report.nodes).toBe(6);
+    expect(report.edges).toBe(6);
+    const graph = await (await fetch(`${BASE}/graph/research/${name}`)).json();
+    const types = new Set(graph.nodes.map((n) => n.type));
+    expect(types.has('Hypothesis')).toBe(true);
+    expect(types.has('Experiment')).toBe(true);
+    expect(graph.edges.some((e) => e.kind === 'validates')).toBe(true);
+  });
 });
