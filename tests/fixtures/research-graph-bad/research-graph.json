@@ -1,0 +1,2 @@
+{ "nodes": [ { "id": "a", "type": "Hypothesis", "title": "A", "status": "open" }, { "type": "Experiment", "title": "no id", "status": "open" } ],
+  "edges": [ { "from": "a", "to": "ghost", "type": "tests" } ] }

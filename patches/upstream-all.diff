@@ -7660,6 +7660,61 @@ index 00000000..5648a585
 +    report: { nodes: nodes.length, edges: edges.length, byType, byKind, unresolvedLinks, skipped: [] },
 +  };
 +}
+diff --git a/docker-server-research-graph-importer.mjs b/docker-server-research-graph-importer.mjs
+new file mode 100644
+index 00000000..ea950ca6
+--- /dev/null
++++ b/docker-server-research-graph-importer.mjs
+@@ -0,0 +1,49 @@
++/**
++ * research-graph importer: read research-graph.json (a curated research knowledge
++ * graph — Hypothesis/Experiment/Verdict/SDR + reasoning edges) and emit the
++ * generic sidecar ingest shape. Generic Entity/Relates tables, type-as-property.
++ * Pure Node, deterministic. See spec 2026-06-03-research-graph-import-template-design.md.
++ */
++import { readFile } from 'node:fs/promises';
++import { join } from 'node:path';
++
++export async function importResearchGraph(absSourceDir) {
++  let doc;
++  try { doc = JSON.parse(await readFile(join(absSourceDir, 'research-graph.json'), 'utf8')); }
++  catch (e) { throw new Error(`cannot read research-graph.json in source: ${e.message}`); }
++  const inNodes = Array.isArray(doc.nodes) ? doc.nodes : [];
++  const inEdges = Array.isArray(doc.edges) ? doc.edges : [];
++
++  const seen = new Set();
++  const nodes = [];
++  const skipped = [];
++  for (const n of inNodes) {
++    if (n.id == null || n.id === '') { skipped.push({ reason: 'missing id', title: n.title ?? null }); continue; }
++    const id = String(n.id);
++    if (seen.has(id)) { skipped.push({ reason: 'duplicate id', id }); continue; }
++    seen.add(id);
++    nodes.push({ table: 'Entity', props: { id, type: String(n.type || ''), title: String(n.title || ''), status: String(n.status || ''), anchor: String(n.anchor || '') } });
++  }
++
++  const seenEdges = new Set();
++  const edges = [];
++  for (const e of inEdges) {
++    const from = String(e.from ?? '');
++    const to = String(e.to ?? '');
++    if (!from || !to || !seen.has(from) || !seen.has(to)) { skipped.push({ reason: 'dangling edge', from, to }); continue; }
++    const kind = String(e.type || '');
++    const eid = `${from}->${kind}->${to}`;
++    if (seenEdges.has(eid)) continue;
++    seenEdges.add(eid);
++    edges.push({ table: 'Relates', from, to, props: { id: eid, kind } });
++  }
++
++  const byType = {}; for (const n of nodes) byType[n.props.type] = (byType[n.props.type] || 0) + 1; // by node-type property (all rows are table 'Entity')
++  const byKind = {}; for (const e of edges) byKind[e.props.kind] = (byKind[e.props.kind] || 0) + 1;
++
++  return {
++    schema_type: 'research-graph', template: 'research-graph', name: null, source: null,
++    nodes, edges,
++    report: { nodes: nodes.length, edges: edges.length, byType, byKind, unresolvedLinks: [], skipped },
++  };
++}
 diff --git a/docker-server-routes.mjs b/docker-server-routes.mjs
 new file mode 100644
 index 00000000..0b521832
