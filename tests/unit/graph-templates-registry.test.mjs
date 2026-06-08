@@ -65,4 +65,14 @@ describe('template kinds + ddl', () => {
     expect(lens.kind).toBe('lens');
     expect(lens.target).toBe('astkg');
   });
+
+  it('registers the research-graph import template (generic Entity/Relates DDL)', async () => {
+    const { listTemplates } = await import('../../upstream/docker-server-graph-templates-core.mjs');
+    const rg = listTemplates().find((t) => t.id === 'research-graph');
+    expect(rg).toBeTruthy();
+    expect(rg.kind).toBe('import');
+    expect(rg.importer).toBe('research-graph-json');
+    expect(rg.ddl.some((s) => /CREATE NODE TABLE Entity/.test(s))).toBe(true);
+    expect(rg.ddl.some((s) => /CREATE REL TABLE Relates/.test(s))).toBe(true);
+  });
 });

@@ -4955,10 +4955,10 @@ index 00000000..c353cb6e
 +}
 diff --git a/docker-server-graph-templates-core.mjs b/docker-server-graph-templates-core.mjs
 new file mode 100644
-index 00000000..ea4f34d1
+index 00000000..42550119
 --- /dev/null
 +++ b/docker-server-graph-templates-core.mjs
-@@ -0,0 +1,142 @@
+@@ -0,0 +1,163 @@
 +/**
 + * Graph-templates engine (web container, pure Node — no Kùzu).
 + * Registry + built-in descriptors + index store + Kùzu sidecar client. Graphs
@@ -4974,7 +4974,7 @@ index 00000000..ea4f34d1
 +export const INDEX_PATH = join(RESEARCH_DIR, 'index.json');
 +export const PROJECTS_ROOT = process.env.GITNEXUS_PROJECTS || '/data/projects';
 +
-+const BUILTINS = new Set(['research-artifacts', 'academic-literature', 'imports-deps']);
++const BUILTINS = new Set(['research-artifacts', 'academic-literature', 'imports-deps', 'research-graph']);
 +
 +const registry = new Map();
 +
@@ -5078,6 +5078,27 @@ index 00000000..ea4f34d1
 +  description: 'File-level import/dependency projection over an indexed repo\'s code graph (ASTKG). Read-only lens; no new graph is created.',
 +});
 +
++registerTemplate({
++  id: 'research-graph',
++  kind: 'import',
++  label: 'Research Graph',
++  schema_type: 'research-graph',
++  description: 'Curated research knowledge graph (Hypothesis/Experiment/Verdict/SDR + reasoning edges) imported from a research-graph.json emit. Distinct from research-artifacts, which walks .md/.ipynb files.',
++  importer: 'research-graph-json',
++  include: ['research-graph.json'],
++  exclude: [],
++  ddl: [
++    'CREATE NODE TABLE Entity(id STRING, type STRING, title STRING, status STRING, anchor STRING, PRIMARY KEY(id))',
++    'CREATE REL TABLE Relates(FROM Entity TO Entity, id STRING, kind STRING)',
++  ],
++  visual: { nodeColors: {
++    Hypothesis: '#a855f7', Experiment: '#f59e0b', Verdict: '#10b981', SDR: '#3b82f6',
++    ADR: '#6366f1', Paper: '#64748b', Idea: '#ec4899', Detector: '#14b8a6', Run: '#eab308',
++    Tool: '#94a3b8', Indicator: '#06b6d4', Dataset: '#0ea5e9', Regime: '#f43f5e',
++    Phase: '#8b5cf6', Submeasure: '#84cc16',
++  } },
++});
++
 +// ---- sidecar client helpers --------------------------------------------
 +
 +const GRAPHS_URL = process.env.GRAPHS_URL || 'http://gitnexus-graphs:4749';
@@ -5103,10 +5124,10 @@ index 00000000..ea4f34d1
 +}
 diff --git a/docker-server-graph-templates.mjs b/docker-server-graph-templates.mjs
 new file mode 100644
-index 00000000..6bf6721c
+index 00000000..1a4f7b60
 --- /dev/null
 +++ b/docker-server-graph-templates.mjs
-@@ -0,0 +1,67 @@
+@@ -0,0 +1,68 @@
 +/**
 + * Graph templates routes (web container) — sidecar-backed (Kùzu).
 + *   GET  /graph/templates              -> { templates }
@@ -5122,10 +5143,11 @@ index 00000000..6bf6721c
 +} from './docker-server-graph-templates-core.mjs';
 +import { importResearchFs } from './docker-server-research-fs-importer.mjs';
 +import { importAcademicJson } from './docker-server-academic-json-importer.mjs';
++import { importResearchGraph } from './docker-server-research-graph-importer.mjs';
 +
 +function sendJson(res, code, obj) { res.writeHead(code, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(obj)); }
 +async function readBody(req) { let b = ''; for await (const c of req) b += c; return b ? JSON.parse(b) : {}; }
-+const IMPORTERS = { 'research-fs': importResearchFs, 'academic-json': importAcademicJson };
++const IMPORTERS = { 'research-fs': importResearchFs, 'academic-json': importAcademicJson, 'research-graph-json': importResearchGraph };
 +
 +export async function handleGraphTemplatesRoute(req, url, res, _opts) {
 +  const path = url.pathname;

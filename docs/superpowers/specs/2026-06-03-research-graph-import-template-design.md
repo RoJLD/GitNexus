@@ -75,16 +75,18 @@ The emit format, mirroring the curated store's loader output:
 - `anchor` (a `notes/<file>.md#YYYY-MM-DD-slug` pointer to the source decision)
   is carried as a node property — a clickable source link in a later iteration.
 
-### 3.3 Sidecar DDL — generic `Node`/`Edge`, type as a property
+### 3.3 Sidecar DDL — generic `Entity`/`Relates`, type as a property
 
 ```
-CREATE NODE TABLE Node(id STRING, type STRING, title STRING, status STRING, anchor STRING, PRIMARY KEY(id))
-CREATE REL TABLE  Edge(FROM Node TO Node, id STRING, kind STRING)
+CREATE NODE TABLE Entity(id STRING, type STRING, title STRING, status STRING, anchor STRING, PRIMARY KEY(id))
+CREATE REL TABLE  Relates(FROM Entity TO Entity, id STRING, kind STRING)
 ```
+(Table names Entity/Relates avoid Cypher reserved words — NODE is a Kùzu keyword; node type / edge kind come from properties, so table names never surface in render.)
+
 Two tables only. **Why not per-type tables** (as academic used Paper/Author/Topic)?
 The curated graph has ~15 node types + ~13 edge types — per-type DDL would be ~28
 tables, and the source model is a `networkx` graph with `type` as a node/edge
-**attribute**, not separate typed tables. Generic `Node`/`Edge` with type-as-
+**attribute**, not separate typed tables. Generic `Entity`/`Relates` with type-as-
 property is therefore the faithful *and* simplest mapping. *Rejected:* per-type
 tables (28-table DDL, no benefit here; the SDK supports both shapes — this domain
 wants generic). The P1 sidecar render already surfaces `node.type` (→ color) and
@@ -95,8 +97,8 @@ wants generic). The P1 sidecar render already surfaces `node.type` (→ color) a
 
 | # | File | Responsibility |
 |---|---|---|
-| A | `upstream/docker-server-research-graph-importer.mjs` *(new)* | read `research-graph.json` → emit generic ingest shape (`Node` nodes, `Edge` edges with `kind`=type) + report (counts by node type); pure Node, deterministic, dedup by id |
-| B | `upstream/docker-server-graph-templates-core.mjs` *(edit)* | register `research-graph` descriptor (kind `import`, `importer:'research-graph-json'`, the 2-table DDL, `visual.nodeColors` per type); add to `BUILTINS` |
+| A | `upstream/docker-server-research-graph-importer.mjs` *(new)* | read `research-graph.json` → emit generic ingest shape (`Entity` nodes, `Relates` edges with `kind`=type) + report (counts by node type); pure Node, deterministic, dedup by id |
+| B | `upstream/docker-server-graph-templates-core.mjs` *(edit)* | register `research-graph` descriptor (kind `import`, `importer:'research-graph-json'`, the 2-table DDL with `Entity`/`Relates`, `visual.nodeColors` per type); add to `BUILTINS` |
 | C | `upstream/docker-server-graph-templates.mjs` *(edit)* | wire `IMPORTERS['research-graph-json']` |
 | D | `upstream/Dockerfile.web` *(edit)* | **COPY** the new importer module (boot-crash discipline — `docker-server.mjs` imports it at boot) |
 | E | fixtures + tests | synthetic `research-graph.json` + importer unit test + registry test + HTTP integ test |
@@ -117,7 +119,7 @@ many-type graph leans on **P3** later; v1 uses the existing force layout.
   edge `kind`, dedup by id, report counts, and that an absent/empty file is
   handled (clear error / empty graph).
 - **Registry** (`tests/unit/graph-templates-registry.test.mjs`): assert the
-  `research-graph` descriptor (kind `import`, importer id, the `Node`+`Edge` DDL).
+  `research-graph` descriptor (kind `import`, importer id, the `Entity`+`Relates` DDL).
 - **Integration** (`tests/integration/endpoints/graph-templates.test.mjs` +
   fixture): a `research-graph-corpus/research-graph.json` added to the
   `sample-repo.tar.gz` (sibling of `sample-repo/`/`academic-corpus/`), driving
