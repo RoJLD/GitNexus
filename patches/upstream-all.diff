@@ -19205,7 +19205,7 @@ index 00000000..05e76180
 +  );
 +};
 diff --git a/gitnexus-web/src/components/GraphCanvas.tsx b/gitnexus-web/src/components/GraphCanvas.tsx
-index e34fd434..cb6baed1 100644
+index e34fd434..80106183 100644
 --- a/gitnexus-web/src/components/GraphCanvas.tsx
 +++ b/gitnexus-web/src/components/GraphCanvas.tsx
 @@ -1,4 +1,4 @@
@@ -19265,7 +19265,7 @@ index e34fd434..cb6baed1 100644
    const {
      graph,
      setSelectedNode,
-@@ -46,9 +74,112 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -46,9 +74,128 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
      clearAICitationHighlights,
      clearBlastRadius,
      animatedNodes,
@@ -19327,6 +19327,22 @@ index e34fd434..cb6baed1 100644
 +  const [communityMethod, setCommunityMethod] = useState<CommunityMethod>('louvain');
 +  const [metricsData, setMetricsData] = useState<GraphMetrics | null>(null);
 +  const [topNOpen, setTopNOpen] = useState(false);
++  const [colorMode, setColorMode] = useState<'community' | 'heatmap'>('community');
++  const [highlightStructure, setHighlightStructure] = useState(false);
++  const [isolateCommunity, setIsolateCommunity] = useState<number | null>(null);
++  const articulationIds = useMemo(
++    () => new Set((metricsData?.nodes ?? []).filter((n) => n.articulation).map((n) => n.id)),
++    [metricsData],
++  );
++  const bridgeKeys = useMemo(() => {
++    const s = new Set<string>();
++    for (const b of metricsData?.bridges ?? []) { s.add(`${b.source}\0${b.target}`); s.add(`${b.target}\0${b.source}`); }
++    return s;
++  }, [metricsData]);
++  const communityIds = useMemo(
++    () => [...new Set((metricsData?.nodes ?? []).map((n) => n.community))].sort((a, b) => a - b),
++    [metricsData],
++  );
 +
 +  // Lens — URL-driven projection for ?lens=<id>&repo=<repo>. Reuses researchData +
 +  // the research render path (the lens result is shaped like a research graph).
@@ -19379,7 +19395,7 @@ index e34fd434..cb6baed1 100644
    const effectiveHighlightedNodeIds = useMemo(() => {
      if (!isAIHighlightsEnabled) return highlightedNodeIds;
      const next = new Set(highlightedNodeIds);
-@@ -82,6 +213,23 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -82,6 +229,23 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
  
    const handleNodeClick = useCallback(
      (nodeId: string) => {
@@ -19403,7 +19419,7 @@ index e34fd434..cb6baed1 100644
        if (!graph) return;
        const node = nodeById.get(nodeId);
        if (node) {
-@@ -89,6 +237,7 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -89,6 +253,7 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
          openCodePanel();
        }
      },
@@ -19411,7 +19427,7 @@ index e34fd434..cb6baed1 100644
      [graph, nodeById, setSelectedNode, openCodePanel],
    );
  
-@@ -130,6 +279,7 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -130,6 +295,7 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
      containerRef,
      sigmaRef,
      setGraph: setSigmaGraph,
@@ -19419,7 +19435,7 @@ index e34fd434..cb6baed1 100644
      zoomIn,
      zoomOut,
      resetZoom,
-@@ -139,6 +289,12 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -139,6 +305,12 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
      stopLayout,
      selectedNode: sigmaSelectedNode,
      setSelectedNode: setSigmaSelectedNode,
@@ -19432,7 +19448,7 @@ index e34fd434..cb6baed1 100644
    } = useSigma({
      onNodeClick: handleNodeClick,
      onNodeHover: handleNodeHover,
-@@ -147,6 +303,10 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -147,6 +319,10 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
      blastRadiusNodeIds: effectiveBlastRadiusNodeIds,
      animatedNodes: effectiveAnimatedNodes,
      visibleEdgeTypes,
@@ -19443,7 +19459,7 @@ index e34fd434..cb6baed1 100644
    });
  
    // Expose focusNode to parent via ref
-@@ -170,6 +330,8 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -170,6 +346,8 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
  
    // Update Sigma graph when KnowledgeGraph changes
    useEffect(() => {
@@ -19452,7 +19468,7 @@ index e34fd434..cb6baed1 100644
      if (!graph) return;
  
      // Build communityMemberships map from MEMBER_OF relationships
-@@ -189,8 +351,37 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -189,8 +367,40 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
      });
  
      const sigmaGraph = knowledgeGraphToGraphology(graph, communityMemberships);
@@ -19475,10 +19491,13 @@ index e34fd434..cb6baed1 100644
 +  useEffect(() => {
 +    if (!researchData) return;
 +    if (!researchName && !lensId) return;
-+    const g = researchGraphToGraphology(researchData, metricsOn ? (metricsById ?? undefined) : undefined, sizeMetric);
-+    const cacheKey = (researchName ? `research:${researchName}` : `lens:${lensId}:${lensRepo}`) + (metricsOn ? `:metrics:${sizeMetric}` : '');
++    const g = researchGraphToGraphology(researchData, metricsOn ? (metricsById ?? undefined) : undefined, sizeMetric, {
++      colorMode, highlightStructure, isolateCommunity, articulationIds, bridgeKeys,
++    });
++    const cacheKey = (researchName ? `research:${researchName}` : `lens:${lensId}:${lensRepo}`)
++      + (metricsOn ? `:metrics:${sizeMetric}:${colorMode}:${highlightStructure}:${isolateCommunity}` : '');
 +    setSigmaGraph(g, { cacheKey });
-+  }, [researchName, lensId, lensRepo, researchData, setSigmaGraph, metricsOn, metricsById, sizeMetric]);
++  }, [researchName, lensId, lensRepo, researchData, setSigmaGraph, metricsOn, metricsById, sizeMetric, colorMode, highlightStructure, isolateCommunity, articulationIds, bridgeKeys]);
 +
 +  // Expose useSigma.recomputeLayout up to useAppState so the Header
 +  // "Recompute layout" button can fire it. The action lives on
@@ -19492,7 +19511,7 @@ index e34fd434..cb6baed1 100644
  
    // Update node visibility when filters change
    useEffect(() => {
-@@ -205,6 +396,198 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -205,6 +415,198 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
      // eslint-disable-next-line react-hooks/exhaustive-deps -- sigmaRef identity never changes
    }, [visibleLabels, depthFilter, appSelectedNode]);
  
@@ -19691,7 +19710,7 @@ index e34fd434..cb6baed1 100644
    // Sync app selected node with sigma
    useEffect(() => {
      if (appSelectedNode) {
-@@ -249,6 +632,130 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -249,6 +651,130 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
          className="sigma-container h-full w-full cursor-grab active:cursor-grabbing"
        />
  
@@ -19822,7 +19841,7 @@ index e34fd434..cb6baed1 100644
        {/* Hovered node tooltip - only show when NOT selected */}
        {hoveredNodeName && !sigmaSelectedNode && (
          <div className="pointer-events-none absolute top-4 left-1/2 z-20 -translate-x-1/2 animate-fade-in rounded-lg border border-border-subtle bg-elevated/95 px-3 py-1.5 backdrop-blur-sm">
-@@ -350,8 +857,119 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -350,8 +876,150 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
        {/* Query FAB */}
        <QueryFAB />
  
@@ -19910,6 +19929,37 @@ index e34fd434..cb6baed1 100644
 +          </select>
 +        )}
 +        {metricsOn && (researchName || (lensId && lensRepo)) && (
++          <select
++            value={colorMode}
++            onChange={(e) => setColorMode(e.target.value as 'community' | 'heatmap')}
++            className="flex h-10 items-center rounded-lg border border-indigo-400/40 bg-indigo-500/15 px-3 font-mono text-xs font-semibold text-indigo-200 transition-colors hover:border-indigo-300/60 hover:bg-indigo-500/20"
++            data-testid="colormode-select" title="Node color mode"
++          >
++            <option value="community">Color: community</option>
++            <option value="heatmap">Color: heatmap</option>
++          </select>
++        )}
++        {metricsOn && (researchName || (lensId && lensRepo)) && (
++          <button
++            onClick={() => setHighlightStructure((v) => !v)}
++            className={highlightStructure
++              ? 'flex h-10 items-center rounded-lg border border-rose-400/50 bg-rose-500/15 px-3 font-mono text-xs font-semibold text-rose-200'
++              : 'flex h-10 items-center rounded-lg border border-border-subtle bg-elevated px-3 font-mono text-xs font-semibold text-text-secondary transition-colors hover:bg-hover hover:text-text-primary'}
++            data-testid="highlight-toggle" title="Highlight articulation points + bridges"
++          >Highlight</button>
++        )}
++        {metricsOn && (researchName || (lensId && lensRepo)) && communityIds.length > 1 && (
++          <select
++            value={isolateCommunity == null ? '' : String(isolateCommunity)}
++            onChange={(e) => setIsolateCommunity(e.target.value === '' ? null : Number(e.target.value))}
++            className="flex h-10 items-center rounded-lg border border-indigo-400/40 bg-indigo-500/15 px-3 font-mono text-xs font-semibold text-indigo-200 transition-colors hover:border-indigo-300/60 hover:bg-indigo-500/20"
++            data-testid="isolate-select" title="Isolate a community (dim the rest)"
++          >
++            <option value="">All communities</option>
++            {communityIds.map((c) => (<option key={c} value={String(c)}>Community {c}</option>))}
++          </select>
++        )}
++        {metricsOn && (researchName || (lensId && lensRepo)) && (
 +          <button
 +            onClick={() => setTopNOpen((v) => !v)}
 +            className="flex h-10 items-center gap-1.5 rounded-lg border border-border-subtle bg-elevated px-3 text-text-secondary transition-colors hover:bg-hover hover:text-text-primary"
@@ -19944,7 +19994,7 @@ index e34fd434..cb6baed1 100644
          <button
            onClick={handleToggleAIHighlights}
            className={
-@@ -369,6 +987,20 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -369,6 +1037,20 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
            )}
          </button>
        </div>
@@ -31808,10 +31858,10 @@ index 05676e50..8718501f 100644
    Zap,
 diff --git a/gitnexus-web/src/lib/metrics-view.ts b/gitnexus-web/src/lib/metrics-view.ts
 new file mode 100644
-index 00000000..70488972
+index 00000000..a70ff336
 --- /dev/null
 +++ b/gitnexus-web/src/lib/metrics-view.ts
-@@ -0,0 +1,36 @@
+@@ -0,0 +1,57 @@
 +import type { GraphMetricNode, GraphMetrics, SizeMetric } from '../services/graph-theory-client';
 +
 +const CSV_COLS: (keyof GraphMetricNode)[] = ['id', 'degree', 'pagerank', 'betweenness', 'eigenvector', 'closeness', 'katz', 'harmonic', 'coreness', 'clustering', 'articulation', 'componentId', 'community'];
@@ -31837,6 +31887,27 @@ index 00000000..70488972
 +/** Pretty-printed JSON of the full metrics payload. */
 +export function metricsToJson(metrics: GraphMetrics): string {
 +  return JSON.stringify(metrics, null, 2);
++}
++
++const HEAT_STOPS: ReadonlyArray<readonly [number, readonly [number, number, number]]> = [
++  [0, [49, 54, 149]],     // #313695 cold (blue)
++  [0.5, [255, 255, 191]], // #ffffbf mid (pale yellow)
++  [1, [165, 0, 38]],      // #a50026 hot (red)
++];
++
++/** Sequential heat ramp blue→yellow→red for t∈[0,1] (clamped). Returns '#rrggbb'. */
++export function heatColor(t: number): string {
++  const x = Math.max(0, Math.min(1, t));
++  let lo = HEAT_STOPS[0];
++  let hi = HEAT_STOPS[HEAT_STOPS.length - 1];
++  for (let i = 0; i < HEAT_STOPS.length - 1; i++) {
++    if (x >= HEAT_STOPS[i][0] && x <= HEAT_STOPS[i + 1][0]) { lo = HEAT_STOPS[i]; hi = HEAT_STOPS[i + 1]; break; }
++  }
++  const span = (hi[0] - lo[0]) || 1;
++  const f = (x - lo[0]) / span;
++  const lerp = (a: number, b: number) => Math.round(a + (b - a) * f);
++  const hex = (n: number) => n.toString(16).padStart(2, '0');
++  return `#${hex(lerp(lo[1][0], hi[1][0]))}${hex(lerp(lo[1][1], hi[1][1]))}${hex(lerp(lo[1][2], hi[1][2]))}`;
 +}
 +
 +/** DOM download helper (not unit-tested — trivial Blob+anchor). */
@@ -31868,13 +31939,14 @@ index 00000000..c57b5944
 +export const RESEARCH_FALLBACK_COLOR = '#9ca3af';
 diff --git a/gitnexus-web/src/lib/research-graph-adapter.ts b/gitnexus-web/src/lib/research-graph-adapter.ts
 new file mode 100644
-index 00000000..c090e629
+index 00000000..2f754df5
 --- /dev/null
 +++ b/gitnexus-web/src/lib/research-graph-adapter.ts
-@@ -0,0 +1,88 @@
+@@ -0,0 +1,105 @@
 +import Graph from 'graphology';
 +import type { SigmaNodeAttributes, SigmaEdgeAttributes } from './graph-adapter';
 +import { RESEARCH_COLORS, RESEARCH_FALLBACK_COLOR } from './research-colors';
++import { heatColor } from './metrics-view';
 +
 +const COMMUNITY_PALETTE = ['#60a5fa','#f59e0b','#34d399','#f472b6','#a78bfa','#fb7185','#22d3ee','#facc15','#4ade80','#c084fc'];
 +
@@ -31913,7 +31985,15 @@ index 00000000..c090e629
 +  rg: ResearchGraph,
 +  metricsById?: Map<string, { degree: number; pagerank: number; betweenness: number; eigenvector: number; closeness: number; katz: number; harmonic: number; coreness: number; clustering: number; community: number }>,
 +  sizeBy: 'degree' | 'pagerank' | 'betweenness' | 'eigenvector' | 'closeness' | 'katz' | 'harmonic' | 'coreness' | 'clustering' = 'pagerank',
++  opts: {
++    colorMode?: 'community' | 'heatmap';
++    highlightStructure?: boolean;
++    isolateCommunity?: number | null;
++    articulationIds?: Set<string>;
++    bridgeKeys?: Set<string>;
++  } = {},
 +): Graph<SigmaNodeAttributes, SigmaEdgeAttributes> {
++  const { colorMode = 'community', highlightStructure = false, isolateCommunity = null, articulationIds, bridgeKeys } = opts;
 +  const graph = new Graph<SigmaNodeAttributes, SigmaEdgeAttributes>();
 +  const nodes = rg.nodes || [];
 +  const total = Math.max(1, nodes.length);
@@ -31929,10 +32009,13 @@ index 00000000..c090e629
 +    const angle = (i / total) * 2 * Math.PI;
 +    const r = radius * (0.5 + ((i % 50) / 50) * 0.5);
 +    const m = metricsById?.get(node.id);
-+    const color = m
-+      ? COMMUNITY_PALETTE[m.community % COMMUNITY_PALETTE.length]
++    const dimmed = isolateCommunity != null && m != null && m.community !== isolateCommunity;
++    let color = m
++      ? (colorMode === 'heatmap' ? heatColor((m[sizeBy] ?? 0) / maxV) : COMMUNITY_PALETTE[m.community % COMMUNITY_PALETTE.length])
 +      : (RESEARCH_COLORS[node.type] || RESEARCH_FALLBACK_COLOR);
-+    const size = m ? 4 + 16 * Math.sqrt((m[sizeBy] ?? 0) / maxV) : 5;
++    let size = m ? 4 + 16 * Math.sqrt((m[sizeBy] ?? 0) / maxV) : 5;
++    const isArticulation = !!(highlightStructure && articulationIds?.has(node.id));
++    if (dimmed) { color = '#374151'; size = 2; }   // dim non-isolated (no opacity attr → gray+small)
 +    graph.addNode(node.id, {
 +      x: Math.cos(angle) * r,
 +      y: Math.sin(angle) * r,
@@ -31942,6 +32025,7 @@ index 00000000..c090e629
 +      nodeType: 'CodeElement',
 +      filePath: node.path,
 +      mass: 3,
++      ...(isArticulation && !dimmed ? { highlighted: true, zIndex: 2 } : {}),
 +    });
 +    i++;
 +  }
@@ -31950,12 +32034,16 @@ index 00000000..c090e629
 +    if (!graph.hasNode(e.source) || !graph.hasNode(e.target)) continue;
 +    if (e.source === e.target) continue;
 +    if (graph.hasEdge(e.source, e.target)) continue;
++    const isBridge = !!(highlightStructure && bridgeKeys?.has(`${e.source}\0${e.target}`));
++    const sm = metricsById?.get(e.source);
++    const tm = metricsById?.get(e.target);
++    const edgeDimmed = isolateCommunity != null && sm != null && tm != null && sm.community !== isolateCommunity && tm.community !== isolateCommunity;
 +    graph.addEdge(e.source, e.target, {
-+      size: 1,
-+      color: EDGE_COLOR,
++      size: isBridge ? 3 : 1,
++      color: edgeDimmed ? '#1f2937' : (isBridge ? '#ef4444' : EDGE_COLOR),
 +      relationType: e.kind,
 +      type: 'curved',
-+      zIndex: 1,
++      zIndex: isBridge ? 2 : 1,
 +    });
 +  }
 +  return graph;

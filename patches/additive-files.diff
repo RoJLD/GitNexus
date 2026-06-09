@@ -23943,10 +23943,10 @@ index 00000000..9fb3e02b
 +};
 diff --git a/gitnexus-web/src/lib/metrics-view.ts b/gitnexus-web/src/lib/metrics-view.ts
 new file mode 100644
-index 00000000..70488972
+index 00000000..a70ff336
 --- /dev/null
 +++ b/gitnexus-web/src/lib/metrics-view.ts
-@@ -0,0 +1,36 @@
+@@ -0,0 +1,57 @@
 +import type { GraphMetricNode, GraphMetrics, SizeMetric } from '../services/graph-theory-client';
 +
 +const CSV_COLS: (keyof GraphMetricNode)[] = ['id', 'degree', 'pagerank', 'betweenness', 'eigenvector', 'closeness', 'katz', 'harmonic', 'coreness', 'clustering', 'articulation', 'componentId', 'community'];
@@ -23972,6 +23972,27 @@ index 00000000..70488972
 +/** Pretty-printed JSON of the full metrics payload. */
 +export function metricsToJson(metrics: GraphMetrics): string {
 +  return JSON.stringify(metrics, null, 2);
++}
++
++const HEAT_STOPS: ReadonlyArray<readonly [number, readonly [number, number, number]]> = [
++  [0, [49, 54, 149]],     // #313695 cold (blue)
++  [0.5, [255, 255, 191]], // #ffffbf mid (pale yellow)
++  [1, [165, 0, 38]],      // #a50026 hot (red)
++];
++
++/** Sequential heat ramp blue→yellow→red for t∈[0,1] (clamped). Returns '#rrggbb'. */
++export function heatColor(t: number): string {
++  const x = Math.max(0, Math.min(1, t));
++  let lo = HEAT_STOPS[0];
++  let hi = HEAT_STOPS[HEAT_STOPS.length - 1];
++  for (let i = 0; i < HEAT_STOPS.length - 1; i++) {
++    if (x >= HEAT_STOPS[i][0] && x <= HEAT_STOPS[i + 1][0]) { lo = HEAT_STOPS[i]; hi = HEAT_STOPS[i + 1]; break; }
++  }
++  const span = (hi[0] - lo[0]) || 1;
++  const f = (x - lo[0]) / span;
++  const lerp = (a: number, b: number) => Math.round(a + (b - a) * f);
++  const hex = (n: number) => n.toString(16).padStart(2, '0');
++  return `#${hex(lerp(lo[1][0], hi[1][0]))}${hex(lerp(lo[1][1], hi[1][1]))}${hex(lerp(lo[1][2], hi[1][2]))}`;
 +}
 +
 +/** DOM download helper (not unit-tested — trivial Blob+anchor). */
@@ -24003,13 +24024,14 @@ index 00000000..c57b5944
 +export const RESEARCH_FALLBACK_COLOR = '#9ca3af';
 diff --git a/gitnexus-web/src/lib/research-graph-adapter.ts b/gitnexus-web/src/lib/research-graph-adapter.ts
 new file mode 100644
-index 00000000..c090e629
+index 00000000..2f754df5
 --- /dev/null
 +++ b/gitnexus-web/src/lib/research-graph-adapter.ts
-@@ -0,0 +1,88 @@
+@@ -0,0 +1,105 @@
 +import Graph from 'graphology';
 +import type { SigmaNodeAttributes, SigmaEdgeAttributes } from './graph-adapter';
 +import { RESEARCH_COLORS, RESEARCH_FALLBACK_COLOR } from './research-colors';
++import { heatColor } from './metrics-view';
 +
 +const COMMUNITY_PALETTE = ['#60a5fa','#f59e0b','#34d399','#f472b6','#a78bfa','#fb7185','#22d3ee','#facc15','#4ade80','#c084fc'];
 +
@@ -24048,7 +24070,15 @@ index 00000000..c090e629
 +  rg: ResearchGraph,
 +  metricsById?: Map<string, { degree: number; pagerank: number; betweenness: number; eigenvector: number; closeness: number; katz: number; harmonic: number; coreness: number; clustering: number; community: number }>,
 +  sizeBy: 'degree' | 'pagerank' | 'betweenness' | 'eigenvector' | 'closeness' | 'katz' | 'harmonic' | 'coreness' | 'clustering' = 'pagerank',
++  opts: {
++    colorMode?: 'community' | 'heatmap';
++    highlightStructure?: boolean;
++    isolateCommunity?: number | null;
++    articulationIds?: Set<string>;
++    bridgeKeys?: Set<string>;
++  } = {},
 +): Graph<SigmaNodeAttributes, SigmaEdgeAttributes> {
++  const { colorMode = 'community', highlightStructure = false, isolateCommunity = null, articulationIds, bridgeKeys } = opts;
 +  const graph = new Graph<SigmaNodeAttributes, SigmaEdgeAttributes>();
 +  const nodes = rg.nodes || [];
 +  const total = Math.max(1, nodes.length);
@@ -24064,10 +24094,13 @@ index 00000000..c090e629
 +    const angle = (i / total) * 2 * Math.PI;
 +    const r = radius * (0.5 + ((i % 50) / 50) * 0.5);
 +    const m = metricsById?.get(node.id);
-+    const color = m
-+      ? COMMUNITY_PALETTE[m.community % COMMUNITY_PALETTE.length]
++    const dimmed = isolateCommunity != null && m != null && m.community !== isolateCommunity;
++    let color = m
++      ? (colorMode === 'heatmap' ? heatColor((m[sizeBy] ?? 0) / maxV) : COMMUNITY_PALETTE[m.community % COMMUNITY_PALETTE.length])
 +      : (RESEARCH_COLORS[node.type] || RESEARCH_FALLBACK_COLOR);
-+    const size = m ? 4 + 16 * Math.sqrt((m[sizeBy] ?? 0) / maxV) : 5;
++    let size = m ? 4 + 16 * Math.sqrt((m[sizeBy] ?? 0) / maxV) : 5;
++    const isArticulation = !!(highlightStructure && articulationIds?.has(node.id));
++    if (dimmed) { color = '#374151'; size = 2; }   // dim non-isolated (no opacity attr → gray+small)
 +    graph.addNode(node.id, {
 +      x: Math.cos(angle) * r,
 +      y: Math.sin(angle) * r,
@@ -24077,6 +24110,7 @@ index 00000000..c090e629
 +      nodeType: 'CodeElement',
 +      filePath: node.path,
 +      mass: 3,
++      ...(isArticulation && !dimmed ? { highlighted: true, zIndex: 2 } : {}),
 +    });
 +    i++;
 +  }
@@ -24085,12 +24119,16 @@ index 00000000..c090e629
 +    if (!graph.hasNode(e.source) || !graph.hasNode(e.target)) continue;
 +    if (e.source === e.target) continue;
 +    if (graph.hasEdge(e.source, e.target)) continue;
++    const isBridge = !!(highlightStructure && bridgeKeys?.has(`${e.source}\0${e.target}`));
++    const sm = metricsById?.get(e.source);
++    const tm = metricsById?.get(e.target);
++    const edgeDimmed = isolateCommunity != null && sm != null && tm != null && sm.community !== isolateCommunity && tm.community !== isolateCommunity;
 +    graph.addEdge(e.source, e.target, {
-+      size: 1,
-+      color: EDGE_COLOR,
++      size: isBridge ? 3 : 1,
++      color: edgeDimmed ? '#1f2937' : (isBridge ? '#ef4444' : EDGE_COLOR),
 +      relationType: e.kind,
 +      type: 'curved',
-+      zIndex: 1,
++      zIndex: isBridge ? 2 : 1,
 +    });
 +  }
 +  return graph;

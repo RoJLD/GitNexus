@@ -2476,7 +2476,7 @@ index 98c20c68..50a414e4 100644
            <div className="mt-6 border-t border-border-subtle pt-4">
              <h3 className="mb-3 text-xs font-medium tracking-wide text-text-secondary uppercase">
 diff --git a/gitnexus-web/src/components/GraphCanvas.tsx b/gitnexus-web/src/components/GraphCanvas.tsx
-index e34fd434..cb6baed1 100644
+index e34fd434..80106183 100644
 --- a/gitnexus-web/src/components/GraphCanvas.tsx
 +++ b/gitnexus-web/src/components/GraphCanvas.tsx
 @@ -1,4 +1,4 @@
@@ -2536,7 +2536,7 @@ index e34fd434..cb6baed1 100644
    const {
      graph,
      setSelectedNode,
-@@ -46,9 +74,112 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -46,9 +74,128 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
      clearAICitationHighlights,
      clearBlastRadius,
      animatedNodes,
@@ -2598,6 +2598,22 @@ index e34fd434..cb6baed1 100644
 +  const [communityMethod, setCommunityMethod] = useState<CommunityMethod>('louvain');
 +  const [metricsData, setMetricsData] = useState<GraphMetrics | null>(null);
 +  const [topNOpen, setTopNOpen] = useState(false);
++  const [colorMode, setColorMode] = useState<'community' | 'heatmap'>('community');
++  const [highlightStructure, setHighlightStructure] = useState(false);
++  const [isolateCommunity, setIsolateCommunity] = useState<number | null>(null);
++  const articulationIds = useMemo(
++    () => new Set((metricsData?.nodes ?? []).filter((n) => n.articulation).map((n) => n.id)),
++    [metricsData],
++  );
++  const bridgeKeys = useMemo(() => {
++    const s = new Set<string>();
++    for (const b of metricsData?.bridges ?? []) { s.add(`${b.source}\0${b.target}`); s.add(`${b.target}\0${b.source}`); }
++    return s;
++  }, [metricsData]);
++  const communityIds = useMemo(
++    () => [...new Set((metricsData?.nodes ?? []).map((n) => n.community))].sort((a, b) => a - b),
++    [metricsData],
++  );
 +
 +  // Lens — URL-driven projection for ?lens=<id>&repo=<repo>. Reuses researchData +
 +  // the research render path (the lens result is shaped like a research graph).
@@ -2650,7 +2666,7 @@ index e34fd434..cb6baed1 100644
    const effectiveHighlightedNodeIds = useMemo(() => {
      if (!isAIHighlightsEnabled) return highlightedNodeIds;
      const next = new Set(highlightedNodeIds);
-@@ -82,6 +213,23 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -82,6 +229,23 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
  
    const handleNodeClick = useCallback(
      (nodeId: string) => {
@@ -2674,7 +2690,7 @@ index e34fd434..cb6baed1 100644
        if (!graph) return;
        const node = nodeById.get(nodeId);
        if (node) {
-@@ -89,6 +237,7 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -89,6 +253,7 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
          openCodePanel();
        }
      },
@@ -2682,7 +2698,7 @@ index e34fd434..cb6baed1 100644
      [graph, nodeById, setSelectedNode, openCodePanel],
    );
  
-@@ -130,6 +279,7 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -130,6 +295,7 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
      containerRef,
      sigmaRef,
      setGraph: setSigmaGraph,
@@ -2690,7 +2706,7 @@ index e34fd434..cb6baed1 100644
      zoomIn,
      zoomOut,
      resetZoom,
-@@ -139,6 +289,12 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -139,6 +305,12 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
      stopLayout,
      selectedNode: sigmaSelectedNode,
      setSelectedNode: setSigmaSelectedNode,
@@ -2703,7 +2719,7 @@ index e34fd434..cb6baed1 100644
    } = useSigma({
      onNodeClick: handleNodeClick,
      onNodeHover: handleNodeHover,
-@@ -147,6 +303,10 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -147,6 +319,10 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
      blastRadiusNodeIds: effectiveBlastRadiusNodeIds,
      animatedNodes: effectiveAnimatedNodes,
      visibleEdgeTypes,
@@ -2714,7 +2730,7 @@ index e34fd434..cb6baed1 100644
    });
  
    // Expose focusNode to parent via ref
-@@ -170,6 +330,8 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -170,6 +346,8 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
  
    // Update Sigma graph when KnowledgeGraph changes
    useEffect(() => {
@@ -2723,7 +2739,7 @@ index e34fd434..cb6baed1 100644
      if (!graph) return;
  
      // Build communityMemberships map from MEMBER_OF relationships
-@@ -189,8 +351,37 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -189,8 +367,40 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
      });
  
      const sigmaGraph = knowledgeGraphToGraphology(graph, communityMemberships);
@@ -2746,10 +2762,13 @@ index e34fd434..cb6baed1 100644
 +  useEffect(() => {
 +    if (!researchData) return;
 +    if (!researchName && !lensId) return;
-+    const g = researchGraphToGraphology(researchData, metricsOn ? (metricsById ?? undefined) : undefined, sizeMetric);
-+    const cacheKey = (researchName ? `research:${researchName}` : `lens:${lensId}:${lensRepo}`) + (metricsOn ? `:metrics:${sizeMetric}` : '');
++    const g = researchGraphToGraphology(researchData, metricsOn ? (metricsById ?? undefined) : undefined, sizeMetric, {
++      colorMode, highlightStructure, isolateCommunity, articulationIds, bridgeKeys,
++    });
++    const cacheKey = (researchName ? `research:${researchName}` : `lens:${lensId}:${lensRepo}`)
++      + (metricsOn ? `:metrics:${sizeMetric}:${colorMode}:${highlightStructure}:${isolateCommunity}` : '');
 +    setSigmaGraph(g, { cacheKey });
-+  }, [researchName, lensId, lensRepo, researchData, setSigmaGraph, metricsOn, metricsById, sizeMetric]);
++  }, [researchName, lensId, lensRepo, researchData, setSigmaGraph, metricsOn, metricsById, sizeMetric, colorMode, highlightStructure, isolateCommunity, articulationIds, bridgeKeys]);
 +
 +  // Expose useSigma.recomputeLayout up to useAppState so the Header
 +  // "Recompute layout" button can fire it. The action lives on
@@ -2763,7 +2782,7 @@ index e34fd434..cb6baed1 100644
  
    // Update node visibility when filters change
    useEffect(() => {
-@@ -205,6 +396,198 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -205,6 +415,198 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
      // eslint-disable-next-line react-hooks/exhaustive-deps -- sigmaRef identity never changes
    }, [visibleLabels, depthFilter, appSelectedNode]);
  
@@ -2962,7 +2981,7 @@ index e34fd434..cb6baed1 100644
    // Sync app selected node with sigma
    useEffect(() => {
      if (appSelectedNode) {
-@@ -249,6 +632,130 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -249,6 +651,130 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
          className="sigma-container h-full w-full cursor-grab active:cursor-grabbing"
        />
  
@@ -3093,7 +3112,7 @@ index e34fd434..cb6baed1 100644
        {/* Hovered node tooltip - only show when NOT selected */}
        {hoveredNodeName && !sigmaSelectedNode && (
          <div className="pointer-events-none absolute top-4 left-1/2 z-20 -translate-x-1/2 animate-fade-in rounded-lg border border-border-subtle bg-elevated/95 px-3 py-1.5 backdrop-blur-sm">
-@@ -350,8 +857,119 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -350,8 +876,150 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
        {/* Query FAB */}
        <QueryFAB />
  
@@ -3181,6 +3200,37 @@ index e34fd434..cb6baed1 100644
 +          </select>
 +        )}
 +        {metricsOn && (researchName || (lensId && lensRepo)) && (
++          <select
++            value={colorMode}
++            onChange={(e) => setColorMode(e.target.value as 'community' | 'heatmap')}
++            className="flex h-10 items-center rounded-lg border border-indigo-400/40 bg-indigo-500/15 px-3 font-mono text-xs font-semibold text-indigo-200 transition-colors hover:border-indigo-300/60 hover:bg-indigo-500/20"
++            data-testid="colormode-select" title="Node color mode"
++          >
++            <option value="community">Color: community</option>
++            <option value="heatmap">Color: heatmap</option>
++          </select>
++        )}
++        {metricsOn && (researchName || (lensId && lensRepo)) && (
++          <button
++            onClick={() => setHighlightStructure((v) => !v)}
++            className={highlightStructure
++              ? 'flex h-10 items-center rounded-lg border border-rose-400/50 bg-rose-500/15 px-3 font-mono text-xs font-semibold text-rose-200'
++              : 'flex h-10 items-center rounded-lg border border-border-subtle bg-elevated px-3 font-mono text-xs font-semibold text-text-secondary transition-colors hover:bg-hover hover:text-text-primary'}
++            data-testid="highlight-toggle" title="Highlight articulation points + bridges"
++          >Highlight</button>
++        )}
++        {metricsOn && (researchName || (lensId && lensRepo)) && communityIds.length > 1 && (
++          <select
++            value={isolateCommunity == null ? '' : String(isolateCommunity)}
++            onChange={(e) => setIsolateCommunity(e.target.value === '' ? null : Number(e.target.value))}
++            className="flex h-10 items-center rounded-lg border border-indigo-400/40 bg-indigo-500/15 px-3 font-mono text-xs font-semibold text-indigo-200 transition-colors hover:border-indigo-300/60 hover:bg-indigo-500/20"
++            data-testid="isolate-select" title="Isolate a community (dim the rest)"
++          >
++            <option value="">All communities</option>
++            {communityIds.map((c) => (<option key={c} value={String(c)}>Community {c}</option>))}
++          </select>
++        )}
++        {metricsOn && (researchName || (lensId && lensRepo)) && (
 +          <button
 +            onClick={() => setTopNOpen((v) => !v)}
 +            className="flex h-10 items-center gap-1.5 rounded-lg border border-border-subtle bg-elevated px-3 text-text-secondary transition-colors hover:bg-hover hover:text-text-primary"
@@ -3215,7 +3265,7 @@ index e34fd434..cb6baed1 100644
          <button
            onClick={handleToggleAIHighlights}
            className={
-@@ -369,6 +987,20 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -369,6 +1037,20 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
            )}
          </button>
        </div>
