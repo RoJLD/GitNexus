@@ -565,7 +565,7 @@ const TOOLS = [
   },
   {
     name: 'gitnexus_graph_metrics',
-    description: 'Graph-theory metrics (degree + PageRank centrality + Louvain communities) for a sidecar graph by name. Returns a summary + per-node metrics.',
+    description: 'Graph-theory metrics (degree + PageRank + betweenness + eigenvector centrality + Louvain communities) for a sidecar graph by name. Returns a summary + per-node metrics.',
     inputSchema: {
       type: 'object',
       properties: {
