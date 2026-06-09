@@ -585,7 +585,7 @@ const TOOLS = [
   },
   {
     name: 'gitnexus_graph_lens_metrics',
-    description: 'Graph-theory metrics over a CODE-graph lens projection of a repo (today imports-deps = file-level import dependency graph). Same metric set as gitnexus_graph_metrics — surfaces central hub files, articulation points (fragile single-points-of-failure in the dependency structure), and module communities. Community method selectable (louvain/leiden/labelprop). Large projections are node-capped (summary.capped flags when super-linear metrics were skipped).',
+    description: 'Graph-theory metrics over a CODE-graph lens projection of a repo. Available lenses: imports-deps (file-level import dependency graph) and file-graph (file-level over ALL relationship types — imports + calls + extends + …). Same metric set as gitnexus_graph_metrics — surfaces central hub files, articulation points (fragile single-points-of-failure in the dependency structure), and module communities. Community method selectable (louvain/leiden/labelprop). Large projections are node-capped (summary.capped flags when super-linear metrics were skipped).',
     inputSchema: {
       type: 'object',
       properties: {

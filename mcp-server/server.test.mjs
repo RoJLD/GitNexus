@@ -135,6 +135,10 @@ describe('mcp-server/server.mjs — Task 11.13 smoke', () => {
     assert.ok(src.includes('/graph/metrics/lens/'), 'handler must call /graph/metrics/lens/');
     assert.ok(src.includes('encodeURIComponent(lensId)'), 'handler must encode lensId');
   });
+  it('gitnexus_graph_lens_metrics description mentions both lenses (imports-deps + file-graph)', () => {
+    assert.ok(/imports-deps/.test(src) && /file-graph/.test(src),
+      'lens-metrics description should mention imports-deps and file-graph');
+  });
 
   it('query_meta_graph inputSchema enumerates valid layer values', () => {
     assert.ok(src.includes("'lineage'"), "layer enum must include 'lineage'");
