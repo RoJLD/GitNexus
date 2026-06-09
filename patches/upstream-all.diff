@@ -6055,10 +6055,10 @@ index 00000000..e06db978
 +}
 diff --git a/docker-server-graph-theory.mjs b/docker-server-graph-theory.mjs
 new file mode 100644
-index 00000000..06ece186
+index 00000000..78ce0c86
 --- /dev/null
 +++ b/docker-server-graph-theory.mjs
-@@ -0,0 +1,86 @@
+@@ -0,0 +1,130 @@
 +/**
 + * Graph-theory metrics routes (web container).
 + *   GET /graph/metrics/:name[?community=&resolution=]            → sidecar graph metrics
@@ -6078,6 +6078,32 @@ index 00000000..06ece186
 +const CAP_MAX = 50000;
 +
 +function sendJson(res, code, body) { res.writeHead(code, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(body)); }
++
++const METRICS_CACHE_TTL_MS = 300_000;
++const METRICS_CACHE_MAX = 64;
++
++/** Tiny TTL + insertion-order(LRU-ish) cache. Clock injected for testability. */
++export function makeMetricsCache({ ttlMs = METRICS_CACHE_TTL_MS, max = METRICS_CACHE_MAX, clock = Date.now } = {}) {
++  const m = new Map();   // key → { val, at }
++  return {
++    get(key) {
++      const e = m.get(key);
++      if (!e) return undefined;
++      if (clock() - e.at > ttlMs) { m.delete(key); return undefined; }
++      return e.val;
++    },
++    set(key, val) {
++      m.delete(key);
++      m.set(key, { val, at: clock() });
++      while (m.size > max) m.delete(m.keys().next().value);   // evict oldest
++    },
++  };
++}
++
++const metricsCache = makeMetricsCache();
++function metricsCacheKey(kind, idOrName, lensId, params) {
++  return `${kind}|${idOrName}|${lensId || ''}|${params.community}|${params.resolution}|${params.cap}|${params.approx ?? ''}`;
++}
 +
 +/** Parse a positive-integer query param. Returns `def` when absent/empty; throws on ≤0/non-int; clamps to clampMax. */
 +function parsePosInt(searchParams, key, { def = null, clampMax = null } = {}) {
@@ -6118,11 +6144,20 @@ index 00000000..06ece186
 +  let params;
 +  try { params = parseMetricsParams(url.searchParams); }
 +  catch (e) { sendJson(res, 400, { error: e.message }); return true; }
++  const fresh = url.searchParams.get('fresh') === '1';
++  const cacheKey = metricsCacheKey('sidecar', name, '', params);
++  if (!fresh) {
++    const cached = metricsCache.get(cacheKey);
++    if (cached !== undefined) { sendJson(res, 200, cached); return true; }
++  }
 +  let graph;
 +  try { graph = await sidecarRender(name); }
 +  catch (e) { sendJson(res, 404, { error: `graph "${name}" not available: ${e.message}` }); return true; }
-+  try { sendJson(res, 200, computeMetricsCapped(graph, params)); }
++  let payload;
++  try { payload = computeMetricsCapped(graph, params); }
 +  catch (e) { sendJson(res, 500, { error: `metrics failed: ${e.message}` }); return true; }
++  metricsCache.set(cacheKey, payload);
++  sendJson(res, 200, payload);
 +  return true;
 +}
 +
@@ -6135,14 +6170,23 @@ index 00000000..06ece186
 +  let params;
 +  try { params = parseMetricsParams(url.searchParams); }
 +  catch (e) { sendJson(res, 400, { error: e.message }); return true; }
++  const fresh = url.searchParams.get('fresh') === '1';
++  const cacheKey = metricsCacheKey('lens', repo, lensId, params);
++  if (!fresh) {
++    const cached = metricsCache.get(cacheKey);
++    if (cached !== undefined) { sendJson(res, 200, cached); return true; }
++  }
 +  let apiGraph;
 +  try {
 +    const r = await fetch(`${GITNEXUS_API}/api/graph?repo=${encodeURIComponent(repo)}`);
 +    if (!r.ok) { sendJson(res, 502, { error: `upstream /api/graph ${r.status}` }); return true; }
 +    apiGraph = await r.json();
 +  } catch (e) { sendJson(res, 502, { error: `upstream /api/graph failed: ${e.message}` }); return true; }
-+  try { sendJson(res, 200, lensMetrics(apiGraph, lensId, params)); }
++  let payload;
++  try { payload = lensMetrics(apiGraph, lensId, params); }
 +  catch (e) { sendJson(res, 500, { error: `lens metrics failed: ${e.message}` }); return true; }
++  metricsCache.set(cacheKey, payload);
++  sendJson(res, 200, payload);
 +  return true;
 +}
 diff --git a/docker-server-group-graph-core.mjs b/docker-server-group-graph-core.mjs
