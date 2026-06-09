@@ -361,3 +361,39 @@ describe('leiden', () => {
     expect(Math.min(...Object.values(a))).toBe(0);
   });
 });
+
+// ---- Task 8: computeMetrics integration ----
+describe('computeMetrics — P2.3.1 fields', () => {
+  it('exposes the new per-node fields + bridges + summary fields', () => {
+    const r = computeMetrics(BARBELL);
+    const n = r.nodes[0];
+    for (const f of ['closeness', 'katz', 'harmonic', 'coreness', 'clustering', 'articulation', 'componentId', 'community']) {
+      expect(n).toHaveProperty(f);
+    }
+    expect(r.nodes.every((x) => Number.isFinite(x.closeness) && Number.isFinite(x.katz) && Number.isFinite(x.harmonic))).toBe(true);
+    expect(Array.isArray(r.bridges)).toBe(true);
+    expect(r.bridges.some((b) => (b.source === 'x1' && b.target === 'y1') || (b.source === 'y1' && b.target === 'x1'))).toBe(true);
+    expect(r.summary).toHaveProperty('density');
+    expect(r.summary).toHaveProperty('componentCount');
+    expect(r.summary).toHaveProperty('transitivity');
+    expect(r.summary.componentCount).toBe(1);
+  });
+  it('keeps existing fields byte-identical under default options (regression)', () => {
+    const r = computeMetrics(BARBELL);
+    const n = r.nodes.find((x) => x.id === 'x1');
+    // existing fields unchanged in name/shape
+    for (const f of ['id', 'degree', 'pagerank', 'betweenness', 'eigenvector', 'community']) expect(n).toHaveProperty(f);
+    expect(r.summary).toMatchObject({ nodeCount: 6, edgeCount: 7, communityCount: 2 });
+  });
+  it('switches the partition when community method changes', () => {
+    const lv = computeMetrics(BARBELL, { community: 'louvain' });
+    const ld = computeMetrics(BARBELL, { community: 'leiden' });
+    const lp = computeMetrics(BARBELL, { community: 'labelprop' });
+    for (const r of [lv, ld, lp]) expect(r.nodes.every((n) => Number.isFinite(n.community))).toBe(true);
+  });
+  it('marks the barbell bridge endpoints as articulation points', () => {
+    const r = computeMetrics(BARBELL);
+    expect(r.nodes.find((n) => n.id === 'x1').articulation).toBe(true);
+    expect(r.nodes.find((n) => n.id === 'x2').articulation).toBe(false);
+  });
+});

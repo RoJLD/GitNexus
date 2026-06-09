@@ -5198,10 +5198,10 @@ index 00000000..1a4f7b60
 +}
 diff --git a/docker-server-graph-theory-core.mjs b/docker-server-graph-theory-core.mjs
 new file mode 100644
-index 00000000..0a2f7485
+index 00000000..e6c5167a
 --- /dev/null
 +++ b/docker-server-graph-theory-core.mjs
-@@ -0,0 +1,485 @@
+@@ -0,0 +1,542 @@
 +/**
 + * Graph-theory engine — pure JS, ZERO deps (matches every docker-server-*.mjs;
 + * graphology is a frontend-only dep). Operates on the universal render shape
@@ -5668,24 +5668,81 @@ index 00000000..0a2f7485
 +  return { communities };
 +}
 +
-+export function computeMetrics(graph) {
++export function computeMetrics(graph, { community = 'louvain', resolution = 1, seed = 1 } = {}) {
 +  const ids = nodeIds(graph);
 +  const deg = degreeCentrality(graph);
 +  const pr = pageRank(graph);
 +  const bt = betweenness(graph);
 +  const ev = eigenvector(graph);
-+  const { communities, modularity } = louvain(graph);
-+  const nodes = ids.map((id) => ({ id, degree: deg[id] ?? 0, pagerank: pr[id] ?? 0, betweenness: bt[id] ?? 0, eigenvector: ev[id] ?? 0, community: communities[id] ?? 0 }));
++  const cl = closeness(graph);
++  const kz = katz(graph);
++  const hr = harmonic(graph);
++  const core = kCore(graph);
++  const { local: clustering, transitivity } = clusteringCoefficient(graph);
++  const comp = connectedComponents(graph);
++  const { articulation, bridges } = articulationPointsAndBridges(graph);
++
++  // Community method dispatch — Louvain default (byte-identical to before).
++  let communities, modularity;
++  if (community === 'labelprop') {
++    ({ communities } = labelPropagation(graph, { seed }));
++    modularity = modularityOf(graph, communities, resolution);
++  } else if (community === 'leiden') {
++    ({ communities } = leiden(graph, { seed, resolution }));
++    modularity = modularityOf(graph, communities, resolution);
++  } else {
++    ({ communities, modularity } = louvain(graph, { seed, resolution }));
++  }
++
++  const nodes = ids.map((id) => ({
++    id,
++    degree: deg[id] ?? 0,
++    pagerank: pr[id] ?? 0,
++    betweenness: bt[id] ?? 0,
++    eigenvector: ev[id] ?? 0,
++    closeness: cl[id] ?? 0,
++    katz: kz[id] ?? 0,
++    harmonic: hr[id] ?? 0,
++    coreness: core.get(id) ?? 0,
++    clustering: clustering[id] ?? 0,
++    articulation: articulation.has(id),
++    componentId: comp.get(id) ?? 0,
++    community: communities[id] ?? 0,
++  }));
 +  const idSet = new Set(ids);
 +  return {
 +    nodes,
++    bridges: bridges.map(([source, target]) => ({ source, target })),
 +    summary: {
 +      nodeCount: ids.length,
 +      edgeCount: cleanEdges(graph, idSet).length,
 +      communityCount: new Set(Object.values(communities)).size,
 +      modularity,
++      density: density(graph),
++      componentCount: new Set(comp.values()).size,
++      transitivity,
 +    },
 +  };
++}
++
++/** Modularity Q of an arbitrary partition (for label-prop / Leiden, which don't return it). */
++function modularityOf(graph, communities, resolution = 1) {
++  const ids = nodeIds(graph);
++  const idSet = new Set(ids);
++  const k = new Map(ids.map((id) => [id, 0]));
++  let m2 = 0;
++  const adj = new Map(ids.map((id) => [id, []]));
++  for (const [s, t] of cleanEdges(graph, idSet)) { adj.get(s).push(t); adj.get(t).push(s); k.set(s, k.get(s) + 1); k.set(t, k.get(t) + 1); m2 += 2; }
++  if (m2 === 0) return 0;
++  const sin = new Map(), stot = new Map();
++  for (const id of ids) {
++    const c = communities[id];
++    stot.set(c, (stot.get(c) || 0) + k.get(id));
++    for (const w of adj.get(id)) { if (communities[w] === c) sin.set(c, (sin.get(c) || 0) + 1); }
++  }
++  let q = 0;
++  for (const [c, st] of stot) q += (sin.get(c) || 0) / m2 - resolution * (st / m2) ** 2;
++  return q;
 +}
 diff --git a/docker-server-graph-theory.mjs b/docker-server-graph-theory.mjs
 new file mode 100644
