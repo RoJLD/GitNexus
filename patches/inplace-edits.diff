@@ -2476,7 +2476,7 @@ index 98c20c68..50a414e4 100644
            <div className="mt-6 border-t border-border-subtle pt-4">
              <h3 className="mb-3 text-xs font-medium tracking-wide text-text-secondary uppercase">
 diff --git a/gitnexus-web/src/components/GraphCanvas.tsx b/gitnexus-web/src/components/GraphCanvas.tsx
-index e34fd434..15679748 100644
+index e34fd434..0852acc2 100644
 --- a/gitnexus-web/src/components/GraphCanvas.tsx
 +++ b/gitnexus-web/src/components/GraphCanvas.tsx
 @@ -1,4 +1,4 @@
@@ -2534,7 +2534,7 @@ index e34fd434..15679748 100644
    const {
      graph,
      setSelectedNode,
-@@ -46,9 +72,107 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -46,9 +72,108 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
      clearAICitationHighlights,
      clearBlastRadius,
      animatedNodes,
@@ -2591,7 +2591,8 @@ index e34fd434..15679748 100644
 +
 +  // Metrics overlay state — toggle + cached metrics payload for the sidecar graph
 +  const [metricsOn, setMetricsOn] = useState(false);
-+  const [metricsById, setMetricsById] = useState<Map<string, { pagerank: number; community: number }> | null>(null);
++  const [metricsById, setMetricsById] = useState<Map<string, { degree: number; pagerank: number; betweenness: number; eigenvector: number; community: number }> | null>(null);
++  const [sizeMetric, setSizeMetric] = useState<'degree' | 'pagerank' | 'betweenness' | 'eigenvector'>('pagerank');
 +
 +  // Lens — URL-driven projection for ?lens=<id>&repo=<repo>. Reuses researchData +
 +  // the research render path (the lens result is shaped like a research graph).
@@ -2612,7 +2613,7 @@ index e34fd434..15679748 100644
 +    getGraphMetrics(researchName)
 +      .then((m) => {
 +        if (cancelled) return;
-+        setMetricsById(new Map(m.nodes.map((n) => [n.id, { pagerank: n.pagerank, community: n.community }])));
++        setMetricsById(new Map(m.nodes.map((n) => [n.id, { degree: n.degree, pagerank: n.pagerank, betweenness: n.betweenness, eigenvector: n.eigenvector, community: n.community }])));
 +      })
 +      .catch((e) => {
 +        if (!cancelled) console.error('graph metrics load failed', e);
@@ -2643,7 +2644,7 @@ index e34fd434..15679748 100644
    const effectiveHighlightedNodeIds = useMemo(() => {
      if (!isAIHighlightsEnabled) return highlightedNodeIds;
      const next = new Set(highlightedNodeIds);
-@@ -82,6 +206,23 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -82,6 +207,23 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
  
    const handleNodeClick = useCallback(
      (nodeId: string) => {
@@ -2667,7 +2668,7 @@ index e34fd434..15679748 100644
        if (!graph) return;
        const node = nodeById.get(nodeId);
        if (node) {
-@@ -89,6 +230,7 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -89,6 +231,7 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
          openCodePanel();
        }
      },
@@ -2675,7 +2676,7 @@ index e34fd434..15679748 100644
      [graph, nodeById, setSelectedNode, openCodePanel],
    );
  
-@@ -130,6 +272,7 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -130,6 +273,7 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
      containerRef,
      sigmaRef,
      setGraph: setSigmaGraph,
@@ -2683,7 +2684,7 @@ index e34fd434..15679748 100644
      zoomIn,
      zoomOut,
      resetZoom,
-@@ -139,6 +282,12 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -139,6 +283,12 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
      stopLayout,
      selectedNode: sigmaSelectedNode,
      setSelectedNode: setSigmaSelectedNode,
@@ -2696,7 +2697,7 @@ index e34fd434..15679748 100644
    } = useSigma({
      onNodeClick: handleNodeClick,
      onNodeHover: handleNodeHover,
-@@ -147,6 +296,10 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -147,6 +297,10 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
      blastRadiusNodeIds: effectiveBlastRadiusNodeIds,
      animatedNodes: effectiveAnimatedNodes,
      visibleEdgeTypes,
@@ -2707,7 +2708,7 @@ index e34fd434..15679748 100644
    });
  
    // Expose focusNode to parent via ref
-@@ -170,6 +323,8 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -170,6 +324,8 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
  
    // Update Sigma graph when KnowledgeGraph changes
    useEffect(() => {
@@ -2716,7 +2717,7 @@ index e34fd434..15679748 100644
      if (!graph) return;
  
      // Build communityMemberships map from MEMBER_OF relationships
-@@ -189,8 +344,37 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -189,8 +345,37 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
      });
  
      const sigmaGraph = knowledgeGraphToGraphology(graph, communityMemberships);
@@ -2739,10 +2740,10 @@ index e34fd434..15679748 100644
 +  useEffect(() => {
 +    if (!researchData) return;
 +    if (!researchName && !lensId) return;
-+    const g = researchGraphToGraphology(researchData, metricsOn ? (metricsById ?? undefined) : undefined);
-+    const cacheKey = (researchName ? `research:${researchName}` : `lens:${lensId}:${lensRepo}`) + (metricsOn ? ':metrics' : '');
++    const g = researchGraphToGraphology(researchData, metricsOn ? (metricsById ?? undefined) : undefined, sizeMetric);
++    const cacheKey = (researchName ? `research:${researchName}` : `lens:${lensId}:${lensRepo}`) + (metricsOn ? `:metrics:${sizeMetric}` : '');
 +    setSigmaGraph(g, { cacheKey });
-+  }, [researchName, lensId, lensRepo, researchData, setSigmaGraph, metricsOn, metricsById]);
++  }, [researchName, lensId, lensRepo, researchData, setSigmaGraph, metricsOn, metricsById, sizeMetric]);
 +
 +  // Expose useSigma.recomputeLayout up to useAppState so the Header
 +  // "Recompute layout" button can fire it. The action lives on
@@ -2756,7 +2757,7 @@ index e34fd434..15679748 100644
  
    // Update node visibility when filters change
    useEffect(() => {
-@@ -205,6 +389,198 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -205,6 +390,198 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
      // eslint-disable-next-line react-hooks/exhaustive-deps -- sigmaRef identity never changes
    }, [visibleLabels, depthFilter, appSelectedNode]);
  
@@ -2955,7 +2956,7 @@ index e34fd434..15679748 100644
    // Sync app selected node with sigma
    useEffect(() => {
      if (appSelectedNode) {
-@@ -249,6 +625,130 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -249,6 +626,130 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
          className="sigma-container h-full w-full cursor-grab active:cursor-grabbing"
        />
  
@@ -3086,7 +3087,7 @@ index e34fd434..15679748 100644
        {/* Hovered node tooltip - only show when NOT selected */}
        {hoveredNodeName && !sigmaSelectedNode && (
          <div className="pointer-events-none absolute top-4 left-1/2 z-20 -translate-x-1/2 animate-fade-in rounded-lg border border-border-subtle bg-elevated/95 px-3 py-1.5 backdrop-blur-sm">
-@@ -350,8 +850,64 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -350,8 +851,77 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
        {/* Query FAB */}
        <QueryFAB />
  
@@ -3136,11 +3137,24 @@ index e34fd434..15679748 100644
 +                ? 'flex h-10 items-center gap-1.5 rounded-lg border border-indigo-400/40 bg-indigo-500/15 px-3 text-indigo-200 transition-colors hover:border-indigo-300/60 hover:bg-indigo-500/20'
 +                : 'flex h-10 items-center gap-1.5 rounded-lg border border-border-subtle bg-elevated px-3 text-text-secondary transition-colors hover:bg-hover hover:text-text-primary'
 +            }
-+            title={metricsOn ? 'Hide PageRank / community colours' : 'Show PageRank / community colours'}
++            title={metricsOn ? 'Hide metrics colours' : 'Show metrics colours'}
 +            data-testid="metrics-toggle"
 +          >
 +            <span className="font-mono text-xs font-semibold">Metrics: {metricsOn ? 'on' : 'off'}</span>
 +          </button>
++        )}
++        {metricsOn && researchName && (
++          <select
++            value={sizeMetric}
++            onChange={(e) => setSizeMetric(e.target.value as 'degree' | 'pagerank' | 'betweenness' | 'eigenvector')}
++            className="flex h-10 items-center rounded-lg border border-indigo-400/40 bg-indigo-500/15 px-3 font-mono text-xs font-semibold text-indigo-200 transition-colors hover:border-indigo-300/60 hover:bg-indigo-500/20"
++            data-testid="metric-select"
++          >
++            <option value="degree">Degree</option>
++            <option value="pagerank">PageRank</option>
++            <option value="betweenness">Betweenness</option>
++            <option value="eigenvector">Eigenvector</option>
++          </select>
 +        )}
 +        <button
 +          onClick={toggleViewDimension}

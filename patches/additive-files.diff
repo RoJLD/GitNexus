@@ -23356,10 +23356,10 @@ index 00000000..c57b5944
 +export const RESEARCH_FALLBACK_COLOR = '#9ca3af';
 diff --git a/gitnexus-web/src/lib/research-graph-adapter.ts b/gitnexus-web/src/lib/research-graph-adapter.ts
 new file mode 100644
-index 00000000..a2520e1b
+index 00000000..fed04755
 --- /dev/null
 +++ b/gitnexus-web/src/lib/research-graph-adapter.ts
-@@ -0,0 +1,87 @@
+@@ -0,0 +1,88 @@
 +import Graph from 'graphology';
 +import type { SigmaNodeAttributes, SigmaEdgeAttributes } from './graph-adapter';
 +import { RESEARCH_COLORS, RESEARCH_FALLBACK_COLOR } from './research-colors';
@@ -23399,15 +23399,16 @@ index 00000000..a2520e1b
 + */
 +export function researchGraphToGraphology(
 +  rg: ResearchGraph,
-+  metricsById?: Map<string, { pagerank: number; community: number }>,
++  metricsById?: Map<string, { degree: number; pagerank: number; betweenness: number; eigenvector: number; community: number }>,
++  sizeBy: 'degree' | 'pagerank' | 'betweenness' | 'eigenvector' = 'pagerank',
 +): Graph<SigmaNodeAttributes, SigmaEdgeAttributes> {
 +  const graph = new Graph<SigmaNodeAttributes, SigmaEdgeAttributes>();
 +  const nodes = rg.nodes || [];
 +  const total = Math.max(1, nodes.length);
 +  const radius = Math.sqrt(total) * 30;
 +
-+  const maxPr = metricsById
-+    ? Math.max(...[...metricsById.values()].map((v) => v.pagerank), 1e-9)
++  const maxV = metricsById
++    ? Math.max(...[...metricsById.values()].map((v) => v[sizeBy]), 1e-9)
 +    : 1;
 +
 +  let i = 0;
@@ -23419,7 +23420,7 @@ index 00000000..a2520e1b
 +    const color = m
 +      ? COMMUNITY_PALETTE[m.community % COMMUNITY_PALETTE.length]
 +      : (RESEARCH_COLORS[node.type] || RESEARCH_FALLBACK_COLOR);
-+    const size = m ? 4 + 16 * Math.sqrt(m.pagerank / maxPr) : 5;
++    const size = m ? 4 + 16 * Math.sqrt((m[sizeBy] ?? 0) / maxV) : 5;
 +    graph.addNode(node.id, {
 +      x: Math.cos(angle) * r,
 +      y: Math.sin(angle) * r,
@@ -23902,11 +23903,11 @@ index 00000000..607b24cf
 +}
 diff --git a/gitnexus-web/src/services/graph-theory-client.ts b/gitnexus-web/src/services/graph-theory-client.ts
 new file mode 100644
-index 00000000..d6415605
+index 00000000..1fbc27fd
 --- /dev/null
 +++ b/gitnexus-web/src/services/graph-theory-client.ts
 @@ -0,0 +1,9 @@
-+export interface GraphMetricNode { id: string; degree: number; pagerank: number; community: number; }
++export interface GraphMetricNode { id: string; degree: number; pagerank: number; betweenness: number; eigenvector: number; community: number; }
 +export interface GraphMetrics { nodes: GraphMetricNode[]; summary: { nodeCount: number; edgeCount: number; communityCount: number; modularity: number }; }
 +
 +export async function getGraphMetrics(name: string): Promise<GraphMetrics> {
