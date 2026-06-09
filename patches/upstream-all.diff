@@ -5006,10 +5006,10 @@ index 00000000..f30716c8
 +}
 diff --git a/docker-server-graph-lens-core.mjs b/docker-server-graph-lens-core.mjs
 new file mode 100644
-index 00000000..eb1d6f4f
+index 00000000..42759db9
 --- /dev/null
 +++ b/docker-server-graph-lens-core.mjs
-@@ -0,0 +1,40 @@
+@@ -0,0 +1,75 @@
 +/**
 + * Lens projections over a /api/graph KnowledgeGraph JSON. Pure, no I/O.
 + * Output is shaped like a research render ({nodes:[{id,type,label,path,stage}],
@@ -5048,8 +5048,43 @@ index 00000000..eb1d6f4f
 +  };
 +}
 +
++/**
++ * Project a KnowledgeGraph to a file-level graph over ALL relationship types
++ * (one edge per directed file-pair, self-loops dropped). Like projectImports but
++ * without the IMPORTS-only filter — captures the full file-level coupling
++ * (imports + calls + extends + …). Edge kind is the generic 'related'.
++ */
++export function projectFileGraph(graph) {
++  const nodes = Array.isArray(graph?.nodes) ? graph.nodes : [];
++  const rels = Array.isArray(graph?.relationships) ? graph.relationships : [];
++  const fileOf = new Map();
++  for (const n of nodes) {
++    const fp = n?.properties?.filePath;
++    if (typeof fp === 'string' && fp) fileOf.set(n.id, fp);
++  }
++  const seen = new Set();
++  const edges = [];
++  const usedFiles = new Set();
++  for (const r of rels) {
++    const s = fileOf.get(r.sourceId);
++    const t = fileOf.get(r.targetId);
++    if (!s || !t || s === t) continue;
++    const key = `${s}\0${t}`;
++    if (seen.has(key)) continue;
++    seen.add(key);
++    edges.push({ id: `${s}->${t}`, source: s, target: t, kind: 'related' });
++    usedFiles.add(s); usedFiles.add(t);
++  }
++  const fileNodes = [...usedFiles].map((fp) => ({ id: fp, type: 'file', label: fp.split('/').pop() || fp, path: fp, stage: '' }));
++  return {
++    schema_type: 'file-graph', template: 'file-graph', name: null, source: null,
++    nodes: fileNodes, edges,
++    report: { nodes: fileNodes.length, edges: edges.length },
++  };
++}
++
 +/** Registry of lens projections, keyed by lens id (shared by the lens route + the lens-metrics route). */
-+export const LENSES = { 'imports-deps': projectImports };
++export const LENSES = { 'imports-deps': projectImports, 'file-graph': projectFileGraph };
 diff --git a/docker-server-graph-lens.mjs b/docker-server-graph-lens.mjs
 new file mode 100644
 index 00000000..4bf2da66
