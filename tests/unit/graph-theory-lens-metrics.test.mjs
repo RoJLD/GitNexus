@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { lensMetrics } from '../../upstream/docker-server-graph-theory.mjs';
-import { projectFileGraph, LENSES } from '../../upstream/docker-server-graph-lens-core.mjs';
+import { projectFileGraph, projectSymbolGraph, LENSES } from '../../upstream/docker-server-graph-lens-core.mjs';
 
 // Synthetic /api/graph (ASTKG) shape: nodes carry properties.filePath; IMPORTS rels.
 const API_GRAPH = {
@@ -58,6 +58,42 @@ describe('projectFileGraph', () => {
     expect(r.summary.edgeCount).toBe(3);                     // a-b, b-c, a-c
     expect(r.nodes.every((n) => Number.isFinite(n.betweenness))).toBe(true);
     expect(r.summary.capped).toBe(false);
+  });
+});
+
+const SYMBOL_GRAPH = {
+  nodes: [
+    { id: 'f1', properties: { filePath: 'src/a.ts', name: 'foo', kind: 'function' } },
+    { id: 'f2', properties: { filePath: 'src/a.ts', name: 'bar', kind: 'function' } },
+    { id: 'c1', properties: { filePath: 'src/b.ts', name: 'Baz', kind: 'class' } },
+    { id: 'iso', properties: { filePath: 'src/c.ts', name: 'lonely', kind: 'function' } }, // isolated
+  ],
+  relationships: [
+    { sourceId: 'f1', targetId: 'f2', type: 'CALLS' },
+    { sourceId: 'f1', targetId: 'c1', type: 'REFERENCES' },
+    { sourceId: 'f1', targetId: 'c1', type: 'CALLS' },   // parallel, different type → kept
+    { sourceId: 'f1', targetId: 'c1', type: 'CALLS' },   // exact dup → dropped
+    { sourceId: 'f2', targetId: 'f2', type: 'CALLS' },   // self-loop → dropped
+  ],
+};
+
+describe('projectSymbolGraph', () => {
+  it('keeps ALL nodes (incl. isolated), no file collapse', () => {
+    const g = projectSymbolGraph(SYMBOL_GRAPH);
+    expect(g.nodes.map((n) => n.id).sort()).toEqual(['c1', 'f1', 'f2', 'iso']);
+    expect(g.nodes.find((n) => n.id === 'f1')).toMatchObject({ type: 'function', label: 'foo', path: 'src/a.ts' });
+    expect(g.schema_type).toBe('symbol-graph');
+  });
+  it('dedups per (source,target,type), keeps parallel distinct types, drops self-loops', () => {
+    const g = projectSymbolGraph(SYMBOL_GRAPH);
+    expect(g.edges.filter((e) => e.source === 'f1' && e.target === 'c1' && e.kind === 'CALLS')).toHaveLength(1);
+    expect(g.edges.some((e) => e.source === 'f1' && e.target === 'c1' && e.kind === 'REFERENCES')).toBe(true);
+    expect(g.edges.some((e) => e.source === e.target)).toBe(false);
+  });
+  it('is registered and computes via lensMetrics', () => {
+    expect(LENSES['symbol-graph']).toBe(projectSymbolGraph);
+    const r = lensMetrics(SYMBOL_GRAPH, 'symbol-graph', { community: 'louvain', resolution: 1 });
+    expect(r.summary.nodeCount).toBe(4);
   });
 });
 

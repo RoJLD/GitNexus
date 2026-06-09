@@ -5006,10 +5006,10 @@ index 00000000..f30716c8
 +}
 diff --git a/docker-server-graph-lens-core.mjs b/docker-server-graph-lens-core.mjs
 new file mode 100644
-index 00000000..42759db9
+index 00000000..98cf9081
 --- /dev/null
 +++ b/docker-server-graph-lens-core.mjs
-@@ -0,0 +1,75 @@
+@@ -0,0 +1,107 @@
 +/**
 + * Lens projections over a /api/graph KnowledgeGraph JSON. Pure, no I/O.
 + * Output is shaped like a research render ({nodes:[{id,type,label,path,stage}],
@@ -5083,8 +5083,40 @@ index 00000000..42759db9
 +  };
 +}
 +
++/**
++ * Identity projection of the raw symbol-level KnowledgeGraph (no file collapse):
++ * every node → a symbol node, every relationship → an edge (deduped per
++ * (source,target,type), self-loops dropped). ALL nodes kept, including isolated ones.
++ */
++export function projectSymbolGraph(graph) {
++  const rawNodes = Array.isArray(graph?.nodes) ? graph.nodes : [];
++  const rels = Array.isArray(graph?.relationships) ? graph.relationships : [];
++  const idSet = new Set();
++  const nodes = [];
++  for (const n of rawNodes) {
++    if (n?.id == null || idSet.has(n.id)) continue;
++    idSet.add(n.id);
++    const p = n.properties || {};
++    nodes.push({ id: n.id, type: p.kind || 'symbol', label: p.name || String(n.id), path: p.filePath || '', stage: '' });
++  }
++  const seen = new Set();
++  const edges = [];
++  for (const r of rels) {
++    const s = r?.sourceId, t = r?.targetId;
++    if (!idSet.has(s) || !idSet.has(t) || s === t) continue;
++    const key = `${s}\0${t}\0${r.type}`;
++    if (seen.has(key)) continue;
++    seen.add(key);
++    edges.push({ id: `${s}->${t}:${r.type}`, source: s, target: t, kind: r.type });
++  }
++  return {
++    schema_type: 'symbol-graph', template: 'symbol-graph', name: null, source: null,
++    nodes, edges, report: { nodes: nodes.length, edges: edges.length },
++  };
++}
++
 +/** Registry of lens projections, keyed by lens id (shared by the lens route + the lens-metrics route). */
-+export const LENSES = { 'imports-deps': projectImports, 'file-graph': projectFileGraph };
++export const LENSES = { 'imports-deps': projectImports, 'file-graph': projectFileGraph, 'symbol-graph': projectSymbolGraph };
 diff --git a/docker-server-graph-lens.mjs b/docker-server-graph-lens.mjs
 new file mode 100644
 index 00000000..4bf2da66
@@ -5364,10 +5396,10 @@ index 00000000..1a4f7b60
 +}
 diff --git a/docker-server-graph-theory-core.mjs b/docker-server-graph-theory-core.mjs
 new file mode 100644
-index 00000000..19aca445
+index 00000000..fbbc9199
 --- /dev/null
 +++ b/docker-server-graph-theory-core.mjs
-@@ -0,0 +1,559 @@
+@@ -0,0 +1,646 @@
 +/**
 + * Graph-theory engine — pure JS, ZERO deps (matches every docker-server-*.mjs;
 + * graphology is a frontend-only dep). Operates on the universal render shape
@@ -5516,40 +5548,74 @@ index 00000000..19aca445
 +  return { ids, adj };
 +}
 +
++/** Sample k distinct ids deterministically (partial Fisher–Yates with a seeded RNG). */
++function samplePivots(ids, k, seed) {
++  const rng = mulberry32(seed);
++  const arr = ids.slice();
++  const n = arr.length;
++  const m = Math.min(k, n);
++  for (let i = 0; i < m; i++) {
++    const j = i + Math.floor(rng() * (n - i));
++    [arr[i], arr[j]] = [arr[j], arr[i]];
++  }
++  return arr.slice(0, m);
++}
++
++/** One Brandes source pass: BFS from s + dependency back-accumulation into cb (mutates cb). */
++function brandesAccumulate(adj, ids, s, cb) {
++  const stack = [];
++  const pred = new Map(ids.map((id) => [id, []]));
++  const sigma = new Map(ids.map((id) => [id, 0]));
++  const dist = new Map(ids.map((id) => [id, -1]));
++  sigma.set(s, 1); dist.set(s, 0);
++  const queue = [s];
++  while (queue.length) {
++    const v = queue.shift();
++    stack.push(v);
++    for (const w of adj.get(v)) {
++      if (dist.get(w) < 0) { dist.set(w, dist.get(v) + 1); queue.push(w); }
++      if (dist.get(w) === dist.get(v) + 1) { sigma.set(w, sigma.get(w) + sigma.get(v)); pred.get(w).push(v); }
++    }
++  }
++  const delta = new Map(ids.map((id) => [id, 0]));
++  while (stack.length) {
++    const w = stack.pop();
++    for (const v of pred.get(w)) delta.set(v, delta.get(v) + (sigma.get(v) / sigma.get(w)) * (1 + delta.get(w)));
++    if (w !== s) cb[w] += delta.get(w);
++  }
++}
++
++/** Normalize raw Brandes scores in place: undirected /2 + /((N-1)(N-2)/2). */
++function normalizeBetweenness(cb, ids, N) {
++  for (const id of ids) cb[id] /= 2;
++  const norm = N > 2 ? ((N - 1) * (N - 2)) / 2 : 0;
++  if (norm > 0) for (const id of ids) cb[id] /= norm;
++  return cb;
++}
++
 +/** Betweenness centrality (Brandes, undirected, unweighted), normalized to [0,1]. */
 +export function betweenness(graph) {
 +  const { ids, adj } = undirectedAdj(graph);
-+  const N = ids.length;
 +  const cb = {};
 +  for (const id of ids) cb[id] = 0;
-+  for (const s of ids) {
-+    const stack = [];
-+    const pred = new Map(ids.map((id) => [id, []]));
-+    const sigma = new Map(ids.map((id) => [id, 0]));
-+    const dist = new Map(ids.map((id) => [id, -1]));
-+    sigma.set(s, 1); dist.set(s, 0);
-+    const queue = [s];
-+    while (queue.length) {
-+      const v = queue.shift();
-+      stack.push(v);
-+      for (const w of adj.get(v)) {
-+        if (dist.get(w) < 0) { dist.set(w, dist.get(v) + 1); queue.push(w); }
-+        if (dist.get(w) === dist.get(v) + 1) { sigma.set(w, sigma.get(w) + sigma.get(v)); pred.get(w).push(v); }
-+      }
-+    }
-+    const delta = new Map(ids.map((id) => [id, 0]));
-+    while (stack.length) {
-+      const w = stack.pop();
-+      for (const v of pred.get(w)) {
-+        delta.set(v, delta.get(v) + (sigma.get(v) / sigma.get(w)) * (1 + delta.get(w)));
-+      }
-+      if (w !== s) cb[w] += delta.get(w);
-+    }
-+  }
-+  for (const id of ids) cb[id] /= 2;                       // undirected: counted from both endpoints
-+  const norm = N > 2 ? ((N - 1) * (N - 2)) / 2 : 0;        // possible pairs of other nodes
-+  if (norm > 0) for (const id of ids) cb[id] /= norm;
-+  return cb;
++  for (const s of ids) brandesAccumulate(adj, ids, s, cb);
++  return normalizeBetweenness(cb, ids, ids.length);
++}
++
++/** Approximate betweenness via Brandes–Pich source sampling (scale by V/S); exact when samples≥V. */
++export function betweennessApprox(graph, { samples = 100, seed = 1 } = {}) {
++  const { ids, adj } = undirectedAdj(graph);
++  const N = ids.length;
++  if (N === 0) return {};
++  if (samples >= N) return betweenness(graph);
++  const cb = {};
++  for (const id of ids) cb[id] = 0;
++  const sources = samplePivots(ids, samples, seed);
++  const S = sources.length;
++  if (S === 0) return cb;                          // samples<=0 → zeros (matches closeness/harmonicApprox), no 0·∞ NaN
++  for (const s of sources) brandesAccumulate(adj, ids, s, cb);
++  for (const id of ids) cb[id] *= N / S;          // unbiased scaling
++  return normalizeBetweenness(cb, ids, N);
 +}
 +
 +/** Eigenvector centrality via power iteration on the undirected adjacency matrix; L2-normalized. */
@@ -5729,6 +5795,59 @@ index 00000000..19aca445
 +    for (const id of ids) { if (id === s) continue; const d = dist.get(id); if (d > 0) sum += 1 / d; }
 +    out[s] = N > 1 ? sum / (N - 1) : 0;
 +  }
++  return out;
++}
++
++/** Approximate closeness (Wasserman–Faust) via pivot sampling; exact when samples≥V. */
++export function closenessApprox(graph, { samples = 100, seed = 1 } = {}) {
++  const { ids, adj } = undirectedAdj(graph);
++  const N = ids.length;
++  if (N === 0) return {};
++  if (samples >= N) return closeness(graph);
++  const pivots = samplePivots(ids, samples, seed);
++  const sumDist = new Map(ids.map((id) => [id, 0]));   // Σ d(v,pivot) over reachable pivots≠v
++  const reachP = new Map(ids.map((id) => [id, 0]));     // # reachable pivots ≠ v
++  const cntP = new Map(ids.map((id) => [id, 0]));       // # pivots ≠ v (sampled "others")
++  for (const p of pivots) {
++    const dist = bfsDistances(adj, ids, p);             // undirected: d(p,v)=d(v,p)
++    for (const v of ids) {
++      if (v === p) continue;
++      cntP.set(v, cntP.get(v) + 1);
++      const d = dist.get(v);
++      if (d > 0) { sumDist.set(v, sumDist.get(v) + d); reachP.set(v, reachP.get(v) + 1); }
++    }
++  }
++  const out = {};
++  for (const v of ids) {
++    const c = cntP.get(v), r = reachP.get(v), sd = sumDist.get(v);
++    if (r === 0 || sd === 0 || N <= 1) { out[v] = 0; continue; }
++    const reachEst = (r / c) * (N - 1);    // estimated reachable others
++    const sumDistEst = (sd / r) * reachEst; // mean dist × estimated reach
++    out[v] = (reachEst / (N - 1)) * (reachEst / sumDistEst);
++  }
++  return out;
++}
++
++/** Approximate harmonic centrality via pivot sampling (sample mean of 1/d); exact when samples≥V. */
++export function harmonicApprox(graph, { samples = 100, seed = 1 } = {}) {
++  const { ids, adj } = undirectedAdj(graph);
++  const N = ids.length;
++  if (N === 0) return {};
++  if (samples >= N) return harmonic(graph);
++  const pivots = samplePivots(ids, samples, seed);
++  const sumRecip = new Map(ids.map((id) => [id, 0]));
++  const cnt = new Map(ids.map((id) => [id, 0]));
++  for (const p of pivots) {
++    const dist = bfsDistances(adj, ids, p);
++    for (const v of ids) {
++      if (v === p) continue;
++      cnt.set(v, cnt.get(v) + 1);
++      const d = dist.get(v);
++      if (d > 0) sumRecip.set(v, sumRecip.get(v) + 1 / d);
++    }
++  }
++  const out = {};
++  for (const v of ids) { const c = cnt.get(v); out[v] = c > 0 ? sumRecip.get(v) / c : 0; }
 +  return out;
 +}
 +

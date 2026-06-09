@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { degreeCentrality, pageRank, louvain, computeMetrics, computeMetricsCapped, betweenness, eigenvector, connectedComponents, density, articulationPointsAndBridges, kCore, clusteringCoefficient, closeness, harmonic, katz, labelPropagation, leiden } from '../../upstream/docker-server-graph-theory-core.mjs';
+import { degreeCentrality, pageRank, louvain, computeMetrics, computeMetricsCapped, betweenness, eigenvector, connectedComponents, density, articulationPointsAndBridges, kCore, clusteringCoefficient, closeness, harmonic, katz, labelPropagation, leiden, betweennessApprox, closenessApprox, harmonicApprox } from '../../upstream/docker-server-graph-theory-core.mjs';
 
 const STAR = { nodes: [{ id: 'h' }, { id: 'a' }, { id: 'b' }, { id: 'c' }],
                edges: [{ source: 'h', target: 'a' }, { source: 'h', target: 'b' }, { source: 'h', target: 'c' }] };
@@ -427,5 +427,31 @@ describe('computeMetricsCapped', () => {
     }
     expect(r.nodes.find((n) => n.id === 'x1').degree).toBe(3);   // degree still real
     expect(new Set(r.nodes.map((n) => n.community)).size).toBe(2); // community still computed
+  });
+});
+
+describe('approximate centralities (exact at full samples, ranking at partial)', () => {
+  it('betweennessApprox equals exact when samples >= V', () => {
+    for (const G of [PATH3, STAR, BARBELL, CYCLE4]) {
+      const ex = betweenness(G); const ap = betweennessApprox(G, { samples: 999, seed: 1 });
+      for (const id of Object.keys(ex)) expect(ap[id]).toBeCloseTo(ex[id], 9);
+    }
+  });
+  it('closeness/harmonicApprox equal exact when samples >= V', () => {
+    for (const G of [PATH3, STAR, BARBELL]) {
+      const ec = closeness(G), ac = closenessApprox(G, { samples: 999, seed: 1 });
+      const eh = harmonic(G), ah = harmonicApprox(G, { samples: 999, seed: 1 });
+      for (const id of Object.keys(ec)) { expect(ac[id]).toBeCloseTo(ec[id], 9); expect(ah[id]).toBeCloseTo(eh[id], 9); }
+    }
+  });
+  it('partial-sample approximations are finite, non-negative, and rank the path middle highest', () => {
+    const b = betweennessApprox(PATH3, { samples: 2, seed: 1 });
+    const c = closenessApprox(PATH3, { samples: 2, seed: 1 });
+    const h = harmonicApprox(PATH3, { samples: 2, seed: 1 });
+    for (const m of [b, c, h]) for (const v of Object.values(m)) { expect(Number.isFinite(v)).toBe(true); expect(v).toBeGreaterThanOrEqual(0); }
+    expect(b.B).toBeGreaterThanOrEqual(b.A);   // middle ≥ ends (estimate)
+  });
+  it('is deterministic for a fixed seed', () => {
+    expect(betweennessApprox(BARBELL, { samples: 3, seed: 7 })).toEqual(betweennessApprox(BARBELL, { samples: 3, seed: 7 }));
   });
 });
