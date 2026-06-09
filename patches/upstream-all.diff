@@ -5327,10 +5327,10 @@ index 00000000..1a4f7b60
 +}
 diff --git a/docker-server-graph-theory-core.mjs b/docker-server-graph-theory-core.mjs
 new file mode 100644
-index 00000000..eefa269c
+index 00000000..0a2f7485
 --- /dev/null
 +++ b/docker-server-graph-theory-core.mjs
-@@ -0,0 +1,228 @@
+@@ -0,0 +1,485 @@
 +/**
 + * Graph-theory engine — pure JS, ZERO deps (matches every docker-server-*.mjs;
 + * graphology is a frontend-only dep). Operates on the universal render shape
@@ -5404,7 +5404,7 @@ index 00000000..eefa269c
 +  };
 +}
 +
-+export function louvain(graph, { seed = 1 } = {}) {
++export function louvain(graph, { seed = 1, resolution = 1 } = {}) {
 +  const ids = nodeIds(graph);
 +  const idSet = new Set(ids);
 +  const adj = new Map(ids.map((id) => [id, new Map()]));
@@ -5438,9 +5438,9 @@ index 00000000..eefa269c
 +        kin.set(c, (kin.get(c) || 0) + w);
 +      }
 +      let best = cur;
-+      let bestGain = (kin.get(cur) || 0) - (sigmaTot.get(cur) * ki) / m2;
++      let bestGain = (kin.get(cur) || 0) - resolution * (sigmaTot.get(cur) * ki) / m2;
 +      for (const [c, kic] of kin) {
-+        const gain = kic - (sigmaTot.get(c) * ki) / m2;
++        const gain = kic - resolution * (sigmaTot.get(c) * ki) / m2;
 +        if (gain > bestGain + 1e-12) { bestGain = gain; best = c; }
 +      }
 +      comm.set(id, best);
@@ -5466,7 +5466,7 @@ index 00000000..eefa269c
 +    for (const [nbr, w] of adj.get(id)) { if (communities[nbr] === c) sin.set(c, (sin.get(c) || 0) + w); }
 +  }
 +  let modularity = 0;
-+  for (const [c, st] of stot) modularity += (sin.get(c) || 0) / m2 - (st / m2) ** 2;
++  for (const [c, st] of stot) modularity += (sin.get(c) || 0) / m2 - resolution * (st / m2) ** 2;
 +  return { communities, modularity };
 +}
 +
@@ -5538,6 +5538,263 @@ index 00000000..eefa269c
 +  }
 +  for (const id of ids) ev[id] = x.get(id);
 +  return ev;
++}
++
++/** Connected components (undirected). Returns Map<id, componentId>; ids assigned in node-iteration order. */
++export function connectedComponents(graph) {
++  const { ids, adj } = undirectedAdj(graph);
++  const comp = new Map();
++  let cid = 0;
++  for (const start of ids) {
++    if (comp.has(start)) continue;
++    comp.set(start, cid);
++    const queue = [start];
++    while (queue.length) {
++      const v = queue.shift();
++      for (const w of adj.get(v)) { if (!comp.has(w)) { comp.set(w, cid); queue.push(w); } }
++    }
++    cid++;
++  }
++  return comp;
++}
++
++/** Edge density of an undirected simple graph: 2E/(N(N-1)); 0 when N<2. */
++export function density(graph) {
++  const ids = nodeIds(graph);
++  const N = ids.length;
++  if (N < 2) return 0;
++  const E = cleanEdges(graph, new Set(ids)).length;
++  return (2 * E) / (N * (N - 1));
++}
++
++/**
++ * Articulation points + bridges (undirected, Tarjan low-link, iterative DFS so deep
++ * graphs don't blow the call stack; a DFS forest covers disconnected graphs).
++ * Returns { articulation:Set<id>, bridges:Array<[u,v]> }. Assumes a simple graph
++ * (the cleaned edge set drops self-loops; parallel edges are out of scope).
++ */
++export function articulationPointsAndBridges(graph) {
++  const { ids, adj } = undirectedAdj(graph);
++  const disc = new Map();
++  const low = new Map();
++  const articulation = new Set();
++  const bridges = [];
++  let timer = 0;
++
++  for (const root of ids) {
++    if (disc.has(root)) continue;
++    disc.set(root, timer); low.set(root, timer); timer++;
++    let rootChildren = 0;
++    const stack = [{ u: root, parent: null, idx: 0 }];
++    while (stack.length) {
++      const frame = stack[stack.length - 1];
++      const nbrs = adj.get(frame.u);
++      if (frame.idx < nbrs.length) {
++        const w = nbrs[frame.idx++];
++        if (w === frame.parent) continue;                 // skip the tree edge back to parent
++        if (!disc.has(w)) {
++          disc.set(w, timer); low.set(w, timer); timer++;
++          if (frame.u === root) rootChildren++;
++          stack.push({ u: w, parent: frame.u, idx: 0 });
++        } else {
++          low.set(frame.u, Math.min(low.get(frame.u), disc.get(w)));   // back edge
++        }
++      } else {
++        stack.pop();
++        const { u, parent } = frame;
++        if (parent !== null) {
++          low.set(parent, Math.min(low.get(parent), low.get(u)));
++          if (parent !== root && low.get(u) >= disc.get(parent)) articulation.add(parent);
++          if (low.get(u) > disc.get(parent)) bridges.push([parent, u]);
++        }
++      }
++    }
++    if (rootChildren >= 2) articulation.add(root);
++  }
++  return { articulation, bridges };
++}
++
++/** k-core decomposition (degeneracy ordering): Map<id, coreNumber>. O(V^2) peeling — graphs here are small. */
++export function kCore(graph) {
++  const { ids, adj } = undirectedAdj(graph);
++  const deg = new Map(ids.map((id) => [id, adj.get(id).length]));
++  const removed = new Set();
++  const core = new Map();
++  let k = 0;
++  while (removed.size < ids.length) {
++    let u = null, min = Infinity;
++    for (const id of ids) { if (removed.has(id)) continue; const d = deg.get(id); if (d < min) { min = d; u = id; } }
++    k = Math.max(k, min);
++    core.set(u, k);
++    removed.add(u);
++    for (const w of adj.get(u)) { if (!removed.has(w)) deg.set(w, deg.get(w) - 1); }
++  }
++  return core;
++}
++
++/** Local clustering coefficient per node + global transitivity (3·triangles / connected-triples). */
++export function clusteringCoefficient(graph) {
++  const { ids, adj } = undirectedAdj(graph);
++  const nbrSet = new Map(ids.map((id) => [id, new Set(adj.get(id))]));
++  const local = {};
++  let closedTriads = 0;   // Σ over v of (pairs of v's neighbors that are linked) = 3·triangles
++  let triads = 0;         // Σ over v of C(deg(v),2) = connected triples
++  for (const v of ids) {
++    const ns = [...nbrSet.get(v)];
++    const k = ns.length;
++    if (k < 2) { local[v] = 0; continue; }
++    let links = 0;
++    for (let i = 0; i < ns.length; i++) {
++      for (let j = i + 1; j < ns.length; j++) { if (nbrSet.get(ns[i]).has(ns[j])) links++; }
++    }
++    local[v] = (2 * links) / (k * (k - 1));
++    closedTriads += links;
++    triads += (k * (k - 1)) / 2;
++  }
++  const transitivity = triads > 0 ? closedTriads / triads : 0;
++  return { local, transitivity };
++}
++
++/** Single-source BFS distances over the undirected adjacency; unreached stay -1. */
++function bfsDistances(adj, ids, s) {
++  const dist = new Map(ids.map((id) => [id, -1]));
++  dist.set(s, 0);
++  const queue = [s];
++  while (queue.length) {
++    const v = queue.shift();
++    for (const w of adj.get(v)) { if (dist.get(w) < 0) { dist.set(w, dist.get(v) + 1); queue.push(w); } }
++  }
++  return dist;
++}
++
++/** Closeness centrality, component-aware (Wasserman–Faust): (reach/(N-1))·(reach/Σd); 0 if isolated. */
++export function closeness(graph) {
++  const { ids, adj } = undirectedAdj(graph);
++  const N = ids.length;
++  const out = {};
++  for (const s of ids) {
++    const dist = bfsDistances(adj, ids, s);
++    let sum = 0, reach = 0;
++    for (const id of ids) { if (id === s) continue; const d = dist.get(id); if (d > 0) { sum += d; reach++; } }
++    out[s] = (sum > 0 && N > 1) ? (reach / (N - 1)) * (reach / sum) : 0;
++  }
++  return out;
++}
++
++/** Harmonic centrality: Σ_{u≠v} 1/d(v,u) over reachable u, normalized by (N-1). Disconnection-safe. */
++export function harmonic(graph) {
++  const { ids, adj } = undirectedAdj(graph);
++  const N = ids.length;
++  const out = {};
++  for (const s of ids) {
++    const dist = bfsDistances(adj, ids, s);
++    let sum = 0;
++    for (const id of ids) { if (id === s) continue; const d = dist.get(id); if (d > 0) sum += 1 / d; }
++    out[s] = N > 1 ? sum / (N - 1) : 0;
++  }
++  return out;
++}
++
++/**
++ * Katz centrality: x = β·Σ_{k≥0}(αA)^k·1, computed by iterating x ← α·A·x + β to
++ * convergence WITHOUT per-step normalization (normalizing each step changes the fixed
++ * point and corrupts the ranking). The result is L2-normalized once at the end for
++ * display (a single global scale preserves ranking). α is clamped to 0.85/Δ (Δ = max
++ * degree, an upper bound on the spectral radius λmax) so the Neumann series always
++ * converges (α·λmax < 1); the requested α (default 0.1) is used unchanged on low-degree
++ * graphs. A λmax-aware α was deferred in the spec, but per-step normalization made the
++ * fixed-α variant produce wrong rankings, so this minimal clamp ships now.
++ */
++export function katz(graph, { alpha = 0.1, beta = 1, maxIter = 1000, tol = 1e-12 } = {}) {
++  const { ids, adj } = undirectedAdj(graph);
++  const N = ids.length;
++  const out = {};
++  if (N === 0) return out;
++  let maxDeg = 0;
++  for (const id of ids) maxDeg = Math.max(maxDeg, adj.get(id).length);
++  const aEff = maxDeg > 0 ? Math.min(alpha, 0.85 / maxDeg) : alpha;   // ensures aEff·λmax < 1
++  let x = new Map(ids.map((id) => [id, beta]));
++  for (let iter = 0; iter < maxIter; iter++) {
++    const next = new Map(ids.map((id) => [id, beta]));
++    for (const id of ids) { const xi = x.get(id); if (xi !== 0) for (const w of adj.get(id)) next.set(w, next.get(w) + aEff * xi); }
++    let diff = 0;
++    for (const id of ids) diff += Math.abs(next.get(id) - x.get(id));
++    x = next;
++    if (diff < tol) break;
++  }
++  let norm = 0;
++  for (const id of ids) norm += x.get(id) * x.get(id);
++  norm = Math.sqrt(norm) || 1;
++  for (const id of ids) out[id] = x.get(id) / norm;
++  return out;
++}
++
++/** Label propagation community detection (seeded, deterministic tie-break). Returns { communities }. */
++export function labelPropagation(graph, { seed = 1, maxIter = 100 } = {}) {
++  const { ids, adj } = undirectedAdj(graph);
++  const communities = {};
++  if (ids.length === 0) return { communities };
++  const label = new Map(ids.map((id) => [id, id]));
++  const rng = mulberry32(seed);
++  const order = ids.slice();
++  for (let iter = 0; iter < maxIter; iter++) {
++    for (let i = order.length - 1; i > 0; i--) { const j = Math.floor(rng() * (i + 1)); [order[i], order[j]] = [order[j], order[i]]; }
++    let changed = false;
++    for (const v of order) {
++      const counts = new Map();
++      for (const w of adj.get(v)) { const l = label.get(w); counts.set(l, (counts.get(l) || 0) + 1); }
++      if (counts.size === 0) continue;                         // isolated node keeps its own label
++      let best = null, bestC = -1;
++      for (const [l, c] of counts) {
++        if (c > bestC || (c === bestC && String(l) < String(best))) { bestC = c; best = l; }   // deterministic tie-break
++      }
++      if (best !== label.get(v)) { label.set(v, best); changed = true; }
++    }
++    if (!changed) break;
++  }
++  const remap = new Map();
++  let next = 0;
++  for (const id of ids) { const l = label.get(id); if (!remap.has(l)) remap.set(l, next++); communities[id] = remap.get(l); }
++  return { communities };
++}
++
++/**
++ * Leiden community detection (single-level): Louvain local-moving, then a refinement
++ * phase that splits any internally-disconnected community into its connected
++ * sub-communities. The refinement is what distinguishes Leiden from Louvain — it
++ * GUARANTEES every output community is internally connected (Louvain can return a
++ * disconnected community; Leiden cannot). Single-level, matching this engine's Louvain;
++ * multi-level super-node aggregation is deferred. Returns { communities }.
++ */
++export function leiden(graph, { seed = 1, resolution = 1 } = {}) {
++  const { ids, adj } = undirectedAdj(graph);
++  const communities = {};
++  if (ids.length === 0) return { communities };
++  const base = louvain(graph, { seed, resolution }).communities;        // 1. local-moving partition
++  // 2. refinement: relabel each community by its connected components (intra-community edges only)
++  const byComm = new Map();
++  for (const id of ids) { const c = base[id]; if (!byComm.has(c)) byComm.set(c, []); byComm.get(c).push(id); }
++  const refined = new Map();
++  let nextSub = 0;
++  for (const [, members] of byComm) {
++    const memberSet = new Set(members);
++    const seen = new Set();
++    for (const start of members) {
++      if (seen.has(start)) continue;
++      seen.add(start); refined.set(start, nextSub);
++      const queue = [start];
++      while (queue.length) {
++        const v = queue.shift();
++        for (const w of adj.get(v)) { if (memberSet.has(w) && !seen.has(w)) { seen.add(w); refined.set(w, nextSub); queue.push(w); } }
++      }
++      nextSub++;
++    }
++  }
++  // 3. renumber 0..k-1 in first-seen order
++  const remap = new Map();
++  let next = 0;
++  for (const id of ids) { const c = refined.get(id); if (!remap.has(c)) remap.set(c, next++); communities[id] = remap.get(c); }
++  return { communities };
 +}
 +
 +export function computeMetrics(graph) {

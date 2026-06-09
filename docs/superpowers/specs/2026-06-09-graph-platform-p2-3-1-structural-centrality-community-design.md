@@ -79,11 +79,12 @@ helper.
   robust on disconnected graphs (does not divide by an infinite distance).
 - **`harmonic(graph)`** → `Σ_{u≠v} 1/d(v,u)` over reachable `u`, normalized by `(N−1)`;
   unreachable pairs contribute 0 (natively disconnection-safe). Same BFS sweep as closeness.
-- **`katz(graph, {alpha = 0.1, beta = 1})`** → power iteration `x ← α·A·x + β` until L2
-  convergence (`tol = 1e-9`, `maxIter = 200`), then L2-normalize. **α=0.1 is a safe default**
-  (Katz requires `α < 1/λmax`; we do not compute λmax, so a small fixed α is documented as
-  the v1 choice — a λmax-aware α is future work). Edgeless graph → uniform `β`-driven result,
-  then normalized; no NaN/divergence.
+- **`katz(graph, {alpha = 0.1, beta = 1})`** → iterate `x ← α·A·x + β` to convergence
+  **without per-step normalization** (normalizing each step changes the fixed point and
+  corrupts the ranking — see Open Questions), then L2-normalize **once** at the end for
+  display. α is **clamped to `0.85/Δ`** (Δ = max degree ≥ λmax) so the Neumann series always
+  converges (`α·λmax < 1`); the requested α (default 0.1) is left intact on low-degree graphs.
+  Edgeless graph → uniform `β`-driven result; no NaN/divergence.
 
 **Community (D) — three methods:**
 
@@ -222,7 +223,13 @@ a triangle for clustering).
 
 ## 6. Open questions
 
-- **Katz α** — v1 ships a fixed `α=0.1` (documented); a λmax-aware α is future work.
+- **Katz α** — v1 clamps α to `0.85/Δ` (Δ = max degree, an upper bound on λmax) to
+  guarantee convergence, leaving the requested `α=0.1` intact on low-degree graphs. *Updated
+  during build:* the originally-planned fixed-α + per-step-L2-normalization was found (in
+  adversarial review) to corrupt the ranking vs. true Katz on dense graphs — per-step
+  normalization changes the fixed point. The shipped version iterates unnormalized to
+  convergence and normalizes once at the end. A full λmax-aware (Rayleigh-estimated) α
+  remains future work; the max-degree bound is the cheap, deterministic, always-safe clamp.
 - **Which community method colors the overlay** — stays **Louvain (default)** this slice;
   the community-method picker is **P2.3.3 (C)**. The endpoint/MCP already expose all three
   for programmatic use.
