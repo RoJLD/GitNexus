@@ -5198,10 +5198,10 @@ index 00000000..1a4f7b60
 +}
 diff --git a/docker-server-graph-theory-core.mjs b/docker-server-graph-theory-core.mjs
 new file mode 100644
-index 00000000..0778f454
+index 00000000..eefa269c
 --- /dev/null
 +++ b/docker-server-graph-theory-core.mjs
-@@ -0,0 +1,156 @@
+@@ -0,0 +1,228 @@
 +/**
 + * Graph-theory engine — pure JS, ZERO deps (matches every docker-server-*.mjs;
 + * graphology is a frontend-only dep). Operates on the universal render shape
@@ -5341,12 +5341,84 @@ index 00000000..0778f454
 +  return { communities, modularity };
 +}
 +
++/** Undirected neighbor lists over the cleaned edge set. */
++function undirectedAdj(graph) {
++  const ids = nodeIds(graph);
++  const idSet = new Set(ids);
++  const adj = new Map(ids.map((id) => [id, []]));
++  for (const [s, t] of cleanEdges(graph, idSet)) { adj.get(s).push(t); adj.get(t).push(s); }
++  return { ids, adj };
++}
++
++/** Betweenness centrality (Brandes, undirected, unweighted), normalized to [0,1]. */
++export function betweenness(graph) {
++  const { ids, adj } = undirectedAdj(graph);
++  const N = ids.length;
++  const cb = {};
++  for (const id of ids) cb[id] = 0;
++  for (const s of ids) {
++    const stack = [];
++    const pred = new Map(ids.map((id) => [id, []]));
++    const sigma = new Map(ids.map((id) => [id, 0]));
++    const dist = new Map(ids.map((id) => [id, -1]));
++    sigma.set(s, 1); dist.set(s, 0);
++    const queue = [s];
++    while (queue.length) {
++      const v = queue.shift();
++      stack.push(v);
++      for (const w of adj.get(v)) {
++        if (dist.get(w) < 0) { dist.set(w, dist.get(v) + 1); queue.push(w); }
++        if (dist.get(w) === dist.get(v) + 1) { sigma.set(w, sigma.get(w) + sigma.get(v)); pred.get(w).push(v); }
++      }
++    }
++    const delta = new Map(ids.map((id) => [id, 0]));
++    while (stack.length) {
++      const w = stack.pop();
++      for (const v of pred.get(w)) {
++        delta.set(v, delta.get(v) + (sigma.get(v) / sigma.get(w)) * (1 + delta.get(w)));
++      }
++      if (w !== s) cb[w] += delta.get(w);
++    }
++  }
++  for (const id of ids) cb[id] /= 2;                       // undirected: counted from both endpoints
++  const norm = N > 2 ? ((N - 1) * (N - 2)) / 2 : 0;        // possible pairs of other nodes
++  if (norm > 0) for (const id of ids) cb[id] /= norm;
++  return cb;
++}
++
++/** Eigenvector centrality via power iteration on the undirected adjacency matrix; L2-normalized. */
++export function eigenvector(graph, { maxIter = 200, tol = 1e-9 } = {}) {
++  const { ids, adj } = undirectedAdj(graph);
++  const N = ids.length;
++  const ev = {};
++  if (N === 0) return ev;
++  let x = new Map(ids.map((id) => [id, 1 / Math.sqrt(N)]));
++  for (let iter = 0; iter < maxIter; iter++) {
++    // (A + I)·x : seed with x (identity term) so the iteration converges on
++    // bipartite graphs — plain A·x oscillates because A's spectrum is ±λ.
++    const next = new Map(ids.map((id) => [id, x.get(id)]));
++    for (const id of ids) { for (const w of adj.get(id)) next.set(w, next.get(w) + x.get(id)); }
++    let norm = 0;
++    for (const id of ids) norm += next.get(id) * next.get(id);
++    norm = Math.sqrt(norm);
++    if (norm === 0) { for (const id of ids) ev[id] = 1 / N; return ev; } // edgeless → uniform, safe
++    let diff = 0;
++    for (const id of ids) { const v = next.get(id) / norm; diff += Math.abs(v - x.get(id)); next.set(id, v); }
++    x = next;
++    if (diff < tol) break;
++  }
++  for (const id of ids) ev[id] = x.get(id);
++  return ev;
++}
++
 +export function computeMetrics(graph) {
 +  const ids = nodeIds(graph);
 +  const deg = degreeCentrality(graph);
 +  const pr = pageRank(graph);
++  const bt = betweenness(graph);
++  const ev = eigenvector(graph);
 +  const { communities, modularity } = louvain(graph);
-+  const nodes = ids.map((id) => ({ id, degree: deg[id] ?? 0, pagerank: pr[id] ?? 0, community: communities[id] ?? 0 }));
++  const nodes = ids.map((id) => ({ id, degree: deg[id] ?? 0, pagerank: pr[id] ?? 0, betweenness: bt[id] ?? 0, eigenvector: ev[id] ?? 0, community: communities[id] ?? 0 }));
 +  const idSet = new Set(ids);
 +  return {
 +    nodes,
