@@ -455,3 +455,26 @@ describe('approximate centralities (exact at full samples, ranking at partial)',
     expect(betweennessApprox(BARBELL, { samples: 3, seed: 7 })).toEqual(betweennessApprox(BARBELL, { samples: 3, seed: 7 }));
   });
 });
+
+describe('computeMetricsCapped — approx (LoD)', () => {
+  it('above cap with approx computes sampled centralities (non-zero), skips coreness/clustering', () => {
+    const r = computeMetricsCapped(BARBELL, { cap: 2, approx: 3 });
+    expect(r.summary.capped).toBe(true);
+    expect(r.summary.approximate).toBe(true);
+    expect(r.summary.sampleSize).toBe(3);
+    expect(r.summary.omittedMetrics).toEqual(['coreness', 'clustering']);
+    expect(r.nodes.some((n) => n.betweenness > 0)).toBe(true);   // estimated, not zeroed
+    expect(r.nodes.every((n) => n.coreness === 0 && n.clustering === 0)).toBe(true);
+  });
+  it('above cap without approx skips all super-linear (today behaviour)', () => {
+    const r = computeMetricsCapped(BARBELL, { cap: 2 });
+    expect(r.summary.approximate).toBe(false);
+    expect(r.nodes.every((n) => n.betweenness === 0 && n.closeness === 0)).toBe(true);
+    expect(r.summary.omittedMetrics).toEqual(['betweenness', 'closeness', 'harmonic', 'coreness', 'clustering']);
+  });
+  it('below cap ignores approx and is exact', () => {
+    const r = computeMetricsCapped(BARBELL, { cap: 1000, approx: 3 });
+    expect(r.summary.capped).toBe(false);
+    expect(r.summary.approximate).toBe(false);
+  });
+});

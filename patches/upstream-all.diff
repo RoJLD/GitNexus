@@ -5396,10 +5396,10 @@ index 00000000..1a4f7b60
 +}
 diff --git a/docker-server-graph-theory-core.mjs b/docker-server-graph-theory-core.mjs
 new file mode 100644
-index 00000000..fbbc9199
+index 00000000..e06db978
 --- /dev/null
 +++ b/docker-server-graph-theory-core.mjs
-@@ -0,0 +1,646 @@
+@@ -0,0 +1,653 @@
 +/**
 + * Graph-theory engine — pure JS, ZERO deps (matches every docker-server-*.mjs;
 + * graphology is a frontend-only dep). Operates on the universal render shape
@@ -5953,16 +5953,18 @@ index 00000000..fbbc9199
 +  return { communities };
 +}
 +
-+export function computeMetrics(graph, { community = 'louvain', resolution = 1, seed = 1, skipSuperLinear = false } = {}) {
++export function computeMetrics(graph, { community = 'louvain', resolution = 1, seed = 1, skipSuperLinear = false, approx = null } = {}) {
 +  const ids = nodeIds(graph);
 +  const deg = degreeCentrality(graph);
 +  const pr = pageRank(graph);
 +  const ev = eigenvector(graph);
 +  const kz = katz(graph);
-+  // Super-linear metrics (O(V·E) / O(V²) / O(Σd²)) — skipped above the node cap (see computeMetricsCapped).
-+  const bt = skipSuperLinear ? {} : betweenness(graph);
-+  const cl = skipSuperLinear ? {} : closeness(graph);
-+  const hr = skipSuperLinear ? {} : harmonic(graph);
++  const useApprox = skipSuperLinear && Number.isInteger(approx) && approx > 0;
++  // Super-linear shortest-path centralities: full when not skipping; sampled when approx; else {}.
++  const bt = skipSuperLinear ? (useApprox ? betweennessApprox(graph, { samples: approx, seed }) : {}) : betweenness(graph);
++  const cl = skipSuperLinear ? (useApprox ? closenessApprox(graph, { samples: approx, seed }) : {}) : closeness(graph);
++  const hr = skipSuperLinear ? (useApprox ? harmonicApprox(graph, { samples: approx, seed }) : {}) : harmonic(graph);
++  // k-core + clustering are NOT approximated — skipped whenever skipSuperLinear.
 +  const core = skipSuperLinear ? new Map() : kCore(graph);
 +  const { local: clustering, transitivity } = skipSuperLinear ? { local: {}, transitivity: 0 } : clusteringCoefficient(graph);
 +  const comp = connectedComponents(graph);
@@ -6019,11 +6021,16 @@ index 00000000..fbbc9199
 + * components) are always computed. `summary.capped` + `summary.omittedMetrics` report it.
 + * (Real sampling/LoD/caching for the symbol-level case is deferred to P2.3.2c.)
 + */
-+export function computeMetricsCapped(graph, { cap = 2000, ...opts } = {}) {
++export function computeMetricsCapped(graph, { cap = 2000, approx = null, ...opts } = {}) {
 +  const skip = nodeIds(graph).length > cap;
-+  const r = computeMetrics(graph, { ...opts, skipSuperLinear: skip });
++  const useApprox = skip && Number.isInteger(approx) && approx > 0;
++  const r = computeMetrics(graph, { ...opts, skipSuperLinear: skip, approx: useApprox ? approx : null });
 +  r.summary.capped = skip;
-+  r.summary.omittedMetrics = skip ? ['betweenness', 'closeness', 'harmonic', 'coreness', 'clustering'] : [];
++  r.summary.approximate = useApprox;
++  r.summary.sampleSize = useApprox ? approx : null;
++  r.summary.omittedMetrics = !skip ? []
++    : useApprox ? ['coreness', 'clustering']
++    : ['betweenness', 'closeness', 'harmonic', 'coreness', 'clustering'];
 +  return r;
 +}
 +
@@ -6048,10 +6055,10 @@ index 00000000..fbbc9199
 +}
 diff --git a/docker-server-graph-theory.mjs b/docker-server-graph-theory.mjs
 new file mode 100644
-index 00000000..aca38bd4
+index 00000000..06ece186
 --- /dev/null
 +++ b/docker-server-graph-theory.mjs
-@@ -0,0 +1,73 @@
+@@ -0,0 +1,86 @@
 +/**
 + * Graph-theory metrics routes (web container).
 + *   GET /graph/metrics/:name[?community=&resolution=]            → sidecar graph metrics
@@ -6068,8 +6075,18 @@ index 00000000..aca38bd4
 +
 +const COMMUNITY_METHODS = new Set(['louvain', 'leiden', 'labelprop']);
 +const GITNEXUS_API = process.env.GITNEXUS_API || 'http://gitnexus:4747';
++const CAP_MAX = 50000;
 +
 +function sendJson(res, code, body) { res.writeHead(code, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(body)); }
++
++/** Parse a positive-integer query param. Returns `def` when absent/empty; throws on ≤0/non-int; clamps to clampMax. */
++function parsePosInt(searchParams, key, { def = null, clampMax = null } = {}) {
++  const raw = searchParams.get(key);
++  if (raw == null || raw === '') return def;
++  const n = Number(raw);
++  if (!Number.isInteger(n) || n <= 0) throw new Error(`${key} must be a positive integer, got "${raw}"`);
++  return clampMax != null ? Math.min(n, clampMax) : n;
++}
 +
 +/** Parse + validate the metrics query params. Throws Error (→ 400) on bad input. */
 +export function parseMetricsParams(searchParams) {
@@ -6081,14 +6098,17 @@ index 00000000..aca38bd4
 +    resolution = Number(raw);
 +    if (!Number.isFinite(resolution) || resolution <= 0) throw new Error(`resolution must be a positive finite number, got "${raw}"`);
 +  }
-+  return { community, resolution };
++  const cap = parsePosInt(searchParams, 'cap', { def: 2000, clampMax: CAP_MAX });
++  const approx = parsePosInt(searchParams, 'approx', { def: null });
++  return { community, resolution, cap, approx };
 +}
 +
-+/** Pure: project an /api/graph JSON via a lens, then compute capped metrics. Throws on unknown lens. */
++/** Pure: project an /api/graph JSON via a lens, then compute capped metrics. Throws on unknown lens.
++ * `cap` is a FALLBACK — `params.cap` (from parseMetricsParams) wins when present. */
 +export function lensMetrics(apiGraph, lensId, params, cap = 2000) {
 +  const project = LENSES[lensId];
 +  if (!project) throw new Error(`unknown lens: ${lensId}`);
-+  return computeMetricsCapped(project(apiGraph), { ...params, cap });
++  return computeMetricsCapped(project(apiGraph), { ...params, cap: params.cap ?? cap });
 +}
 +
 +export async function handleGraphMetricsRoute(req, url, res) {
