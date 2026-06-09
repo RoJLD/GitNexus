@@ -5006,10 +5006,10 @@ index 00000000..f30716c8
 +}
 diff --git a/docker-server-graph-lens-core.mjs b/docker-server-graph-lens-core.mjs
 new file mode 100644
-index 00000000..344e37d0
+index 00000000..eb1d6f4f
 --- /dev/null
 +++ b/docker-server-graph-lens-core.mjs
-@@ -0,0 +1,37 @@
+@@ -0,0 +1,40 @@
 +/**
 + * Lens projections over a /api/graph KnowledgeGraph JSON. Pure, no I/O.
 + * Output is shaped like a research render ({nodes:[{id,type,label,path,stage}],
@@ -5047,22 +5047,24 @@ index 00000000..344e37d0
 +    report: { nodes: fileNodes.length, edges: edges.length },
 +  };
 +}
++
++/** Registry of lens projections, keyed by lens id (shared by the lens route + the lens-metrics route). */
++export const LENSES = { 'imports-deps': projectImports };
 diff --git a/docker-server-graph-lens.mjs b/docker-server-graph-lens.mjs
 new file mode 100644
-index 00000000..c353cb6e
+index 00000000..4bf2da66
 --- /dev/null
 +++ b/docker-server-graph-lens.mjs
-@@ -0,0 +1,29 @@
+@@ -0,0 +1,28 @@
 +/**
 + * Lens routes (web container). A lens is a saved projection over an EXISTING
 + * graph (target 'astkg' = the CLI's KnowledgeGraph, read via /api/graph JSON —
 + * no Kùzu-file coupling). Modelled on docker-server-group-graph.mjs.
 + *   GET /graph/lens/:id?repo=<repo> -> { nodes, edges }  (research-render shape)
 + */
-+import { projectImports } from './docker-server-graph-lens-core.mjs';
++import { LENSES } from './docker-server-graph-lens-core.mjs';
 +
 +const GITNEXUS_API = process.env.GITNEXUS_API || 'http://gitnexus:4747';
-+const LENSES = { 'imports-deps': projectImports };
 +
 +function sendJson(res, code, body) { res.writeHead(code, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(body)); }
 +
@@ -5327,10 +5329,10 @@ index 00000000..1a4f7b60
 +}
 diff --git a/docker-server-graph-theory-core.mjs b/docker-server-graph-theory-core.mjs
 new file mode 100644
-index 00000000..e6c5167a
+index 00000000..19aca445
 --- /dev/null
 +++ b/docker-server-graph-theory-core.mjs
-@@ -0,0 +1,542 @@
+@@ -0,0 +1,559 @@
 +/**
 + * Graph-theory engine — pure JS, ZERO deps (matches every docker-server-*.mjs;
 + * graphology is a frontend-only dep). Operates on the universal render shape
@@ -5797,17 +5799,18 @@ index 00000000..e6c5167a
 +  return { communities };
 +}
 +
-+export function computeMetrics(graph, { community = 'louvain', resolution = 1, seed = 1 } = {}) {
++export function computeMetrics(graph, { community = 'louvain', resolution = 1, seed = 1, skipSuperLinear = false } = {}) {
 +  const ids = nodeIds(graph);
 +  const deg = degreeCentrality(graph);
 +  const pr = pageRank(graph);
-+  const bt = betweenness(graph);
 +  const ev = eigenvector(graph);
-+  const cl = closeness(graph);
 +  const kz = katz(graph);
-+  const hr = harmonic(graph);
-+  const core = kCore(graph);
-+  const { local: clustering, transitivity } = clusteringCoefficient(graph);
++  // Super-linear metrics (O(V·E) / O(V²) / O(Σd²)) — skipped above the node cap (see computeMetricsCapped).
++  const bt = skipSuperLinear ? {} : betweenness(graph);
++  const cl = skipSuperLinear ? {} : closeness(graph);
++  const hr = skipSuperLinear ? {} : harmonic(graph);
++  const core = skipSuperLinear ? new Map() : kCore(graph);
++  const { local: clustering, transitivity } = skipSuperLinear ? { local: {}, transitivity: 0 } : clusteringCoefficient(graph);
 +  const comp = connectedComponents(graph);
 +  const { articulation, bridges } = articulationPointsAndBridges(graph);
 +
@@ -5854,6 +5857,22 @@ index 00000000..e6c5167a
 +  };
 +}
 +
++/**
++ * computeMetrics with a node-count guard. On graphs larger than `cap` nodes, the
++ * super-linear metrics (betweenness O(V·E), closeness/harmonic O(V·(V+E)), k-core
++ * O(V²), clustering O(Σd²)) are skipped (set to 0) so the endpoint stays responsive;
++ * the near-linear metrics (degree, PageRank, eigenvector, Katz, community, density,
++ * components) are always computed. `summary.capped` + `summary.omittedMetrics` report it.
++ * (Real sampling/LoD/caching for the symbol-level case is deferred to P2.3.2c.)
++ */
++export function computeMetricsCapped(graph, { cap = 2000, ...opts } = {}) {
++  const skip = nodeIds(graph).length > cap;
++  const r = computeMetrics(graph, { ...opts, skipSuperLinear: skip });
++  r.summary.capped = skip;
++  r.summary.omittedMetrics = skip ? ['betweenness', 'closeness', 'harmonic', 'coreness', 'clustering'] : [];
++  return r;
++}
++
 +/** Modularity Q of an arbitrary partition (for label-prop / Leiden, which don't return it). */
 +function modularityOf(graph, communities, resolution = 1) {
 +  const ids = nodeIds(graph);
@@ -5875,22 +5894,26 @@ index 00000000..e6c5167a
 +}
 diff --git a/docker-server-graph-theory.mjs b/docker-server-graph-theory.mjs
 new file mode 100644
-index 00000000..0a250779
+index 00000000..aca38bd4
 --- /dev/null
 +++ b/docker-server-graph-theory.mjs
-@@ -0,0 +1,41 @@
+@@ -0,0 +1,73 @@
 +/**
-+ * Graph-theory metrics route (web container). GET /graph/metrics/:name[?community=&resolution=]
-+ *   → sidecar render of <name> → computeMetrics (pure-JS engine).
-+ * Response: { nodes:[{id,degree,pagerank,betweenness,eigenvector,closeness,katz,harmonic,
++ * Graph-theory metrics routes (web container).
++ *   GET /graph/metrics/:name[?community=&resolution=]            → sidecar graph metrics
++ *   GET /graph/metrics/lens/:lensId?repo=<repo>[&community=&resolution=]  → code-graph (ASTKG) metrics via a lens
++ * Both → computeMetricsCapped (pure-JS engine). Response:
++ *   { nodes:[{id,degree,pagerank,betweenness,eigenvector,closeness,katz,harmonic,
 + *             coreness,clustering,articulation,componentId,community}],
-+ *             bridges:[{source,target}],
-+ *             summary:{nodeCount,edgeCount,communityCount,modularity,density,componentCount,transitivity} }
++ *     bridges:[{source,target}],
++ *     summary:{nodeCount,edgeCount,communityCount,modularity,density,componentCount,transitivity,capped,omittedMetrics} }
 + */
 +import { sidecarRender } from './docker-server-graph-templates-core.mjs';
-+import { computeMetrics } from './docker-server-graph-theory-core.mjs';
++import { computeMetricsCapped } from './docker-server-graph-theory-core.mjs';
++import { LENSES } from './docker-server-graph-lens-core.mjs';
 +
 +const COMMUNITY_METHODS = new Set(['louvain', 'leiden', 'labelprop']);
++const GITNEXUS_API = process.env.GITNEXUS_API || 'http://gitnexus:4747';
 +
 +function sendJson(res, code, body) { res.writeHead(code, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(body)); }
 +
@@ -5907,8 +5930,16 @@ index 00000000..0a250779
 +  return { community, resolution };
 +}
 +
++/** Pure: project an /api/graph JSON via a lens, then compute capped metrics. Throws on unknown lens. */
++export function lensMetrics(apiGraph, lensId, params, cap = 2000) {
++  const project = LENSES[lensId];
++  if (!project) throw new Error(`unknown lens: ${lensId}`);
++  return computeMetricsCapped(project(apiGraph), { ...params, cap });
++}
++
 +export async function handleGraphMetricsRoute(req, url, res) {
 +  if (!url.pathname.startsWith('/graph/metrics/') || req.method !== 'GET') return false;
++  if (url.pathname.startsWith('/graph/metrics/lens/')) return false;   // owned by handleGraphLensMetricsRoute
 +  const name = decodeURIComponent(url.pathname.slice('/graph/metrics/'.length));
 +  let params;
 +  try { params = parseMetricsParams(url.searchParams); }
@@ -5916,8 +5947,28 @@ index 00000000..0a250779
 +  let graph;
 +  try { graph = await sidecarRender(name); }
 +  catch (e) { sendJson(res, 404, { error: `graph "${name}" not available: ${e.message}` }); return true; }
-+  try { sendJson(res, 200, computeMetrics(graph, params)); }
++  try { sendJson(res, 200, computeMetricsCapped(graph, params)); }
 +  catch (e) { sendJson(res, 500, { error: `metrics failed: ${e.message}` }); return true; }
++  return true;
++}
++
++export async function handleGraphLensMetricsRoute(req, url, res) {
++  if (!url.pathname.startsWith('/graph/metrics/lens/') || req.method !== 'GET') return false;
++  const lensId = decodeURIComponent(url.pathname.slice('/graph/metrics/lens/'.length));
++  if (!LENSES[lensId]) { sendJson(res, 404, { error: `unknown lens: ${lensId}` }); return true; }
++  const repo = url.searchParams.get('repo');
++  if (!repo) { sendJson(res, 400, { error: 'missing repo' }); return true; }
++  let params;
++  try { params = parseMetricsParams(url.searchParams); }
++  catch (e) { sendJson(res, 400, { error: e.message }); return true; }
++  let apiGraph;
++  try {
++    const r = await fetch(`${GITNEXUS_API}/api/graph?repo=${encodeURIComponent(repo)}`);
++    if (!r.ok) { sendJson(res, 502, { error: `upstream /api/graph ${r.status}` }); return true; }
++    apiGraph = await r.json();
++  } catch (e) { sendJson(res, 502, { error: `upstream /api/graph failed: ${e.message}` }); return true; }
++  try { sendJson(res, 200, lensMetrics(apiGraph, lensId, params)); }
++  catch (e) { sendJson(res, 500, { error: `lens metrics failed: ${e.message}` }); return true; }
 +  return true;
 +}
 diff --git a/docker-server-group-graph-core.mjs b/docker-server-group-graph-core.mjs
@@ -8337,10 +8388,10 @@ index 00000000..ea950ca6
 +}
 diff --git a/docker-server-routes.mjs b/docker-server-routes.mjs
 new file mode 100644
-index 00000000..6628f4aa
+index 00000000..e3fd78b2
 --- /dev/null
 +++ b/docker-server-routes.mjs
-@@ -0,0 +1,87 @@
+@@ -0,0 +1,88 @@
 +import { handleSnapshotRoute } from './docker-server-snapshots.mjs';
 +import { handleSnapshotBulkRoute } from './docker-server-snapshots-bulk.mjs';
 +import { handleChurnRoute } from './docker-server-churn.mjs';
@@ -8378,7 +8429,7 @@ index 00000000..6628f4aa
 +import { handleGroupGraphRoute } from './docker-server-group-graph.mjs';
 +import { handleGraphTemplatesRoute } from './docker-server-graph-templates.mjs';
 +import { handleGraphLensRoute } from './docker-server-graph-lens.mjs';
-+import { handleGraphMetricsRoute } from './docker-server-graph-theory.mjs';
++import { handleGraphMetricsRoute, handleGraphLensMetricsRoute } from './docker-server-graph-theory.mjs';
 +
 +// Returns true once a handler claims (responds to) the request; false if no route matched.
 +export async function registerGitnexusRoutes(req, reqUrl, res, ctx) {
@@ -8418,6 +8469,7 @@ index 00000000..6628f4aa
 +  if (await handlePrewarmRoute(req, reqUrl, res, ctx)) return true;
 +  if (await handleGroupRoute(req, reqUrl, res)) return true;
 +  if (await handleGroupGraphRoute(req, reqUrl, res)) return true;
++  if (await handleGraphLensMetricsRoute(req, reqUrl, res)) return true;
 +  if (await handleGraphMetricsRoute(req, reqUrl, res)) return true;
 +  if (await handleGraphLensRoute(req, reqUrl, res)) return true;
 +  if (await handleGraphTemplatesRoute(req, reqUrl, res, ctx)) return true;

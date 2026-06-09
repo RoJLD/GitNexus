@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { degreeCentrality, pageRank, louvain, computeMetrics, betweenness, eigenvector, connectedComponents, density, articulationPointsAndBridges, kCore, clusteringCoefficient, closeness, harmonic, katz, labelPropagation, leiden } from '../../upstream/docker-server-graph-theory-core.mjs';
+import { degreeCentrality, pageRank, louvain, computeMetrics, computeMetricsCapped, betweenness, eigenvector, connectedComponents, density, articulationPointsAndBridges, kCore, clusteringCoefficient, closeness, harmonic, katz, labelPropagation, leiden } from '../../upstream/docker-server-graph-theory-core.mjs';
 
 const STAR = { nodes: [{ id: 'h' }, { id: 'a' }, { id: 'b' }, { id: 'c' }],
                edges: [{ source: 'h', target: 'a' }, { source: 'h', target: 'b' }, { source: 'h', target: 'c' }] };
@@ -384,6 +384,11 @@ describe('computeMetrics — P2.3.1 fields', () => {
     // existing fields unchanged in name/shape
     for (const f of ['id', 'degree', 'pagerank', 'betweenness', 'eigenvector', 'community']) expect(n).toHaveProperty(f);
     expect(r.summary).toMatchObject({ nodeCount: 6, edgeCount: 7, communityCount: 2 });
+    // computeMetricsCapped under the cap must be byte-identical (nodes + bridges) to computeMetrics —
+    // locks that skipSuperLinear=false + the cap wrapper don't perturb values or key order.
+    const capped = computeMetricsCapped(BARBELL, { cap: 1000 });
+    expect(capped.nodes).toEqual(r.nodes);
+    expect(capped.bridges).toEqual(r.bridges);
   });
   it('switches the partition when community method changes', () => {
     const lv = computeMetrics(BARBELL, { community: 'louvain' });
@@ -395,5 +400,32 @@ describe('computeMetrics — P2.3.1 fields', () => {
     const r = computeMetrics(BARBELL);
     expect(r.nodes.find((n) => n.id === 'x1').articulation).toBe(true);
     expect(r.nodes.find((n) => n.id === 'x2').articulation).toBe(false);
+  });
+});
+
+describe('computeMetricsCapped', () => {
+  it('below the cap returns full metrics with capped:false', () => {
+    const r = computeMetricsCapped(BARBELL, { cap: 1000 });
+    expect(r.summary.capped).toBe(false);
+    expect(r.summary.omittedMetrics).toEqual([]);
+    expect(r.nodes.every((n) => Number.isFinite(n.betweenness) && Number.isFinite(n.closeness))).toBe(true);
+    // identical core payload to computeMetrics under the cap
+    expect(r.nodes.find((n) => n.id === 'x1').betweenness).toBe(computeMetrics(BARBELL).nodes.find((n) => n.id === 'x1').betweenness);
+  });
+  it('above the cap skips super-linear metrics, keeps near-linear, flags capped', () => {
+    const r = computeMetricsCapped(BARBELL, { cap: 2 });   // 6 nodes > cap 2
+    expect(r.summary.capped).toBe(true);
+    expect(r.summary.omittedMetrics).toEqual(['betweenness', 'closeness', 'harmonic', 'coreness', 'clustering']);
+    expect(r.summary.transitivity).toBe(0);
+    for (const n of r.nodes) {
+      expect(n.betweenness).toBe(0); expect(n.closeness).toBe(0); expect(n.harmonic).toBe(0);
+      expect(n.coreness).toBe(0); expect(n.clustering).toBe(0);
+      // near-linear kept (finite, and degree/community are real)
+      expect(Number.isFinite(n.pagerank)).toBe(true);
+      expect(Number.isFinite(n.eigenvector)).toBe(true);
+      expect(Number.isFinite(n.katz)).toBe(true);
+    }
+    expect(r.nodes.find((n) => n.id === 'x1').degree).toBe(3);   // degree still real
+    expect(new Set(r.nodes.map((n) => n.community)).size).toBe(2); // community still computed
   });
 });
