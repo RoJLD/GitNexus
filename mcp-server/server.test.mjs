@@ -127,6 +127,15 @@ describe('mcp-server/server.mjs — Task 11.13 smoke', () => {
       'description should mention closeness + Leiden');
   });
 
+  it("registers 'gitnexus_graph_lens_metrics' with lensId+repo required", () => {
+    assert.ok(src.includes("name: 'gitnexus_graph_lens_metrics'"), 'TOOLS must contain gitnexus_graph_lens_metrics');
+    assert.ok(src.includes("required: ['lensId', 'repo']"), "lens-metrics inputSchema must require lensId + repo");
+  });
+  it('gitnexus_graph_lens_metrics handler hits /graph/metrics/lens/', () => {
+    assert.ok(src.includes('/graph/metrics/lens/'), 'handler must call /graph/metrics/lens/');
+    assert.ok(src.includes('encodeURIComponent(lensId)'), 'handler must encode lensId');
+  });
+
   it('query_meta_graph inputSchema enumerates valid layer values', () => {
     assert.ok(src.includes("'lineage'"), "layer enum must include 'lineage'");
     assert.ok(src.includes("'manifestation'"), "layer enum must include 'manifestation'");

@@ -583,6 +583,27 @@ const TOOLS = [
       return callWeb(`/graph/metrics/${encodeURIComponent(name)}`, params);
     },
   },
+  {
+    name: 'gitnexus_graph_lens_metrics',
+    description: 'Graph-theory metrics over a CODE-graph lens projection of a repo (today imports-deps = file-level import dependency graph). Same metric set as gitnexus_graph_metrics — surfaces central hub files, articulation points (fragile single-points-of-failure in the dependency structure), and module communities. Community method selectable (louvain/leiden/labelprop). Large projections are node-capped (summary.capped flags when super-linear metrics were skipped).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        lensId: { type: 'string', description: 'Lens id (e.g. imports-deps).' },
+        repo: { type: 'string', description: 'Repo to read the ASTKG from (via /api/graph).' },
+        community: { type: 'string', enum: ['louvain', 'leiden', 'labelprop'], description: 'Community-detection method (default louvain).' },
+        resolution: { type: 'number', description: 'Resolution γ for Louvain/Leiden (default 1).' },
+      },
+      required: ['lensId', 'repo'],
+      additionalProperties: false,
+    },
+    handler: ({ lensId, repo, community, resolution }) => {
+      const params = { repo };
+      if (community) params.community = community;
+      if (resolution !== undefined) params.resolution = resolution;
+      return callWeb(`/graph/metrics/lens/${encodeURIComponent(lensId)}`, params);
+    },
+  },
 ];
 
 function formatGhostAuditSummary(audit) {

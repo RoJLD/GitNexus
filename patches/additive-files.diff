@@ -24290,10 +24290,10 @@ index 00000000..607b24cf
 +}
 diff --git a/gitnexus-web/src/services/graph-theory-client.ts b/gitnexus-web/src/services/graph-theory-client.ts
 new file mode 100644
-index 00000000..45c63c26
+index 00000000..12e12601
 --- /dev/null
 +++ b/gitnexus-web/src/services/graph-theory-client.ts
-@@ -0,0 +1,29 @@
+@@ -0,0 +1,36 @@
 +export interface GraphMetricNode {
 +  id: string;
 +  degree: number;
@@ -24312,13 +24312,20 @@ index 00000000..45c63c26
 +export interface GraphMetrics {
 +  nodes: GraphMetricNode[];
 +  bridges: { source: string; target: string }[];
-+  summary: { nodeCount: number; edgeCount: number; communityCount: number; modularity: number; density: number; componentCount: number; transitivity: number };
++  summary: { nodeCount: number; edgeCount: number; communityCount: number; modularity: number; density: number; componentCount: number; transitivity: number; capped?: boolean; omittedMetrics?: string[] };
 +}
 +
 +export type SizeMetric = 'degree' | 'pagerank' | 'betweenness' | 'eigenvector' | 'closeness' | 'katz' | 'harmonic' | 'coreness' | 'clustering';
 +
 +export async function getGraphMetrics(name: string): Promise<GraphMetrics> {
 +  const res = await fetch(`/graph/metrics/${encodeURIComponent(name)}`);
++  const body = await res.json().catch(() => ({}));
++  if (!res.ok) throw new Error((body as { error?: string }).error || `HTTP ${res.status}`);
++  return body as GraphMetrics;
++}
++
++export async function getGraphLensMetrics(lensId: string, repo: string): Promise<GraphMetrics> {
++  const res = await fetch(`/graph/metrics/lens/${encodeURIComponent(lensId)}?repo=${encodeURIComponent(repo)}`);
 +  const body = await res.json().catch(() => ({}));
 +  if (!res.ok) throw new Error((body as { error?: string }).error || `HTTP ${res.status}`);
 +  return body as GraphMetrics;
