@@ -565,16 +565,23 @@ const TOOLS = [
   },
   {
     name: 'gitnexus_graph_metrics',
-    description: 'Graph-theory metrics (degree + PageRank + betweenness + eigenvector centrality + Louvain communities) for a sidecar graph by name. Returns a summary + per-node metrics.',
+    description: 'Graph-theory metrics for a sidecar graph by name. Per-node: degree, PageRank, betweenness, eigenvector, closeness, Katz, harmonic centrality, k-core (coreness), clustering coefficient, articulation-point flag, component id, community. Plus top-level bridges and a summary (density, components, transitivity, modularity). Community method selectable: Louvain (default, resolution-tunable), Leiden, or label propagation.',
     inputSchema: {
       type: 'object',
       properties: {
         name: { type: 'string', description: 'Sidecar graph name (as registered via gitnexus_create_graph_from_template).' },
+        community: { type: 'string', enum: ['louvain', 'leiden', 'labelprop'], description: 'Community-detection method (default louvain).' },
+        resolution: { type: 'number', description: 'Resolution γ for Louvain/Leiden (default 1; higher → more, smaller communities).' },
       },
       required: ['name'],
       additionalProperties: false,
     },
-    handler: ({ name }) => callWeb(`/graph/metrics/${encodeURIComponent(name)}`),
+    handler: ({ name, community, resolution }) => {
+      const params = {};
+      if (community) params.community = community;
+      if (resolution !== undefined) params.resolution = resolution;
+      return callWeb(`/graph/metrics/${encodeURIComponent(name)}`, params);
+    },
   },
 ];
 

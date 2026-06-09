@@ -117,6 +117,16 @@ describe('mcp-server/server.mjs — Task 11.13 smoke', () => {
     );
   });
 
+  it('gitnexus_graph_metrics inputSchema offers community + resolution params', () => {
+    assert.ok(src.includes("'louvain'") && src.includes("'leiden'") && src.includes("'labelprop'"),
+      'community enum must list louvain/leiden/labelprop');
+    assert.ok(src.includes('resolution'), 'inputSchema must offer a resolution param');
+  });
+  it("gitnexus_graph_metrics description mentions the structural + community additions", () => {
+    assert.ok(/closeness/i.test(src) && /Leiden/i.test(src),
+      'description should mention closeness + Leiden');
+  });
+
   it('query_meta_graph inputSchema enumerates valid layer values', () => {
     assert.ok(src.includes("'lineage'"), "layer enum must include 'lineage'");
     assert.ok(src.includes("'manifestation'"), "layer enum must include 'manifestation'");

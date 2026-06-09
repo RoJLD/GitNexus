@@ -5746,27 +5746,48 @@ index 00000000..e6c5167a
 +}
 diff --git a/docker-server-graph-theory.mjs b/docker-server-graph-theory.mjs
 new file mode 100644
-index 00000000..4620699d
+index 00000000..0a250779
 --- /dev/null
 +++ b/docker-server-graph-theory.mjs
-@@ -0,0 +1,20 @@
+@@ -0,0 +1,41 @@
 +/**
-+ * Graph-theory metrics route (web container). GET /graph/metrics/:name →
-+ * fetch the sidecar render of <name> → computeMetrics (pure-JS engine).
-+ *   { nodes:[{id,degree,pagerank,community}], summary:{nodeCount,edgeCount,communityCount,modularity} }
++ * Graph-theory metrics route (web container). GET /graph/metrics/:name[?community=&resolution=]
++ *   → sidecar render of <name> → computeMetrics (pure-JS engine).
++ * Response: { nodes:[{id,degree,pagerank,betweenness,eigenvector,closeness,katz,harmonic,
++ *             coreness,clustering,articulation,componentId,community}],
++ *             bridges:[{source,target}],
++ *             summary:{nodeCount,edgeCount,communityCount,modularity,density,componentCount,transitivity} }
 + */
 +import { sidecarRender } from './docker-server-graph-templates-core.mjs';
 +import { computeMetrics } from './docker-server-graph-theory-core.mjs';
 +
++const COMMUNITY_METHODS = new Set(['louvain', 'leiden', 'labelprop']);
++
 +function sendJson(res, code, body) { res.writeHead(code, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(body)); }
++
++/** Parse + validate the metrics query params. Throws Error (→ 400) on bad input. */
++export function parseMetricsParams(searchParams) {
++  const community = searchParams.get('community') || 'louvain';
++  if (!COMMUNITY_METHODS.has(community)) throw new Error(`unknown community method "${community}" (use louvain|leiden|labelprop)`);
++  let resolution = 1;
++  const raw = searchParams.get('resolution');
++  if (raw != null && raw !== '') {
++    resolution = Number(raw);
++    if (!Number.isFinite(resolution) || resolution <= 0) throw new Error(`resolution must be a positive finite number, got "${raw}"`);
++  }
++  return { community, resolution };
++}
 +
 +export async function handleGraphMetricsRoute(req, url, res) {
 +  if (!url.pathname.startsWith('/graph/metrics/') || req.method !== 'GET') return false;
 +  const name = decodeURIComponent(url.pathname.slice('/graph/metrics/'.length));
++  let params;
++  try { params = parseMetricsParams(url.searchParams); }
++  catch (e) { sendJson(res, 400, { error: e.message }); return true; }
 +  let graph;
 +  try { graph = await sidecarRender(name); }
 +  catch (e) { sendJson(res, 404, { error: `graph "${name}" not available: ${e.message}` }); return true; }
-+  try { sendJson(res, 200, computeMetrics(graph)); }
++  try { sendJson(res, 200, computeMetrics(graph, params)); }
 +  catch (e) { sendJson(res, 500, { error: `metrics failed: ${e.message}` }); return true; }
 +  return true;
 +}
@@ -23670,7 +23691,7 @@ index 00000000..c57b5944
 +export const RESEARCH_FALLBACK_COLOR = '#9ca3af';
 diff --git a/gitnexus-web/src/lib/research-graph-adapter.ts b/gitnexus-web/src/lib/research-graph-adapter.ts
 new file mode 100644
-index 00000000..fed04755
+index 00000000..c090e629
 --- /dev/null
 +++ b/gitnexus-web/src/lib/research-graph-adapter.ts
 @@ -0,0 +1,88 @@
@@ -23713,8 +23734,8 @@ index 00000000..fed04755
 + */
 +export function researchGraphToGraphology(
 +  rg: ResearchGraph,
-+  metricsById?: Map<string, { degree: number; pagerank: number; betweenness: number; eigenvector: number; community: number }>,
-+  sizeBy: 'degree' | 'pagerank' | 'betweenness' | 'eigenvector' = 'pagerank',
++  metricsById?: Map<string, { degree: number; pagerank: number; betweenness: number; eigenvector: number; closeness: number; katz: number; harmonic: number; coreness: number; clustering: number; community: number }>,
++  sizeBy: 'degree' | 'pagerank' | 'betweenness' | 'eigenvector' | 'closeness' | 'katz' | 'harmonic' | 'coreness' | 'clustering' = 'pagerank',
 +): Graph<SigmaNodeAttributes, SigmaEdgeAttributes> {
 +  const graph = new Graph<SigmaNodeAttributes, SigmaEdgeAttributes>();
 +  const nodes = rg.nodes || [];
@@ -24217,12 +24238,32 @@ index 00000000..607b24cf
 +}
 diff --git a/gitnexus-web/src/services/graph-theory-client.ts b/gitnexus-web/src/services/graph-theory-client.ts
 new file mode 100644
-index 00000000..1fbc27fd
+index 00000000..45c63c26
 --- /dev/null
 +++ b/gitnexus-web/src/services/graph-theory-client.ts
-@@ -0,0 +1,9 @@
-+export interface GraphMetricNode { id: string; degree: number; pagerank: number; betweenness: number; eigenvector: number; community: number; }
-+export interface GraphMetrics { nodes: GraphMetricNode[]; summary: { nodeCount: number; edgeCount: number; communityCount: number; modularity: number }; }
+@@ -0,0 +1,29 @@
++export interface GraphMetricNode {
++  id: string;
++  degree: number;
++  pagerank: number;
++  betweenness: number;
++  eigenvector: number;
++  closeness: number;
++  katz: number;
++  harmonic: number;
++  coreness: number;
++  clustering: number;
++  articulation: boolean;
++  componentId: number;
++  community: number;
++}
++export interface GraphMetrics {
++  nodes: GraphMetricNode[];
++  bridges: { source: string; target: string }[];
++  summary: { nodeCount: number; edgeCount: number; communityCount: number; modularity: number; density: number; componentCount: number; transitivity: number };
++}
++
++export type SizeMetric = 'degree' | 'pagerank' | 'betweenness' | 'eigenvector' | 'closeness' | 'katz' | 'harmonic' | 'coreness' | 'clustering';
 +
 +export async function getGraphMetrics(name: string): Promise<GraphMetrics> {
 +  const res = await fetch(`/graph/metrics/${encodeURIComponent(name)}`);
