@@ -28,3 +28,17 @@ describe('getGraphLensMetrics', () => {
     expect(r.summary.capped).toBe(false);
   });
 });
+describe('client community option', () => {
+  it('getGraphMetrics appends ?community=', async () => {
+    const f = vi.fn(async () => ({ ok: true, json: async () => ({ nodes: [], bridges: [], summary: {} }) }));
+    vi.stubGlobal('fetch', f);
+    await getGraphMetrics('g', { community: 'leiden' });
+    expect(f).toHaveBeenCalledWith('/graph/metrics/g?community=leiden');
+  });
+  it('getGraphLensMetrics appends &community=', async () => {
+    const f = vi.fn(async () => ({ ok: true, json: async () => ({ nodes: [], bridges: [], summary: {} }) }));
+    vi.stubGlobal('fetch', f);
+    await getGraphLensMetrics('imports-deps', 'r', { community: 'labelprop' });
+    expect(f).toHaveBeenCalledWith('/graph/metrics/lens/imports-deps?repo=r&community=labelprop');
+  });
+});

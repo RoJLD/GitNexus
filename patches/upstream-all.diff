@@ -31741,6 +31741,48 @@ index 05676e50..8718501f 100644
    Variable,
    X,
    Zap,
+diff --git a/gitnexus-web/src/lib/metrics-view.ts b/gitnexus-web/src/lib/metrics-view.ts
+new file mode 100644
+index 00000000..70488972
+--- /dev/null
++++ b/gitnexus-web/src/lib/metrics-view.ts
+@@ -0,0 +1,36 @@
++import type { GraphMetricNode, GraphMetrics, SizeMetric } from '../services/graph-theory-client';
++
++const CSV_COLS: (keyof GraphMetricNode)[] = ['id', 'degree', 'pagerank', 'betweenness', 'eigenvector', 'closeness', 'katz', 'harmonic', 'coreness', 'clustering', 'articulation', 'componentId', 'community'];
++
++/** Top-N nodes by a numeric metric, descending; ties broken by id ascending; n clamped to [0, len]. */
++export function topNByMetric(nodes: GraphMetricNode[], metric: SizeMetric, n: number): GraphMetricNode[] {
++  const sorted = [...nodes].sort((a, b) => (b[metric] - a[metric]) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
++  return sorted.slice(0, Math.max(0, n));
++}
++
++function csvCell(v: string | number | boolean): string {
++  const s = String(v);
++  return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
++}
++
++/** Metrics nodes → CSV (fixed column order, basic RFC-4180-ish escaping). */
++export function metricsToCsv(nodes: GraphMetricNode[]): string {
++  const header = CSV_COLS.join(',');
++  const rows = nodes.map((nd) => CSV_COLS.map((c) => csvCell(nd[c] as string | number | boolean)).join(','));
++  return [header, ...rows].join('\n') + '\n';
++}
++
++/** Pretty-printed JSON of the full metrics payload. */
++export function metricsToJson(metrics: GraphMetrics): string {
++  return JSON.stringify(metrics, null, 2);
++}
++
++/** DOM download helper (not unit-tested — trivial Blob+anchor). */
++export function downloadText(filename: string, mime: string, text: string): void {
++  const blob = new Blob([text], { type: mime });
++  const url = URL.createObjectURL(blob);
++  const a = document.createElement('a');
++  a.href = url; a.download = filename;
++  document.body.appendChild(a); a.click(); a.remove();
++  URL.revokeObjectURL(url);
++}
 diff --git a/gitnexus-web/src/lib/research-colors.ts b/gitnexus-web/src/lib/research-colors.ts
 new file mode 100644
 index 00000000..c57b5944
@@ -32378,10 +32420,10 @@ index 00000000..607b24cf
 +}
 diff --git a/gitnexus-web/src/services/graph-theory-client.ts b/gitnexus-web/src/services/graph-theory-client.ts
 new file mode 100644
-index 00000000..12e12601
+index 00000000..493d0fd6
 --- /dev/null
 +++ b/gitnexus-web/src/services/graph-theory-client.ts
-@@ -0,0 +1,36 @@
+@@ -0,0 +1,49 @@
 +export interface GraphMetricNode {
 +  id: string;
 +  degree: number;
@@ -32400,20 +32442,33 @@ index 00000000..12e12601
 +export interface GraphMetrics {
 +  nodes: GraphMetricNode[];
 +  bridges: { source: string; target: string }[];
-+  summary: { nodeCount: number; edgeCount: number; communityCount: number; modularity: number; density: number; componentCount: number; transitivity: number; capped?: boolean; omittedMetrics?: string[] };
++  summary: { nodeCount: number; edgeCount: number; communityCount: number; modularity: number; density: number; componentCount: number; transitivity: number; capped?: boolean; omittedMetrics?: string[]; approximate?: boolean; sampleSize?: number | null };
 +}
 +
 +export type SizeMetric = 'degree' | 'pagerank' | 'betweenness' | 'eigenvector' | 'closeness' | 'katz' | 'harmonic' | 'coreness' | 'clustering';
 +
-+export async function getGraphMetrics(name: string): Promise<GraphMetrics> {
-+  const res = await fetch(`/graph/metrics/${encodeURIComponent(name)}`);
++export type CommunityMethod = 'louvain' | 'leiden' | 'labelprop';
++export interface MetricsOpts { community?: CommunityMethod; resolution?: number }
++
++function metricsQuery(opts?: MetricsOpts, base?: URLSearchParams): string {
++  const q = base ?? new URLSearchParams();
++  if (opts?.community) q.set('community', opts.community);
++  if (opts?.resolution !== undefined) q.set('resolution', String(opts.resolution));
++  const s = q.toString();
++  return s ? `?${s}` : '';
++}
++
++export async function getGraphMetrics(name: string, opts?: MetricsOpts): Promise<GraphMetrics> {
++  const res = await fetch(`/graph/metrics/${encodeURIComponent(name)}${metricsQuery(opts)}`);
 +  const body = await res.json().catch(() => ({}));
 +  if (!res.ok) throw new Error((body as { error?: string }).error || `HTTP ${res.status}`);
 +  return body as GraphMetrics;
 +}
 +
-+export async function getGraphLensMetrics(lensId: string, repo: string): Promise<GraphMetrics> {
-+  const res = await fetch(`/graph/metrics/lens/${encodeURIComponent(lensId)}?repo=${encodeURIComponent(repo)}`);
++export async function getGraphLensMetrics(lensId: string, repo: string, opts?: MetricsOpts): Promise<GraphMetrics> {
++  const extra = metricsQuery(opts).replace(/^\?/, '');
++  const qs = `?repo=${encodeURIComponent(repo)}${extra ? `&${extra}` : ''}`;
++  const res = await fetch(`/graph/metrics/lens/${encodeURIComponent(lensId)}${qs}`);
 +  const body = await res.json().catch(() => ({}));
 +  if (!res.ok) throw new Error((body as { error?: string }).error || `HTTP ${res.status}`);
 +  return body as GraphMetrics;
