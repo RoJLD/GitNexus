@@ -139,6 +139,11 @@ describe('mcp-server/server.mjs — Task 11.13 smoke', () => {
     assert.ok(/imports-deps/.test(src) && /file-graph/.test(src),
       'lens-metrics description should mention imports-deps and file-graph');
   });
+  it('gitnexus_graph_lens_metrics offers symbol-graph + cap/approx (P2.3.2c)', () => {
+    assert.ok(/symbol-graph/.test(src), 'description/schema should mention the symbol-graph lens');
+    assert.ok(/cap: \{ type: 'number'/.test(src), 'inputSchema should offer a cap param');
+    assert.ok(/approx: \{ type: 'number'/.test(src), 'inputSchema should offer an approx param');
+  });
 
   it('query_meta_graph inputSchema enumerates valid layer values', () => {
     assert.ok(src.includes("'lineage'"), "layer enum must include 'lineage'");

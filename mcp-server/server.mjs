@@ -585,22 +585,26 @@ const TOOLS = [
   },
   {
     name: 'gitnexus_graph_lens_metrics',
-    description: 'Graph-theory metrics over a CODE-graph lens projection of a repo. Available lenses: imports-deps (file-level import dependency graph) and file-graph (file-level over ALL relationship types — imports + calls + extends + …). Same metric set as gitnexus_graph_metrics — surfaces central hub files, articulation points (fragile single-points-of-failure in the dependency structure), and module communities. Community method selectable (louvain/leiden/labelprop). Large projections are node-capped (summary.capped flags when super-linear metrics were skipped).',
+    description: 'Graph-theory metrics over a CODE-graph lens projection of a repo. Available lenses: imports-deps (file-level import dependency graph), file-graph (file-level over ALL relationship types — imports + calls + extends + …), and symbol-graph (the raw symbol-level graph — functions/classes/files — no collapse). Same metric set as gitnexus_graph_metrics — surfaces central hub nodes, articulation points (fragile single-points-of-failure), and communities (= modules). Community method selectable (louvain/leiden/labelprop). Large projections are node-capped: above `cap` nodes the super-linear metrics are skipped (summary.capped), OR — with `approx=<N>` — estimated by sampling N source nodes (summary.approximate/sampleSize) instead of zeroed.',
     inputSchema: {
       type: 'object',
       properties: {
-        lensId: { type: 'string', description: 'Lens id (e.g. imports-deps).' },
+        lensId: { type: 'string', description: 'Lens id: imports-deps | file-graph | symbol-graph.' },
         repo: { type: 'string', description: 'Repo to read the ASTKG from (via /api/graph).' },
         community: { type: 'string', enum: ['louvain', 'leiden', 'labelprop'], description: 'Community-detection method (default louvain).' },
         resolution: { type: 'number', description: 'Resolution γ for Louvain/Leiden (default 1).' },
+        cap: { type: 'number', description: 'Node cap (default 2000, max 50000); above it super-linear metrics are skipped unless approx is set.' },
+        approx: { type: 'number', description: 'Sample size for approximate betweenness/closeness/harmonic above the cap (LoD) — estimates instead of zeros.' },
       },
       required: ['lensId', 'repo'],
       additionalProperties: false,
     },
-    handler: ({ lensId, repo, community, resolution }) => {
+    handler: ({ lensId, repo, community, resolution, cap, approx }) => {
       const params = { repo };
       if (community) params.community = community;
       if (resolution !== undefined) params.resolution = resolution;
+      if (cap !== undefined) params.cap = cap;
+      if (approx !== undefined) params.approx = approx;
       return callWeb(`/graph/metrics/lens/${encodeURIComponent(lensId)}`, params);
     },
   },
