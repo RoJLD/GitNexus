@@ -117,6 +117,28 @@ describe('graph-templates routes', () => {
     expect(graph.edges.some((e) => ['transition', 'emission'].includes(e.kind))).toBe(true);
   });
 
+  it('structurally diffs two model-graphs from the same corpus (zero drift)', async () => {
+    // `it-model-graph` (the `a` side) is scaffolded + imported by the test
+    // above from `model-graph-corpus`. Scaffold + import a second graph
+    // (`b`) from the SAME corpus → identical structure → zero drift.
+    const name = 'it-model-graph-b';
+    const scaffold = await fetch(`${BASE}/graph/scaffold`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ templateId: 'model-graph', name, source: 'model-graph-corpus' }),
+    });
+    expect(scaffold.status).toBe(201);
+    const imp = await fetch(`${BASE}/graph/import`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }),
+    });
+    expect(imp.status).toBe(200);
+
+    const res = await fetch(`${BASE}/graph/diff?a=it-model-graph&b=it-model-graph-b`);
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.summary.drift).toBe(0);   // same corpus → identical graphs
+    expect(body.nodes.commonCount).toBe(4); // 2 state + 2 observation
+  });
+
   it('serves a captured activation overlay for a model graph', async () => {
     const name = 'it-model-activations';
     const scaffold = await fetch(`${BASE}/graph/scaffold`, {

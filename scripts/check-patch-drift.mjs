@@ -34,7 +34,7 @@ function main() {
   try {
     execFileSync('git', ['add', '-N', '.'], { cwd: up });
     for (const [filter, file] of [['A', 'additive-files.diff'], ['M', 'inplace-edits.diff']]) {
-      const liveText = execFileSync('git', ['diff', 'HEAD', `--diff-filter=${filter}`], { cwd: up, encoding: 'utf8' });
+      const liveText = execFileSync('git', ['diff', 'HEAD', `--diff-filter=${filter}`], { cwd: up, encoding: 'utf8', maxBuffer: 256 * 1024 * 1024 });
       let committedText;
       try {
         committedText = readFileSync(resolve(repoRoot, 'patches', file), 'utf8');

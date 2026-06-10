@@ -519,6 +519,15 @@ const TOOLS = [
     handler: ({ name, run }) => callWeb(`/graph/activations/${encodeURIComponent(name)}`, run ? { run } : {}),
   },
   {
+    name: 'gitnexus_graph_diff',
+    description: 'Structurally diff two sidecar graphs (e.g. two model versions): added/removed nodes, retyped nodes (type/label changed), added/removed edges, and a drift count. The "as code" model-version comparison — like diffing two repo snapshots. Returns {nodes:{added,removed,changed,commonCount}, edges:{added,removed,commonCount}, summary:{drift,...}}.',
+    inputSchema: { type: 'object', properties: {
+      a: { type: 'string', description: 'First graph name (the "before" version).' },
+      b: { type: 'string', description: 'Second graph name (the "after" version).' },
+    }, required: ['a', 'b'], additionalProperties: false },
+    handler: ({ a, b }) => callWeb('/graph/diff', { a, b }),
+  },
+  {
     name: 'gitnexus_create_graph_from_template',
     description: 'Scaffold a new graph from a template. Records the graph (name + template + source dir relative to /data/projects) so it can then be imported. Does NOT populate it — call gitnexus_import_into_graph next. Returns the index record.',
     inputSchema: {

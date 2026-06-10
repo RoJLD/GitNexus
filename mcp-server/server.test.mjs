@@ -163,6 +163,19 @@ describe('mcp-server/server.mjs — Task 11.13 smoke', () => {
     );
   });
 
+  // ── gitnexus_graph_diff (P-IA.3 structural model-version diff) ────
+  it("registers 'gitnexus_graph_diff' requiring a + b + hitting /graph/diff", () => {
+    assert.ok(src.includes("name: 'gitnexus_graph_diff'"), 'TOOLS must contain gitnexus_graph_diff');
+    assert.ok(
+      /name: 'gitnexus_graph_diff'[\s\S]*?required: \['a', 'b'\]/.test(src),
+      "gitnexus_graph_diff inputSchema must declare required: ['a', 'b']",
+    );
+    assert.ok(
+      src.includes("callWeb('/graph/diff', { a, b })"),
+      'handler must call /graph/diff forwarding both a + b',
+    );
+  });
+
   // ── P2.3 directed / hierarchy / spectral-embedding params ─────────
   it('gitnexus_graph_metrics inputSchema offers directed/hierarchy/embed/dims', () => {
     assert.ok(/directed: \{ type: 'boolean'/.test(src), 'graph_metrics schema must offer a directed boolean');

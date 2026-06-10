@@ -5153,10 +5153,10 @@ index 00000000..4bf2da66
 +}
 diff --git a/docker-server-graph-templates-core.mjs b/docker-server-graph-templates-core.mjs
 new file mode 100644
-index 00000000..edbf644f
+index 00000000..3ad9afdb
 --- /dev/null
 +++ b/docker-server-graph-templates-core.mjs
-@@ -0,0 +1,233 @@
+@@ -0,0 +1,290 @@
 +/**
 + * Graph-templates engine (web container, pure Node — no Kùzu).
 + * Registry + built-in descriptors + index store + Kùzu sidecar client. Graphs
@@ -5367,6 +5367,63 @@ index 00000000..edbf644f
 +  };
 +}
 +
++// ---- structural diff (IA / model-version diff, P-IA.3) -----------------
++
++/**
++ * Structurally diff two graphs in the universal sidecar render shape
++ * ({ nodes:[{id,type?,label?,...}], edges:[{source,target,kind?,id?,...}] }).
++ * Pure — no IO. Deterministic: all id/key arrays are sorted. Used for the
++ * IA/Model-as-graph "model-version diff".
++ */
++export function diffGraphs(graphA, graphB) {
++  const aNodes = (graphA && Array.isArray(graphA.nodes)) ? graphA.nodes : [];
++  const bNodes = (graphB && Array.isArray(graphB.nodes)) ? graphB.nodes : [];
++  const aEdges = (graphA && Array.isArray(graphA.edges)) ? graphA.edges : [];
++  const bEdges = (graphB && Array.isArray(graphB.edges)) ? graphB.edges : [];
++
++  const aById = new Map();
++  for (const n of aNodes) if (!aById.has(n.id)) aById.set(n.id, n);
++  const bById = new Map();
++  for (const n of bNodes) if (!bById.has(n.id)) bById.set(n.id, n);
++
++  const added = [...bById.keys()].filter((id) => !aById.has(id)).sort();
++  const removed = [...aById.keys()].filter((id) => !bById.has(id)).sort();
++  const commonIds = [...aById.keys()].filter((id) => bById.has(id)).sort();
++
++  const changed = [];
++  for (const id of commonIds) {
++    const aNode = aById.get(id);
++    const bNode = bById.get(id);
++    if (aNode.type !== bNode.type || aNode.label !== bNode.label) {
++      changed.push({
++        id,
++        from: { type: aNode.type ?? null, label: aNode.label ?? null },
++        to: { type: bNode.type ?? null, label: bNode.label ?? null },
++      });
++    }
++  }
++
++  const edgeKey = (e) => (e.id != null ? String(e.id) : `${e.source} ${e.kind ?? ''} ${e.target}`);
++  const aKeys = new Set(aEdges.map(edgeKey));
++  const bKeys = new Set(bEdges.map(edgeKey));
++
++  const edgeAdded = [...bKeys].filter((k) => !aKeys.has(k)).sort();
++  const edgeRemoved = [...aKeys].filter((k) => !bKeys.has(k)).sort();
++  const edgeCommonCount = [...aKeys].filter((k) => bKeys.has(k)).length;
++
++  return {
++    nodes: { added, removed, changed, commonCount: commonIds.length },
++    edges: { added: edgeAdded, removed: edgeRemoved, commonCount: edgeCommonCount },
++    summary: {
++      addedNodes: added.length, removedNodes: removed.length, changedNodes: changed.length,
++      addedEdges: edgeAdded.length, removedEdges: edgeRemoved.length,
++      drift: added.length + removed.length + changed.length + edgeAdded.length + edgeRemoved.length,
++      aNodeCount: aById.size, bNodeCount: bById.size,
++      aEdgeCount: aKeys.size, bEdgeCount: bKeys.size,
++    },
++  };
++}
++
 +// ---- sidecar client helpers --------------------------------------------
 +
 +const GRAPHS_URL = process.env.GRAPHS_URL || 'http://gitnexus-graphs:4749';
@@ -5392,10 +5449,10 @@ index 00000000..edbf644f
 +}
 diff --git a/docker-server-graph-templates.mjs b/docker-server-graph-templates.mjs
 new file mode 100644
-index 00000000..10f08b10
+index 00000000..ae049d98
 --- /dev/null
 +++ b/docker-server-graph-templates.mjs
-@@ -0,0 +1,90 @@
+@@ -0,0 +1,103 @@
 +/**
 + * Graph templates routes (web container) — sidecar-backed (Kùzu).
 + *   GET  /graph/templates              -> { templates }
@@ -5404,13 +5461,14 @@ index 00000000..10f08b10
 + *   GET  /graph/research               -> { graphs }              (index records)
 + *   GET  /graph/research/:name         -> { nodes, edges }        (sidecar render)
 + *   GET  /graph/activations/:name      -> { nodes, edges, report } (model-activations.json overlay)
++ *   GET  /graph/diff?a=&b=             -> { nodes, edges, summary }  (structural diff of two sidecar graphs)
 + */
 +import { readFile } from 'node:fs/promises';
 +import { join } from 'node:path';
 +import {
 +  listTemplates, getTemplate, sanitizeSource,
 +  readIndex, writeIndexRecord, shapeActivations,
-+  sidecarCreate, sidecarIngest, sidecarRender,
++  sidecarCreate, sidecarIngest, sidecarRender, diffGraphs,
 +} from './docker-server-graph-templates-core.mjs';
 +import { importResearchFs } from './docker-server-research-fs-importer.mjs';
 +import { importAcademicJson } from './docker-server-academic-json-importer.mjs';
@@ -5482,6 +5540,18 @@ index 00000000..10f08b10
 +    catch { sendJson(res, 404, { error: `no activations capture for "${name}"` }); return true; }
 +    try { sendJson(res, 200, shapeActivations(JSON.parse(raw))); }
 +    catch (e) { sendJson(res, 400, { error: `bad activations capture: ${e.message}` }); return true; }
++    return true;
++  }
++
++  if (path === '/graph/diff' && req.method === 'GET') {
++    const a = url.searchParams.get('a');
++    const b = url.searchParams.get('b');
++    if (!a || !b) { sendJson(res, 400, { error: 'a and b query params are required' }); return true; }
++    let ga, gb;
++    try { ga = await sidecarRender(a); } catch (e) { sendJson(res, 404, { error: `graph "${a}" not available: ${e.message}` }); return true; }
++    try { gb = await sidecarRender(b); } catch (e) { sendJson(res, 404, { error: `graph "${b}" not available: ${e.message}` }); return true; }
++    try { sendJson(res, 200, diffGraphs(ga, gb)); }
++    catch (e) { sendJson(res, 500, { error: `diff failed: ${e.message}` }); return true; }
 +    return true;
 +  }
 +  return false;
