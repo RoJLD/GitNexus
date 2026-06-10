@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { handleGraphMetricsRoute } from '../../upstream/docker-server-graph-theory.mjs';
+import { handleGraphMetricsRoute, parseMetricsParams } from '../../upstream/docker-server-graph-theory.mjs';
 
 function fakeRes() { return { _c: 0, _b: '', writeHead(c) { this._c = c; }, end(b) { this._b = b || ''; } }; }
 afterEach(() => vi.unstubAllGlobals());
@@ -27,4 +27,20 @@ describe('handleGraphMetricsRoute', () => {
     const res = fakeRes();
     expect(await handleGraphMetricsRoute({ method: 'GET' }, new URL('http://x/graph/templates'), res)).toBe(false);
   });
+});
+
+describe('parseMetricsParams — P2.3 params', () => {
+  const P = (q) => parseMetricsParams(new URL('http://x/g?' + q).searchParams);
+  it('defaults the new params off', () => {
+    const p = P('');
+    expect(p.directed).toBe(false); expect(p.hierarchy).toBe(false);
+    expect(p.embed).toBe(null); expect(p.dims).toBe(8);
+  });
+  it('parses directed/hierarchy/embed/dims', () => {
+    const p = P('directed=1&hierarchy=true&embed=spectral&dims=4');
+    expect(p.directed).toBe(true); expect(p.hierarchy).toBe(true);
+    expect(p.embed).toBe('spectral'); expect(p.dims).toBe(4);
+  });
+  it('rejects an unknown embed method', () => { expect(() => P('embed=node2vec')).toThrow(/embed/); });
+  it('rejects a non-positive dims', () => { expect(() => P('dims=0')).toThrow(/dims/); });
 });

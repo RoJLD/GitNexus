@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { degreeCentrality, pageRank, louvain, computeMetrics, computeMetricsCapped, betweenness, eigenvector, connectedComponents, density, articulationPointsAndBridges, kCore, clusteringCoefficient, closeness, harmonic, katz, labelPropagation, leiden, betweennessApprox, closenessApprox, harmonicApprox } from '../../upstream/docker-server-graph-theory-core.mjs';
+import { degreeCentrality, pageRank, louvain, louvainMultiLevel, computeMetrics, computeMetricsCapped, betweenness, eigenvector, connectedComponents, density, articulationPointsAndBridges, kCore, clusteringCoefficient, closeness, harmonic, katz, labelPropagation, leiden, betweennessApprox, closenessApprox, harmonicApprox } from '../../upstream/docker-server-graph-theory-core.mjs';
+import { directedAdj, inOutDegree, hits, stronglyConnectedComponents, directedBetweenness } from '../../upstream/docker-server-graph-theory-core.mjs';
 
 const STAR = { nodes: [{ id: 'h' }, { id: 'a' }, { id: 'b' }, { id: 'c' }],
                edges: [{ source: 'h', target: 'a' }, { source: 'h', target: 'b' }, { source: 'h', target: 'c' }] };
@@ -8,6 +9,24 @@ const BARBELL = { nodes: ['x1','x2','x3','y1','y2','y3'].map((id) => ({ id })),
     { source: 'x1', target: 'x2' }, { source: 'x2', target: 'x3' }, { source: 'x3', target: 'x1' },
     { source: 'y1', target: 'y2' }, { source: 'y2', target: 'y3' }, { source: 'y3', target: 'y1' },
     { source: 'x1', target: 'y1' },
+  ] };
+// Directed: a → b → c (path) plus a → c (shortcut); and a 2-cycle d ↔ e with isolated f.
+const DIGRAPH = { nodes: ['a','b','c','d','e','f'].map((id) => ({ id })),
+  edges: [
+    { source: 'a', target: 'b' }, { source: 'b', target: 'c' }, { source: 'a', target: 'c' },
+    { source: 'd', target: 'e' }, { source: 'e', target: 'd' },
+  ] };
+const HITS_G = { nodes: ['h1','h2','p1','p2'].map((id) => ({ id })),
+  edges: [
+    { source: 'h1', target: 'p1' }, { source: 'h1', target: 'p2' },
+    { source: 'h2', target: 'p1' }, { source: 'h2', target: 'p2' },
+  ] };
+// Two tight triangles joined by ONE bridge a1–b1.
+const TWO_TRIANGLES = { nodes: ['a1','a2','a3','b1','b2','b3'].map((id) => ({ id })),
+  edges: [
+    { source: 'a1', target: 'a2' }, { source: 'a2', target: 'a3' }, { source: 'a3', target: 'a1' },
+    { source: 'b1', target: 'b2' }, { source: 'b2', target: 'b3' }, { source: 'b3', target: 'b1' },
+    { source: 'a1', target: 'b1' },
   ] };
 
 describe('degreeCentrality', () => {
@@ -476,5 +495,177 @@ describe('computeMetricsCapped — approx (LoD)', () => {
     const r = computeMetricsCapped(BARBELL, { cap: 1000, approx: 3 });
     expect(r.summary.capped).toBe(false);
     expect(r.summary.approximate).toBe(false);
+  });
+});
+
+// ---- Directed metrics ----
+describe('inOutDegree', () => {
+  it('splits degree by direction', () => {
+    const { inDegree, outDegree } = inOutDegree(DIGRAPH);
+    expect(outDegree.a).toBe(2);
+    expect(inDegree.a).toBe(0);
+    expect(inDegree.c).toBe(2);
+    expect(outDegree.c).toBe(0);
+    expect(outDegree.d).toBe(1);
+    expect(inDegree.d).toBe(1);
+  });
+});
+
+describe('hits', () => {
+  it('ranks pure-hubs high on hubs and pure-authorities high on authorities', () => {
+    const { hubs, authorities } = hits(HITS_G);
+    expect(hubs.h1).toBeGreaterThan(hubs.p1);
+    expect(hubs.h1).toBeCloseTo(hubs.h2, 6);
+    expect(authorities.p1).toBeGreaterThan(authorities.h1);
+    expect(authorities.p1).toBeCloseTo(authorities.p2, 6);
+  });
+  it('returns empty objects for an empty graph', () => {
+    const { hubs, authorities } = hits({ nodes: [], edges: [] });
+    expect(hubs).toEqual({});
+    expect(authorities).toEqual({});
+  });
+});
+
+describe('stronglyConnectedComponents', () => {
+  it('groups a directed cycle into one SCC; non-cyclic nodes are singletons', () => {
+    const scc = stronglyConnectedComponents(DIGRAPH);
+    expect(scc.get('d')).toBe(scc.get('e'));
+    expect(scc.get('a')).not.toBe(scc.get('b'));
+    expect(scc.get('b')).not.toBe(scc.get('c'));
+    const distinct = new Set([...scc.values()]);
+    expect(distinct.size).toBe(5);
+  });
+});
+
+describe('directedBetweenness', () => {
+  it('credits the middle of a directed path but not a source/sink', () => {
+    const path = { nodes: ['a','b','c'].map((id) => ({ id })),
+      edges: [{ source: 'a', target: 'b' }, { source: 'b', target: 'c' }] };
+    const bt = directedBetweenness(path);
+    expect(bt.b).toBeGreaterThan(0);
+    expect(bt.a).toBe(0);
+    expect(bt.c).toBe(0);
+  });
+  it('differs from undirected betweenness on a directed graph', () => {
+    const dbt = directedBetweenness(DIGRAPH);
+    expect(Number.isFinite(dbt.b)).toBe(true);
+  });
+});
+
+describe('louvainMultiLevel', () => {
+  it('returns >=1 level, finest first, with non-increasing community counts', () => {
+    const { levels } = louvainMultiLevel(TWO_TRIANGLES, { seed: 1 });
+    expect(levels.length).toBeGreaterThanOrEqual(1);
+    for (let i = 1; i < levels.length; i++) {
+      expect(levels[i].communityCount).toBeLessThanOrEqual(levels[i - 1].communityCount);
+    }
+  });
+  it('level 0 co-membership matches single-level louvain', () => {
+    const { levels } = louvainMultiLevel(TWO_TRIANGLES, { seed: 1 });
+    const single = louvain(TWO_TRIANGLES, { seed: 1 }).communities;
+    const same = (m, x, y) => m[x] === m[y];
+    expect(same(levels[0].communities, 'a1', 'a2')).toBe(same(single, 'a1', 'a2'));
+    expect(same(levels[0].communities, 'a1', 'b1')).toBe(same(single, 'a1', 'b1'));
+  });
+  it('separates the two triangles at the finest level', () => {
+    const c = louvainMultiLevel(TWO_TRIANGLES, { seed: 1 }).levels[0].communities;
+    expect(c.a1).toBe(c.a2); expect(c.a2).toBe(c.a3);
+    expect(c.b1).toBe(c.b2); expect(c.b2).toBe(c.b3);
+    expect(c.a1).not.toBe(c.b1);
+  });
+  it('handles the edgeless graph (single level, each node its own community)', () => {
+    const { levels } = louvainMultiLevel({ nodes: [{ id: 'x' }, { id: 'y' }], edges: [] });
+    expect(levels.length).toBe(1);
+    expect(levels[0].communityCount).toBe(2);
+  });
+  it('each level partition has finite modularity', () => {
+    for (const lvl of louvainMultiLevel(TWO_TRIANGLES, { seed: 1 }).levels) {
+      expect(Number.isFinite(lvl.modularity)).toBe(true);
+    }
+  });
+});
+
+// ---- spectral node embeddings (Laplacian eigenmaps) ----
+import { spectralEmbedding } from '../../upstream/docker-server-graph-theory-core.mjs';
+
+describe('spectralEmbedding', () => {
+  it('separates two cliques along the first non-trivial dimension', () => {
+    const emb = spectralEmbedding(BARBELL, { dims: 2, seed: 1 });
+    const s = (v) => Math.sign(v[0]);
+    expect(s(emb.x1)).toBe(s(emb.x2));
+    expect(s(emb.y1)).toBe(s(emb.y2));
+    expect(s(emb.x1)).not.toBe(s(emb.y1));
+  });
+  it('produces vectors of the requested dimensionality', () => {
+    const emb = spectralEmbedding(BARBELL, { dims: 3, seed: 1 });
+    expect(emb.x1.length).toBe(3);
+  });
+  it('clamps dims to N-1 on tiny graphs and never throws/NaNs', () => {
+    const emb = spectralEmbedding({ nodes: [{ id: 'a' }, { id: 'b' }], edges: [{ source: 'a', target: 'b' }] }, { dims: 8 });
+    expect(emb.a.length).toBe(1);
+    expect(Number.isFinite(emb.a[0])).toBe(true);
+  });
+  it('is deterministic for a fixed seed', () => {
+    const a = spectralEmbedding(BARBELL, { dims: 2, seed: 7 });
+    const b = spectralEmbedding(BARBELL, { dims: 2, seed: 7 });
+    expect(a.x1).toEqual(b.x1);
+  });
+  it('handles an isolated node with an all-zero embedding (no NaN)', () => {
+    const g = { nodes: [{ id: 'a' }, { id: 'b' }, { id: 'iso' }], edges: [{ source: 'a', target: 'b' }] };
+    const emb = spectralEmbedding(g, { dims: 2, seed: 1 });
+    expect(emb.iso.every(Number.isFinite)).toBe(true);
+  });
+});
+
+describe('computeMetrics — P2.3 additivity + opts', () => {
+  it('is additive: no new node fields / hierarchy / embedding when opts off, summary.directed=false', () => {
+    const base = computeMetrics(BARBELL, {});
+    expect(base.nodes[0].inDegree).toBeUndefined();
+    expect(base.hierarchy).toBeUndefined();
+    expect(base.nodes[0].embedding).toBeUndefined();
+    expect(base.summary.directed).toBe(false);
+  });
+  it('directed mode adds in/out degree, hits, sccId + directed summary', () => {
+    const r = computeMetrics(DIGRAPH, { directed: true });
+    expect(r.nodes.find((n) => n.id === 'a').outDegree).toBe(2);
+    expect(typeof r.nodes[0].hubs).toBe('number');
+    expect(typeof r.nodes[0].authorities).toBe('number');
+    expect(typeof r.nodes[0].sccId).toBe('number');
+    expect(r.summary.directed).toBe(true);
+    expect(r.summary.stronglyConnectedComponentCount).toBe(5);
+  });
+  it('hierarchy mode adds communityPath + hierarchy summary', () => {
+    const r = computeMetrics(TWO_TRIANGLES, { hierarchy: true });
+    expect(Array.isArray(r.nodes[0].communityPath)).toBe(true);
+    expect(r.hierarchy.levelCount).toBeGreaterThanOrEqual(1);
+    expect(r.hierarchy.method).toBe('louvain');
+  });
+  it('embed mode adds spectral embeddings + summary', () => {
+    const r = computeMetrics(BARBELL, { embed: 'spectral', dims: 2 });
+    expect(r.nodes[0].embedding.length).toBe(2);
+    expect(r.summary.embedding).toEqual({ method: 'spectral', dims: 2 });
+  });
+  it('capped graph omits embeddings and reports it', () => {
+    const r = computeMetricsCapped(BARBELL, { embed: 'spectral', cap: 1 });
+    expect(r.summary.capped).toBe(true);
+    expect(r.summary.omittedMetrics).toContain('embedding');
+    expect(r.nodes[0].embedding).toBeUndefined();
+  });
+  it('default node object has exactly the pre-P2.3 field set (no field reordered/dropped)', () => {
+    const n = computeMetrics(BARBELL, {}).nodes[0];
+    expect(Object.keys(n).sort()).toEqual([
+      'articulation', 'betweenness', 'clustering', 'closeness', 'community', 'componentId',
+      'coreness', 'degree', 'eigenvector', 'harmonic', 'id', 'katz', 'pagerank',
+    ].sort());
+  });
+  it('the three modes compose: directed + hierarchy + embed coexist on one response', () => {
+    const r = computeMetrics(TWO_TRIANGLES, { directed: true, hierarchy: true, embed: 'spectral', dims: 2 });
+    const n = r.nodes[0];
+    expect(typeof n.outDegree).toBe('number');         // directed
+    expect(Array.isArray(n.communityPath)).toBe(true); // hierarchy
+    expect(n.embedding.length).toBe(2);                // embed
+    expect(r.summary.directed).toBe(true);
+    expect(r.hierarchy.method).toBe('louvain');
+    expect(r.summary.embedding).toEqual({ method: 'spectral', dims: 2 });
   });
 });

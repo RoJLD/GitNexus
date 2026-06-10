@@ -150,6 +150,31 @@ describe('mcp-server/server.mjs — Task 11.13 smoke', () => {
     assert.ok(src.includes("callWeb('/graph/list')"), 'handler must call /graph/list');
   });
 
+  // ── P2.3 directed / hierarchy / spectral-embedding params ─────────
+  it('gitnexus_graph_metrics inputSchema offers directed/hierarchy/embed/dims', () => {
+    assert.ok(/directed: \{ type: 'boolean'/.test(src), 'graph_metrics schema must offer a directed boolean');
+    assert.ok(/hierarchy: \{ type: 'boolean'/.test(src), 'graph_metrics schema must offer a hierarchy boolean');
+    assert.ok(/embed: \{ type: 'string', enum: \['spectral'\]/.test(src), "graph_metrics schema must offer embed enum ['spectral']");
+    assert.ok(/dims: \{ type: 'number'/.test(src), 'graph_metrics schema must offer a dims number');
+  });
+  it('gitnexus_graph_metrics + lens handlers forward directed/hierarchy/embed/dims', () => {
+    assert.ok(src.includes('if (directed) params.directed = 1;'), 'handlers must forward directed → params.directed = 1');
+    assert.ok(src.includes('if (hierarchy) params.hierarchy = 1;'), 'handlers must forward hierarchy → params.hierarchy = 1');
+    assert.ok(src.includes('if (embed) params.embed = embed;'), 'handlers must forward embed → params.embed');
+    assert.ok(src.includes('if (dims !== undefined) params.dims = dims;'), 'handlers must forward dims → params.dims');
+    // BOTH tools must forward — two occurrences of each pass-through line.
+    const count = (s) => src.split(s).length - 1;
+    assert.equal(count('if (directed) params.directed = 1;'), 2, 'both tools must forward directed');
+    assert.equal(count('if (dims !== undefined) params.dims = dims;'), 2, 'both tools must forward dims');
+  });
+  it('graph-metrics tool descriptions mention directed metrics, hierarchy + spectral embeddings', () => {
+    assert.ok(/in\/out degree/i.test(src), 'description should mention in/out degree');
+    assert.ok(/HITS/.test(src), 'description should mention HITS');
+    assert.ok(/SCC/.test(src), 'description should mention SCC');
+    assert.ok(/hierarch/i.test(src), 'description should mention community hierarchy');
+    assert.ok(/spectral embedding/i.test(src), 'description should mention spectral embeddings');
+  });
+
   it('query_meta_graph inputSchema enumerates valid layer values', () => {
     assert.ok(src.includes("'lineage'"), "layer enum must include 'lineage'");
     assert.ok(src.includes("'manifestation'"), "layer enum must include 'manifestation'");

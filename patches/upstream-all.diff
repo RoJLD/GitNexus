@@ -5398,10 +5398,10 @@ index 00000000..8f58a462
 +}
 diff --git a/docker-server-graph-theory-core.mjs b/docker-server-graph-theory-core.mjs
 new file mode 100644
-index 00000000..e06db978
+index 00000000..163e39d2
 --- /dev/null
 +++ b/docker-server-graph-theory-core.mjs
-@@ -0,0 +1,653 @@
+@@ -0,0 +1,1016 @@
 +/**
 + * Graph-theory engine — pure JS, ZERO deps (matches every docker-server-*.mjs;
 + * graphology is a frontend-only dep). Operates on the universal render shape
@@ -5475,7 +5475,60 @@ index 00000000..e06db978
 +  };
 +}
 +
-+export function louvain(graph, { seed = 1, resolution = 1 } = {}) {
++/**
++ * Louvain local-moving phase on a WEIGHTED adjacency. Returns Map<node, communityLabel>
++ * with labels renumbered 0..k-1 in adjW key-iteration order (so the caller's node order
++ * drives label assignment, matching the original single-level louvain output exactly).
++ *   adjW : Map<node, Map<nbr, weight>> — symmetric; a self-loop weight w on node u counts
++ *          as 2w in u's weighted degree (caller's responsibility to reflect that in kW).
++ *   kW   : Map<node, weightedDegree>
++ *   m2W  : 2 × total edge weight (Σ kW over all nodes). Must be > 0.
++ */
++function localMoving(adjW, kW, m2W, { seed = 1, resolution = 1 } = {}) {
++  const nodes = [...adjW.keys()];
++  const comm = new Map(nodes.map((id) => [id, id]));
++  const sigmaTot = new Map(nodes.map((id) => [id, kW.get(id)]));
++  const rng = mulberry32(seed);
++  const order = nodes.slice();
++  let improved = true;
++  let rounds = 0;
++  while (improved && rounds < 100) {
++    improved = false; rounds++;
++    for (let i = order.length - 1; i > 0; i--) { const j = Math.floor(rng() * (i + 1)); [order[i], order[j]] = [order[j], order[i]]; }
++    for (const id of order) {
++      const ki = kW.get(id);
++      const cur = comm.get(id);
++      sigmaTot.set(cur, sigmaTot.get(cur) - ki);
++      const kin = new Map();
++      for (const [nbr, w] of adjW.get(id)) {
++        if (nbr === id) continue;   // a self-loop never pulls a node toward (or away from) any community
++        const c = comm.get(nbr);
++        kin.set(c, (kin.get(c) || 0) + w);
++      }
++      let best = cur;
++      let bestGain = (kin.get(cur) || 0) - resolution * (sigmaTot.get(cur) * ki) / m2W;
++      for (const [c, kic] of kin) {
++        const gain = kic - resolution * (sigmaTot.get(c) * ki) / m2W;
++        if (gain > bestGain + 1e-12) { bestGain = gain; best = c; }
++      }
++      comm.set(id, best);
++      sigmaTot.set(best, sigmaTot.get(best) + ki);
++      if (best !== cur) improved = true;
++    }
++  }
++  const label = new Map();
++  let nextLabel = 0;
++  const out = new Map();
++  for (const id of nodes) {
++    const c = comm.get(id);
++    if (!label.has(c)) label.set(c, nextLabel++);
++    out.set(id, label.get(c));
++  }
++  return out;
++}
++
++/** Build the unit-weight weighted adjacency of `graph`: { adj, k, m2, ids }. */
++function unitWeightAdj(graph) {
 +  const ids = nodeIds(graph);
 +  const idSet = new Set(ids);
 +  const adj = new Map(ids.map((id) => [id, new Map()]));
@@ -5487,45 +5540,16 @@ index 00000000..e06db978
 +    k.set(s, k.get(s) + 1); k.set(t, k.get(t) + 1);
 +    m2 += 2;
 +  }
++  return { adj, k, m2, ids };
++}
++
++export function louvain(graph, { seed = 1, resolution = 1 } = {}) {
++  const { adj, k, m2, ids } = unitWeightAdj(graph);
 +  const communities = {};
 +  if (m2 === 0) { ids.forEach((id, i) => { communities[id] = i; }); return { communities, modularity: 0 }; }
 +
-+  const comm = new Map(ids.map((id) => [id, id]));
-+  const sigmaTot = new Map(ids.map((id) => [id, k.get(id)]));
-+  const rng = mulberry32(seed);
-+  const order = ids.slice();
-+  let improved = true;
-+  let rounds = 0;
-+  while (improved && rounds < 100) {
-+    improved = false; rounds++;
-+    for (let i = order.length - 1; i > 0; i--) { const j = Math.floor(rng() * (i + 1)); [order[i], order[j]] = [order[j], order[i]]; }
-+    for (const id of order) {
-+      const ki = k.get(id);
-+      const cur = comm.get(id);
-+      sigmaTot.set(cur, sigmaTot.get(cur) - ki);
-+      const kin = new Map();
-+      for (const [nbr, w] of adj.get(id)) {
-+        const c = comm.get(nbr);
-+        kin.set(c, (kin.get(c) || 0) + w);
-+      }
-+      let best = cur;
-+      let bestGain = (kin.get(cur) || 0) - resolution * (sigmaTot.get(cur) * ki) / m2;
-+      for (const [c, kic] of kin) {
-+        const gain = kic - resolution * (sigmaTot.get(c) * ki) / m2;
-+        if (gain > bestGain + 1e-12) { bestGain = gain; best = c; }
-+      }
-+      comm.set(id, best);
-+      sigmaTot.set(best, sigmaTot.get(best) + ki);
-+      if (best !== cur) improved = true;
-+    }
-+  }
-+  const label = new Map();
-+  let nextLabel = 0;
-+  for (const id of ids) {
-+    const c = comm.get(id);
-+    if (!label.has(c)) label.set(c, nextLabel++);
-+    communities[id] = label.get(c);
-+  }
++  const labels = localMoving(adj, k, m2, { seed, resolution });
++  for (const id of ids) communities[id] = labels.get(id);
 +  // Modularity Q = Σ_c [ Σin_c/m2 − (Σtot_c/m2)² ].
 +  // adj is symmetric (each undirected edge stored both directions), so this loop
 +  // counts each internal edge twice — intentional: the ×2 cancels with m2 (=2·total weight).
@@ -5539,6 +5563,98 @@ index 00000000..e06db978
 +  let modularity = 0;
 +  for (const [c, st] of stot) modularity += (sin.get(c) || 0) / m2 - resolution * (st / m2) ** 2;
 +  return { communities, modularity };
++}
++
++/**
++ * Aggregate a weighted graph into its community super-graph. `labels` maps each current
++ * node → community label; each label becomes a super-node. Every edge (u,v,w) — including
++ * intra-community edges, which fold into a super-node SELF-LOOP — is summed into the super
++ * adjacency. Because the input adjacency is symmetric (both (u,v) and (v,u) carry w), an
++ * intra-community edge accumulates onto adj.get(c).get(c) from both directions → a self-loop
++ * weight of 2·(internal weight), which is exactly its contribution to the super-node's
++ * weighted degree. Returns { adj, k, m2 }; m2 (= Σ weighted degree) is invariant under
++ * aggregation, so modularity is preserved across levels.
++ */
++function aggregate(adjW, labels) {
++  const superNodes = [...new Set([...labels.values()])];
++  const adj = new Map(superNodes.map((c) => [c, new Map()]));
++  const k = new Map(superNodes.map((c) => [c, 0]));
++  for (const [u, nbrs] of adjW) {
++    const cu = labels.get(u);
++    const row = adj.get(cu);
++    for (const [v, w] of nbrs) {
++      const cv = labels.get(v);
++      row.set(cv, (row.get(cv) || 0) + w);
++      k.set(cu, k.get(cu) + w);   // every (directed) endpoint adds w to its super-node's degree
++    }
++  }
++  let m2 = 0;
++  for (const v of k.values()) m2 += v;
++  return { adj, k, m2 };
++}
++
++/**
++ * Multi-level (hierarchical) Louvain. Returns { levels: [...] }, FINEST first (level 0 =
++ * the single-level local-moving partition, identical co-membership to `louvain`). Each
++ * subsequent level aggregates the previous partition into a super-graph and re-runs
++ * local-moving, composing the super-node labels back onto the ORIGINAL ids. Stops when a
++ * level no longer reduces the community count (no duplicate final level emitted).
++ *
++ * Each level entry: { communities: {origId→label}, modularity, communityCount }, where
++ * modularity is Q of that partition over the ORIGINAL graph (via modularityOf) and
++ * communityCount is the number of distinct labels.
++ *
++ * Edge cases: edgeless graph → exactly one level (each node its own community); empty graph
++ * → one empty level { communities:{}, modularity:0, communityCount:0 }.
++ */
++export function louvainMultiLevel(graph, { seed = 1, resolution = 1 } = {}) {
++  const { adj, k, m2, ids } = unitWeightAdj(graph);
++  if (ids.length === 0) return { levels: [{ communities: {}, modularity: 0, communityCount: 0 }] };
++  if (m2 === 0) {
++    // Edgeless: each node is its own community — a single level, no aggregation possible.
++    const communities = {};
++    ids.forEach((id, i) => { communities[id] = i; });
++    return { levels: [{ communities, modularity: 0, communityCount: ids.length }] };
++  }
++
++  // Helper: emit a level entry from a Map<origId, label>, renumbered 0..k-1 in ids order.
++  const makeLevel = (origLabels) => {
++    const remap = new Map();
++    let next = 0;
++    const communities = {};
++    for (const id of ids) { const c = origLabels.get(id); if (!remap.has(c)) remap.set(c, next++); communities[id] = remap.get(c); }
++    return { communities, modularity: modularityOf(graph, communities, resolution), communityCount: next };
++  };
++
++  const levels = [];
++  // Level 0: local-moving on the original unit-weight graph.
++  const baseLabels = localMoving(adj, k, m2, { seed, resolution });
++  // node→superNode for the CURRENT aggregation level, and origId→superNode composition.
++  let currentAdj = adj;
++  let nodeToSuper = baseLabels;                       // current-graph node → its super-node id
++  let origToSuper = new Map(ids.map((id) => [id, baseLabels.get(id)]));   // origId → current super-node
++  levels.push(makeLevel(origToSuper));
++
++  let prevCount = new Set(baseLabels.values()).size;
++  let level = 0;
++  while (level < 100) {
++    level++;
++    // Aggregate the current graph by its current partition, then re-run local-moving.
++    const { adj: superAdj, k: superK, m2: superM2 } = aggregate(currentAdj, nodeToSuper);
++    const superLabels = localMoving(superAdj, superK, superM2, { seed: seed + level, resolution });
++    const newCount = new Set(superLabels.values()).size;
++    if (newCount >= prevCount) break;                // no further merging → stop, don't emit a dup
++    // Compose: origId → (its super-node at the previous level) → (new coarser label).
++    const composed = new Map();
++    for (const id of ids) composed.set(id, superLabels.get(origToSuper.get(id)));
++    levels.push(makeLevel(composed));
++    // Advance: the new super-graph becomes "current" for the next round.
++    currentAdj = superAdj;
++    nodeToSuper = superLabels;                        // super-graph node → its coarser super-node
++    origToSuper = composed;
++    prevCount = newCount;
++  }
++  return { levels };
 +}
 +
 +/** Undirected neighbor lists over the cleaned edge set. */
@@ -5561,6 +5677,126 @@ index 00000000..e06db978
 +    [arr[i], arr[j]] = [arr[j], arr[i]];
 +  }
 +  return arr.slice(0, m);
++}
++
++/**
++ * Directed adjacency over the direction-preserving cleaned edge set.
++ * cleanEdges keeps [source,target] ordered (only the undirected path symmetrizes),
++ * so out = forward edges, in = reversed edges. Returns { ids, out, in } (both Maps).
++ */
++export function directedAdj(graph) {
++  const ids = nodeIds(graph);
++  const idSet = new Set(ids);
++  const out = new Map(ids.map((id) => [id, []]));
++  const inn = new Map(ids.map((id) => [id, []]));
++  for (const [s, t] of cleanEdges(graph, idSet)) { out.get(s).push(t); inn.get(t).push(s); }
++  return { ids, out, in: inn };
++}
++
++/** In/out degree split by direction. Plain objects, every id present (0 if no edges). */
++export function inOutDegree(graph) {
++  const { ids, out, in: inn } = directedAdj(graph);
++  const inDegree = {};
++  const outDegree = {};
++  for (const id of ids) { outDegree[id] = out.get(id).length; inDegree[id] = inn.get(id).length; }
++  return { inDegree, outDegree };
++}
++
++/**
++ * HITS (Kleinberg) hubs + authorities via power iteration with per-step L2 normalization.
++ * auth[v] = Σ_{u→v} hub[u] then normalize; hub[v] = Σ_{v→w} auth[w] then normalize.
++ * Zero-norm fallback to uniform 1/N mirrors eigenvector's edgeless guard. Empty → {}.
++ */
++export function hits(graph, { maxIter = 200, tol = 1e-9 } = {}) {
++  const { ids, out, in: inn } = directedAdj(graph);
++  const N = ids.length;
++  const hubsOut = {};
++  const authOut = {};
++  if (N === 0) return { hubs: hubsOut, authorities: authOut };
++  let hub = new Map(ids.map((id) => [id, 1]));
++  let auth = new Map(ids.map((id) => [id, 1]));
++  const l2norm = (m) => { let s = 0; for (const id of ids) s += m.get(id) * m.get(id); return Math.sqrt(s); };
++  for (let iter = 0; iter < maxIter; iter++) {
++    // authority update: sum of hub scores of in-neighbors, then L2-normalize
++    const nextAuth = new Map(ids.map((id) => [id, 0]));
++    for (const v of ids) { let a = 0; for (const u of inn.get(v)) a += hub.get(u); nextAuth.set(v, a); }
++    let na = l2norm(nextAuth);
++    if (na === 0) { for (const id of ids) nextAuth.set(id, 1 / N); } else { for (const id of ids) nextAuth.set(id, nextAuth.get(id) / na); }
++    // hub update: sum of (updated) authority scores of out-neighbors, then L2-normalize
++    const nextHub = new Map(ids.map((id) => [id, 0]));
++    for (const v of ids) { let h = 0; for (const w of out.get(v)) h += nextAuth.get(w); nextHub.set(v, h); }
++    let nh = l2norm(nextHub);
++    if (nh === 0) { for (const id of ids) nextHub.set(id, 1 / N); } else { for (const id of ids) nextHub.set(id, nextHub.get(id) / nh); }
++    let diff = 0;
++    for (const id of ids) diff += Math.abs(nextAuth.get(id) - auth.get(id)) + Math.abs(nextHub.get(id) - hub.get(id));
++    auth = nextAuth; hub = nextHub;
++    if (diff < tol) break;
++  }
++  for (const id of ids) { hubsOut[id] = hub.get(id); authOut[id] = auth.get(id); }
++  return { hubs: hubsOut, authorities: authOut };
++}
++
++/**
++ * Strongly connected components via iterative Tarjan (explicit work-stack of frames like
++ * articulationPointsAndBridges — NO recursion, so deep digraphs don't blow the call stack).
++ * Returns Map<id, sccId>; sccIds assigned 0..k-1 in the order SCCs are completed (popped).
++ */
++export function stronglyConnectedComponents(graph) {
++  const { ids, out } = directedAdj(graph);
++  const index = new Map();      // DFS discovery index
++  const low = new Map();        // lowlink
++  const onStack = new Set();    // membership of the Tarjan SCC stack
++  const sccStack = [];          // Tarjan SCC stack (nodes of the current open SCC)
++  const scc = new Map();        // id → sccId
++  let counter = 0;              // next DFS index
++  let sccId = 0;                // next SCC label
++
++  for (const root of ids) {
++    if (index.has(root)) continue;
++    const work = [{ u: root, idx: 0 }];     // explicit DFS frame stack
++    index.set(root, counter); low.set(root, counter); counter++;
++    sccStack.push(root); onStack.add(root);
++    while (work.length) {
++      const frame = work[work.length - 1];
++      const nbrs = out.get(frame.u);
++      if (frame.idx < nbrs.length) {
++        const w = nbrs[frame.idx++];
++        if (!index.has(w)) {                 // tree edge: descend
++          index.set(w, counter); low.set(w, counter); counter++;
++          sccStack.push(w); onStack.add(w);
++          work.push({ u: w, idx: 0 });
++        } else if (onStack.has(w)) {          // back/cross edge into the open stack
++          low.set(frame.u, Math.min(low.get(frame.u), index.get(w)));
++        }
++      } else {
++        work.pop();
++        // on the way up, fold this child's lowlink into its parent
++        if (work.length) { const p = work[work.length - 1].u; low.set(p, Math.min(low.get(p), low.get(frame.u))); }
++        if (low.get(frame.u) === index.get(frame.u)) {   // frame.u is an SCC root → pop the component
++          let x;
++          do { x = sccStack.pop(); onStack.delete(x); scc.set(x, sccId); } while (x !== frame.u);
++          sccId++;
++        }
++      }
++    }
++  }
++  return scc;
++}
++
++/** Normalize raw directed Brandes scores in place: /((N-1)(N-2)) — directed is NOT halved. */
++function normalizeDirectedBetweenness(cb, ids, N) {
++  const norm = N > 2 ? (N - 1) * (N - 2) : 0;
++  if (norm > 0) for (const id of ids) cb[id] /= norm;
++  return cb;
++}
++
++/** Directed betweenness centrality (Brandes on the out-adjacency), normalized to [0,1]. */
++export function directedBetweenness(graph) {
++  const { ids, out } = directedAdj(graph);
++  const cb = {};
++  for (const id of ids) cb[id] = 0;
++  for (const s of ids) brandesAccumulate(out, ids, s, cb);
++  return normalizeDirectedBetweenness(cb, ids, ids.length);
 +}
 +
 +/** One Brandes source pass: BFS from s + dependency back-accumulation into cb (mutates cb). */
@@ -5643,6 +5879,92 @@ index 00000000..e06db978
 +  }
 +  for (const id of ids) ev[id] = x.get(id);
 +  return ev;
++}
++
++/**
++ * Spectral node embeddings (Laplacian eigenmaps) over the undirected graph. Returns
++ * { id → number[] } where each vector has length = the effective embedding dimension.
++ *
++ * We embed via the top eigenvectors of the symmetric NORMALIZED adjacency
++ *   Â[v][w] = 1/√(deg(v)·deg(w))  for each undirected neighbour pair (deg = undirected
++ * degree from undirectedAdj; self-loops/dangling already dropped). Â is held implicitly as a
++ * matvec  y[v] = (1/√deg(v))·Σ_{w∈adj(v)} x[w]/√deg(w)  — an ISOLATED node (deg 0) has a
++ * zero row/col and so embeds to all-zeros. The eigenvectors of Â correspond to the smallest
++ * eigenvectors of the normalized Laplacian L = I − Â (same eigenvectors, flipped order), so
++ * its top non-trivial eigenvector is the Fiedler-like vector that separates clusters.
++ *
++ * Top K = k+1 eigenvectors are found by power iteration with Gram–Schmidt deflation (the
++ * single-vector form is `eigenvector`; here each vector subtracts its projection onto all
++ * previously-accepted vectors every iteration). Eigenvector #0 (≈ D^{1/2}·1, eigenvalue ~1,
++ * the trivial constant component) is DISCARDED; #1..#k form the coordinates. Effective k =
++ * clamp(dims, 2, min(32, N−1)) when N−1 ≥ 2, else max(0, N−1) (N=2 → length-1, N≤1 → empty).
++ * Never throws, never emits NaN/Infinity: a collapsed (zero-norm) deflated vector is re-seeded
++ * once and, failing that, left as a zero vector.
++ */
++export function spectralEmbedding(graph, { dims = 8, seed = 1, maxIter = 300, tol = 1e-9 } = {}) {
++  const { ids, adj } = undirectedAdj(graph);
++  const N = ids.length;
++  const out = {};
++  // Effective embedding dimension k (number of NON-trivial eigenvectors kept).
++  const k = N - 1 >= 2 ? Math.min(Math.max(dims, 2), Math.min(32, N - 1)) : Math.max(0, N - 1);
++  if (N === 0) return out;
++  if (k === 0) { for (const id of ids) out[id] = []; return out; }
++
++  // Precompute undirected degree and its inverse sqrt (0 for isolated nodes → zero row/col).
++  const idx = new Map(ids.map((id, i) => [id, i]));
++  const invSqrtDeg = ids.map((id) => { const d = adj.get(id).length; return d > 0 ? 1 / Math.sqrt(d) : 0; });
++  const nbrIdx = ids.map((id) => adj.get(id).map((w) => idx.get(w)));
++
++  // y = Â·x (index-space vectors): y[v] = invSqrtDeg[v]·Σ_{w∈adj(v)} x[w]·invSqrtDeg[w].
++  const matvec = (x) => {
++    const y = new Array(N).fill(0);
++    for (let v = 0; v < N; v++) {
++      const fv = invSqrtDeg[v];
++      if (fv === 0) continue;                 // isolated → zero row
++      let s = 0;
++      const nb = nbrIdx[v];
++      for (let j = 0; j < nb.length; j++) s += x[nb[j]] * invSqrtDeg[nb[j]];
++      y[v] = fv * s;
++    }
++    return y;
++  };
++  const l2 = (x) => { let s = 0; for (let i = 0; i < N; i++) s += x[i] * x[i]; return Math.sqrt(s); };
++  const seedVec = (s) => { const r = mulberry32(s); const x = new Array(N); for (let i = 0; i < N; i++) x[i] = r() - 0.5; return x; };
++
++  // Find K = k+1 eigenvectors by power iteration + Gram–Schmidt deflation; discard #0.
++  const K = k + 1;
++  const evecs = [];                            // accepted eigenvectors (index-space), in order
++  for (let j = 0; j < K; j++) {
++    let x = seedVec(seed + j);
++    let reseeded = false;
++    let accepted = null;
++    for (let iter = 0; iter < maxIter; iter++) {
++      let y = matvec(x);
++      // Deflate: subtract projection onto every previously-accepted eigenvector.
++      for (const e of evecs) { let dot = 0; for (let i = 0; i < N; i++) dot += y[i] * e[i]; for (let i = 0; i < N; i++) y[i] -= dot * e[i]; }
++      let norm = l2(y);
++      if (norm === 0) {
++        // Collapsed (e.g. fully deflated on a tiny/symmetric graph): re-seed once, else give up → zero vector.
++        if (!reseeded) { reseeded = true; x = seedVec(seed + j + 1013 * (j + 1)); continue; }
++        accepted = new Array(N).fill(0);
++        break;
++      }
++      let diff = 0;
++      for (let i = 0; i < N; i++) { const v = y[i] / norm; diff += Math.abs(v - x[i]); y[i] = v; }
++      x = y;
++      if (diff < tol) break;
++    }
++    evecs.push(accepted || x);
++  }
++
++  // Drop eigenvector #0 (trivial); coordinates are eigenvectors #1..#k.
++  for (const id of ids) {
++    const i = idx.get(id);
++    const vec = new Array(k);
++    for (let d = 0; d < k; d++) { const c = evecs[d + 1][i]; vec[d] = Number.isFinite(c) ? c : 0; }
++    out[id] = vec;
++  }
++  return out;
 +}
 +
 +/** Connected components (undirected). Returns Map<id, componentId>; ids assigned in node-iteration order. */
@@ -5955,7 +6277,7 @@ index 00000000..e06db978
 +  return { communities };
 +}
 +
-+export function computeMetrics(graph, { community = 'louvain', resolution = 1, seed = 1, skipSuperLinear = false, approx = null } = {}) {
++export function computeMetrics(graph, { community = 'louvain', resolution = 1, seed = 1, skipSuperLinear = false, approx = null, directed = false, hierarchy = false, embed = null, dims = 8 } = {}) {
 +  const ids = nodeIds(graph);
 +  const deg = degreeCentrality(graph);
 +  const pr = pageRank(graph);
@@ -5963,7 +6285,11 @@ index 00000000..e06db978
 +  const kz = katz(graph);
 +  const useApprox = skipSuperLinear && Number.isInteger(approx) && approx > 0;
 +  // Super-linear shortest-path centralities: full when not skipping; sampled when approx; else {}.
-+  const bt = skipSuperLinear ? (useApprox ? betweennessApprox(graph, { samples: approx, seed }) : {}) : betweenness(graph);
++  // Betweenness picks the DIRECTED Brandes variant only when directed AND not skipping (full pass);
++  // when skipping it follows the exact same approx/zero gating as the undirected case (no O(V·E)).
++  const bt = skipSuperLinear
++    ? (useApprox ? betweennessApprox(graph, { samples: approx, seed }) : {})
++    : (directed ? directedBetweenness(graph) : betweenness(graph));
 +  const cl = skipSuperLinear ? (useApprox ? closenessApprox(graph, { samples: approx, seed }) : {}) : closeness(graph);
 +  const hr = skipSuperLinear ? (useApprox ? harmonicApprox(graph, { samples: approx, seed }) : {}) : harmonic(graph);
 +  // k-core + clustering are NOT approximated — skipped whenever skipSuperLinear.
@@ -5971,6 +6297,20 @@ index 00000000..e06db978
 +  const { local: clustering, transitivity } = skipSuperLinear ? { local: {}, transitivity: 0 } : clusteringCoefficient(graph);
 +  const comp = connectedComponents(graph);
 +  const { articulation, bridges } = articulationPointsAndBridges(graph);
++
++  // ── OPT-IN directed metrics (near-linear — computed even when capped). ──
++  let inDeg = null, outDeg = null, hubScore = null, authScore = null, scc = null;
++  if (directed) {
++    ({ inDegree: inDeg, outDegree: outDeg } = inOutDegree(graph));
++    ({ hubs: hubScore, authorities: authScore } = hits(graph));
++    scc = stronglyConnectedComponents(graph);
++  }
++  // ── OPT-IN hierarchical community (multi-level Louvain). ──
++  let hier = null;
++  if (hierarchy) hier = louvainMultiLevel(graph, { seed, resolution });
++  // ── OPT-IN spectral embedding (super-linear → skipped when capped). ──
++  let embedding = null;
++  if (embed === 'spectral' && !skipSuperLinear) embedding = spectralEmbedding(graph, { dims, seed });
 +
 +  // Community method dispatch — Louvain default (byte-identical to before).
 +  let communities, modularity;
@@ -5984,35 +6324,53 @@ index 00000000..e06db978
 +    ({ communities, modularity } = louvain(graph, { seed, resolution }));
 +  }
 +
-+  const nodes = ids.map((id) => ({
-+    id,
-+    degree: deg[id] ?? 0,
-+    pagerank: pr[id] ?? 0,
-+    betweenness: bt[id] ?? 0,
-+    eigenvector: ev[id] ?? 0,
-+    closeness: cl[id] ?? 0,
-+    katz: kz[id] ?? 0,
-+    harmonic: hr[id] ?? 0,
-+    coreness: core.get(id) ?? 0,
-+    clustering: clustering[id] ?? 0,
-+    articulation: articulation.has(id),
-+    componentId: comp.get(id) ?? 0,
-+    community: communities[id] ?? 0,
-+  }));
++  const nodes = ids.map((id) => {
++    const node = {
++      id,
++      degree: deg[id] ?? 0,
++      pagerank: pr[id] ?? 0,
++      betweenness: bt[id] ?? 0,
++      eigenvector: ev[id] ?? 0,
++      closeness: cl[id] ?? 0,
++      katz: kz[id] ?? 0,
++      harmonic: hr[id] ?? 0,
++      coreness: core.get(id) ?? 0,
++      clustering: clustering[id] ?? 0,
++      articulation: articulation.has(id),
++      componentId: comp.get(id) ?? 0,
++      community: communities[id] ?? 0,
++    };
++    // Additive opt-in fields — present ONLY when their feature was requested.
++    if (directed) {
++      node.inDegree = inDeg[id] ?? 0;
++      node.outDegree = outDeg[id] ?? 0;
++      node.hubs = hubScore[id] ?? 0;
++      node.authorities = authScore[id] ?? 0;
++      node.sccId = scc.get(id) ?? 0;
++    }
++    if (hier) node.communityPath = hier.levels.map((l) => l.communities[id] ?? 0);
++    if (embedding) node.embedding = embedding[id] ?? [];
++    return node;
++  });
 +  const idSet = new Set(ids);
-+  return {
-+    nodes,
-+    bridges: bridges.map(([source, target]) => ({ source, target })),
-+    summary: {
-+      nodeCount: ids.length,
-+      edgeCount: cleanEdges(graph, idSet).length,
-+      communityCount: new Set(Object.values(communities)).size,
-+      modularity,
-+      density: density(graph),
-+      componentCount: new Set(comp.values()).size,
-+      transitivity,
-+    },
++  const summary = {
++    nodeCount: ids.length,
++    edgeCount: cleanEdges(graph, idSet).length,
++    communityCount: new Set(Object.values(communities)).size,
++    modularity,
++    density: density(graph),
++    componentCount: new Set(comp.values()).size,
++    transitivity,
++    directed: !!directed,
 +  };
++  if (directed) summary.stronglyConnectedComponentCount = new Set(scc.values()).size;
++  if (embedding) {
++    const first = nodes.find((n) => Array.isArray(n.embedding));
++    summary.embedding = { method: 'spectral', dims: first ? first.embedding.length : 0 };
++  }
++  const out = { nodes, bridges: bridges.map(([source, target]) => ({ source, target })), summary };
++  if (hier) out.hierarchy = { levelCount: hier.levels.length, levels: hier.levels.map((l) => ({ modularity: l.modularity, communityCount: l.communityCount })), method: 'louvain' };
++  return out;
 +}
 +
 +/**
@@ -6026,6 +6384,9 @@ index 00000000..e06db978
 +export function computeMetricsCapped(graph, { cap = 2000, approx = null, ...opts } = {}) {
 +  const skip = nodeIds(graph).length > cap;
 +  const useApprox = skip && Number.isInteger(approx) && approx > 0;
++  // directed/hierarchy/embed/dims flow through via ...opts. Directed/hierarchy are near-linear
++  // and still compute when capped; spectral embedding is super-linear so computeMetrics skips it
++  // under skipSuperLinear — we surface that omission below.
 +  const r = computeMetrics(graph, { ...opts, skipSuperLinear: skip, approx: useApprox ? approx : null });
 +  r.summary.capped = skip;
 +  r.summary.approximate = useApprox;
@@ -6033,6 +6394,8 @@ index 00000000..e06db978
 +  r.summary.omittedMetrics = !skip ? []
 +    : useApprox ? ['coreness', 'clustering']
 +    : ['betweenness', 'closeness', 'harmonic', 'coreness', 'clustering'];
++  // When capped, the requested spectral embedding was skipped — report it (additive).
++  if (skip && opts.embed === 'spectral') r.summary.omittedMetrics.push('embedding');
 +  return r;
 +}
 +
@@ -6057,19 +6420,27 @@ index 00000000..e06db978
 +}
 diff --git a/docker-server-graph-theory.mjs b/docker-server-graph-theory.mjs
 new file mode 100644
-index 00000000..78ce0c86
+index 00000000..168127f8
 --- /dev/null
 +++ b/docker-server-graph-theory.mjs
-@@ -0,0 +1,130 @@
+@@ -0,0 +1,144 @@
 +/**
 + * Graph-theory metrics routes (web container).
-+ *   GET /graph/metrics/:name[?community=&resolution=]            → sidecar graph metrics
-+ *   GET /graph/metrics/lens/:lensId?repo=<repo>[&community=&resolution=]  → code-graph (ASTKG) metrics via a lens
++ *   GET /graph/metrics/:name            → sidecar graph metrics
++ *   GET /graph/metrics/lens/:lensId?repo=<repo>  → code-graph (ASTKG) metrics via a lens
++ * Shared query params: ?community=louvain|leiden|labelprop &resolution= &cap= &approx=
++ *   and P2.3 opt-ins: &directed=1 (in/out degree, HITS hubs/authorities, sccId, directed
++ *   betweenness) &hierarchy=1 (multi-level Louvain) &embed=spectral&dims=<k> (Laplacian eigenmaps).
 + * Both → computeMetricsCapped (pure-JS engine). Response:
 + *   { nodes:[{id,degree,pagerank,betweenness,eigenvector,closeness,katz,harmonic,
-+ *             coreness,clustering,articulation,componentId,community}],
++ *             coreness,clustering,articulation,componentId,community
++ *             [,inDegree,outDegree,hubs,authorities,sccId]    // when ?directed=1
++ *             [,communityPath]                                 // when ?hierarchy=1
++ *             [,embedding]]},                                  // when ?embed=spectral
 + *     bridges:[{source,target}],
-+ *     summary:{nodeCount,edgeCount,communityCount,modularity,density,componentCount,transitivity,capped,omittedMetrics} }
++ *     [hierarchy:{levelCount,levels:[{modularity,communityCount}],method}],   // when ?hierarchy=1
++ *     summary:{nodeCount,edgeCount,communityCount,modularity,density,componentCount,transitivity,
++ *              capped,omittedMetrics,directed[,stronglyConnectedComponentCount][,embedding]} }
 + */
 +import { sidecarRender } from './docker-server-graph-templates-core.mjs';
 +import { computeMetricsCapped } from './docker-server-graph-theory-core.mjs';
@@ -6103,8 +6474,8 @@ index 00000000..78ce0c86
 +}
 +
 +const metricsCache = makeMetricsCache();
-+function metricsCacheKey(kind, idOrName, lensId, params) {
-+  return `${kind}|${idOrName}|${lensId || ''}|${params.community}|${params.resolution}|${params.cap}|${params.approx ?? ''}`;
++export function metricsCacheKey(kind, idOrName, lensId, params) {
++  return `${kind}|${idOrName}|${lensId || ''}|${params.community}|${params.resolution}|${params.cap}|${params.approx ?? ''}|${params.directed ? 1 : 0}|${params.hierarchy ? 1 : 0}|${params.embed ?? ''}|${params.dims}`;
 +}
 +
 +/** Parse a positive-integer query param. Returns `def` when absent/empty; throws on ≤0/non-int; clamps to clampMax. */
@@ -6128,7 +6499,13 @@ index 00000000..78ce0c86
 +  }
 +  const cap = parsePosInt(searchParams, 'cap', { def: 2000, clampMax: CAP_MAX });
 +  const approx = parsePosInt(searchParams, 'approx', { def: null });
-+  return { community, resolution, cap, approx };
++  const directed = ['1', 'true'].includes((searchParams.get('directed') || '').toLowerCase());
++  const hierarchy = ['1', 'true'].includes((searchParams.get('hierarchy') || '').toLowerCase());
++  const embedRaw = searchParams.get('embed');
++  if (embedRaw != null && embedRaw !== '' && embedRaw !== 'spectral') throw new Error(`unknown embed "${embedRaw}" (use spectral)`);
++  const embed = embedRaw === 'spectral' ? 'spectral' : null;
++  const dims = parsePosInt(searchParams, 'dims', { def: 8, clampMax: 64 });
++  return { community, resolution, cap, approx, directed, hierarchy, embed, dims };
 +}
 +
 +/** Pure: project an /api/graph JSON via a lens, then compute capped metrics. Throws on unknown lens.
