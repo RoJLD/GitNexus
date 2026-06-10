@@ -46,4 +46,22 @@ describe('diffGraphs', () => {
     const d = diffGraphs({ nodes: [], edges: [] }, { nodes: [], edges: [] });
     expect(d.summary.drift).toBe(0);
   });
+  it('detects edge weight deltas as changed edges', () => {
+    const a = { nodes: [{ id: 'x' }, { id: 'y' }], edges: [{ id: 'x->k->y', source: 'x', target: 'y', kind: 'k', weight: 0.3 }] };
+    const b = { nodes: [{ id: 'x' }, { id: 'y' }], edges: [{ id: 'x->k->y', source: 'x', target: 'y', kind: 'k', weight: 0.5 }] };
+    const d = diffGraphs(a, b);
+    expect(d.edges.added).toEqual([]);
+    expect(d.edges.removed).toEqual([]);
+    expect(d.edges.commonCount).toBe(1);
+    expect(d.edges.changed).toEqual([{ key: 'x->k->y', from: { weight: 0.3 }, to: { weight: 0.5 } }]);
+    expect(d.summary.changedEdges).toBe(1);
+    expect(d.summary.drift).toBe(1);
+  });
+  it('no weight change → no changed edges', () => {
+    const g = { nodes: [{ id: 'x' }, { id: 'y' }], edges: [{ id: 'e', source: 'x', target: 'y', weight: 1 }] };
+    const d = diffGraphs(g, g);
+    expect(d.edges.changed).toEqual([]);
+    expect(d.summary.changedEdges).toBe(0);
+    expect(d.summary.drift).toBe(0);
+  });
 });

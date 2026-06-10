@@ -5153,10 +5153,10 @@ index 00000000..4bf2da66
 +}
 diff --git a/docker-server-graph-templates-core.mjs b/docker-server-graph-templates-core.mjs
 new file mode 100644
-index 00000000..3ad9afdb
+index 00000000..9e8be7bd
 --- /dev/null
 +++ b/docker-server-graph-templates-core.mjs
-@@ -0,0 +1,290 @@
+@@ -0,0 +1,303 @@
 +/**
 + * Graph-templates engine (web container, pure Node — no Kùzu).
 + * Registry + built-in descriptors + index store + Kùzu sidecar client. Graphs
@@ -5406,18 +5406,31 @@ index 00000000..3ad9afdb
 +  const edgeKey = (e) => (e.id != null ? String(e.id) : `${e.source} ${e.kind ?? ''} ${e.target}`);
 +  const aKeys = new Set(aEdges.map(edgeKey));
 +  const bKeys = new Set(bEdges.map(edgeKey));
++  const aEdgeByKey = new Map();
++  for (const e of aEdges) { const k = edgeKey(e); if (!aEdgeByKey.has(k)) aEdgeByKey.set(k, e); }
++  const bEdgeByKey = new Map();
++  for (const e of bEdges) { const k = edgeKey(e); if (!bEdgeByKey.has(k)) bEdgeByKey.set(k, e); }
 +
 +  const edgeAdded = [...bKeys].filter((k) => !aKeys.has(k)).sort();
 +  const edgeRemoved = [...aKeys].filter((k) => !bKeys.has(k)).sort();
 +  const edgeCommonCount = [...aKeys].filter((k) => bKeys.has(k)).length;
 +
++  const edgeChanged = [];
++  for (const k of [...aEdgeByKey.keys()].filter((k) => bEdgeByKey.has(k)).sort()) {
++    const aEdge = aEdgeByKey.get(k);
++    const bEdge = bEdgeByKey.get(k);
++    if (aEdge.weight !== bEdge.weight) {
++      edgeChanged.push({ key: k, from: { weight: aEdge.weight ?? null }, to: { weight: bEdge.weight ?? null } });
++    }
++  }
++
 +  return {
 +    nodes: { added, removed, changed, commonCount: commonIds.length },
-+    edges: { added: edgeAdded, removed: edgeRemoved, commonCount: edgeCommonCount },
++    edges: { added: edgeAdded, removed: edgeRemoved, changed: edgeChanged, commonCount: edgeCommonCount },
 +    summary: {
 +      addedNodes: added.length, removedNodes: removed.length, changedNodes: changed.length,
-+      addedEdges: edgeAdded.length, removedEdges: edgeRemoved.length,
-+      drift: added.length + removed.length + changed.length + edgeAdded.length + edgeRemoved.length,
++      addedEdges: edgeAdded.length, removedEdges: edgeRemoved.length, changedEdges: edgeChanged.length,
++      drift: added.length + removed.length + changed.length + edgeAdded.length + edgeRemoved.length + edgeChanged.length,
 +      aNodeCount: aById.size, bNodeCount: bById.size,
 +      aEdgeCount: aKeys.size, bEdgeCount: bKeys.size,
 +    },

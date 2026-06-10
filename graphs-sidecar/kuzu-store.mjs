@@ -5,6 +5,7 @@
  */
 import kuzuPkg from 'kuzu';
 import { join } from 'node:path';
+import { mapRenderRows } from './render-map.mjs';
 
 const kuzu = kuzuPkg.default || kuzuPkg;
 export const GRAPHS_DIR = process.env.GRAPHS_DIR || '/data/gitnexus/graphs';
@@ -89,18 +90,6 @@ export async function cypher(name, query, params = {}) {
 export async function render(name) {
   // label(n)/label(r) instead of n._label: kuzu 0.11.3 does not expose _label on returned rows.
   const nrows = await cypher(name, 'MATCH (n) RETURN n, label(n) AS lbl');
-  const nodes = nrows.map(({ n, lbl }) => ({
-    id: n.id,
-    type: n.type ?? lbl ?? '',
-    label: n.label ?? n.title ?? n.name ?? String(n.id),
-    path: n.path ?? '',
-    stage: n.stage ?? '',
-  }));
   const erows = await cypher(name, 'MATCH (a)-[r]->(b) RETURN a.id AS source, b.id AS target, r, label(r) AS lbl');
-  const edges = erows.map(({ source, target, r, lbl }) => ({
-    source, target,
-    kind: r.kind ?? lbl ?? '',
-    id: r.id ?? `${source}->${target}`,
-  }));
-  return { nodes, edges };
+  return mapRenderRows(nrows, erows);
 }
