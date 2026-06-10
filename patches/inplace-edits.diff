@@ -1918,7 +1918,7 @@ index 211bb65c..49a1c7ae 100644
      "@vitejs/plugin-react": "^5.1.4",
      "@vitest/coverage-v8": "^4.1.5",
 diff --git a/gitnexus-web/src/App.tsx b/gitnexus-web/src/App.tsx
-index 2ee3569a..2dde773a 100644
+index 2ee3569a..152d0517 100644
 --- a/gitnexus-web/src/App.tsx
 +++ b/gitnexus-web/src/App.tsx
 @@ -1,11 +1,27 @@
@@ -1999,7 +1999,29 @@ index 2ee3569a..2dde773a 100644
  
    const handleServerConnect = useCallback(
      async (result: ConnectResult): Promise<void> => {
-@@ -187,6 +224,26 @@ const AppContent = () => {
+@@ -104,6 +141,21 @@ const AppContent = () => {
+ 
+   // Auto-connect when ?server or ?project query param is present (bookmarkable shortcut)
+   const autoConnectRan = useRef(false);
++
++  // ?research=<name> / ?lens=<id>&repo=<repo> are self-contained graph views rendered
++  // same-origin by GraphCanvas — they don't need a code-repo connect. Bootstrap the
++  // exploring shell directly so GraphCanvas mounts; without this they land on the
++  // onboarding picker (autoConnect below only fires for ?server/?project). This also
++  // fixes handleNewGraph's `window.location.search = '?research='` reload.
++  useEffect(() => {
++    if (autoConnectRan.current) return;
++    const params = new URLSearchParams(window.location.search);
++    if (params.get('research') || params.get('lens')) {
++      autoConnectRan.current = true;
++      setViewMode('exploring');
++    }
++  }, [setViewMode]);
++
+   useEffect(() => {
+     if (autoConnectRan.current) return;
+     const params = new URLSearchParams(window.location.search);
+@@ -187,6 +239,26 @@ const AppContent = () => {
      graphCanvasRef.current?.focusNode(nodeId);
    }, []);
  
@@ -2026,7 +2048,7 @@ index 2ee3569a..2dde773a 100644
    // Handle settings saved - refresh and reinitialize agent
    // NOTE: Must be defined BEFORE any conditional returns (React hooks rule)
    const handleSettingsSaved = useCallback(() => {
-@@ -194,6 +251,21 @@ const AppContent = () => {
+@@ -194,6 +266,21 @@ const AppContent = () => {
      initializeAgent();
    }, [refreshLLMSettings, initializeAgent]);
  
@@ -2048,7 +2070,7 @@ index 2ee3569a..2dde773a 100644
    // ── Server heartbeat: detect when server goes down while exploring ────────
    // Uses SSE (EventSource) for instant detection — no polling delay.
    // On disconnect: show a reconnecting banner instead of resetting to onboarding.
-@@ -250,22 +322,84 @@ const AppContent = () => {
+@@ -250,22 +337,84 @@ const AppContent = () => {
            // Retry once after 1s if the repo isn't found yet (server may still
            // be reinitializing after the worker completed).
            const url = serverBaseUrl ?? 'http://localhost:4747';
@@ -2134,7 +2156,7 @@ index 2ee3569a..2dde773a 100644
                fetchRepos()
                  .then((repos) => setAvailableRepos(repos))
                  .catch(() => {});
-@@ -281,7 +415,129 @@ const AppContent = () => {
+@@ -281,7 +430,129 @@ const AppContent = () => {
  
          {/* Graph area - takes remaining space */}
          <div className="relative min-w-0 flex-1">
@@ -2265,7 +2287,7 @@ index 2ee3569a..2dde773a 100644
  
            {/* Code References Panel (overlay) - does NOT resize the graph, it overlaps on top */}
            {isCodePanelOpen && (codeReferences.length > 0 || !!selectedNode) && (
-@@ -289,12 +545,27 @@ const AppContent = () => {
+@@ -289,12 +560,27 @@ const AppContent = () => {
                <CodeReferencesPanel onFocusNode={handleFocusNode} />
              </div>
            )}
@@ -2293,7 +2315,7 @@ index 2ee3569a..2dde773a 100644
        <StatusBar />
  
        {serverDisconnected && (
-@@ -309,6 +580,38 @@ const AppContent = () => {
+@@ -309,6 +595,38 @@ const AppContent = () => {
          onClose={() => setSettingsPanelOpen(false)}
          onSettingsSaved={handleSettingsSaved}
        />
