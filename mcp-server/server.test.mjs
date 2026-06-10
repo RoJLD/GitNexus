@@ -175,6 +175,25 @@ describe('mcp-server/server.mjs — Task 11.13 smoke', () => {
     assert.ok(/spectral embedding/i.test(src), 'description should mention spectral embeddings');
   });
 
+  // ── structural observability (?observability=1) param ────────────
+  it('graph-metrics tools offer an observability boolean in BOTH inputSchemas', () => {
+    const count = (s) => src.split(s).length - 1;
+    assert.ok(/observability: \{ type: 'boolean'/.test(src), 'schema must offer an observability boolean');
+    assert.equal(count("observability: { type: 'boolean'"), 2, 'both tools must declare the observability param');
+  });
+  it('graph-metrics + lens handlers forward observability → params.observability = 1', () => {
+    const count = (s) => src.split(s).length - 1;
+    assert.ok(src.includes('if (observability) params.observability = 1;'), 'handlers must forward observability');
+    assert.equal(count('if (observability) params.observability = 1;'), 2, 'both tools must forward observability');
+  });
+  it('graph-metrics tool descriptions mention structural observability + dead-weight', () => {
+    const count = (s) => src.split(s).length - 1;
+    assert.ok(/structural observability/i.test(src), 'description should mention structural observability');
+    assert.ok(/dead-weight/i.test(src), 'description should mention dead-weight detection');
+    // The per-description clause is shared verbatim by BOTH tool descriptions.
+    assert.equal(count('optional structural observability (?observability=1)'), 2, 'both tool descriptions must carry the observability clause');
+  });
+
   it('query_meta_graph inputSchema enumerates valid layer values', () => {
     assert.ok(src.includes("'lineage'"), "layer enum must include 'lineage'");
     assert.ok(src.includes("'manifestation'"), "layer enum must include 'manifestation'");

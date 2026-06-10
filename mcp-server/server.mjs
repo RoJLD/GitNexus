@@ -571,7 +571,7 @@ const TOOLS = [
   },
   {
     name: 'gitnexus_graph_metrics',
-    description: 'Graph-theory metrics for a sidecar graph by name. Per-node: degree, PageRank, betweenness, eigenvector, closeness, Katz, harmonic centrality, k-core (coreness), clustering coefficient, articulation-point flag, component id, community. Plus top-level bridges and a summary (density, components, transitivity, modularity). Community method selectable: Louvain (default, resolution-tunable), Leiden, or label propagation. OPTIONAL add-ons (all off by default, additive): `directed` adds directed metrics (in/out degree, HITS hubs/authorities, strongly-connected-component id + directed betweenness); `hierarchy` adds a multi-level community hierarchy (per-node communityPath + a hierarchy summary); `embed=spectral` adds per-node spectral embeddings (Laplacian eigenmaps, `dims` coordinates).',
+    description: 'Graph-theory metrics for a sidecar graph by name. Per-node: degree, PageRank, betweenness, eigenvector, closeness, Katz, harmonic centrality, k-core (coreness), clustering coefficient, articulation-point flag, component id, community. Plus top-level bridges and a summary (density, components, transitivity, modularity). Community method selectable: Louvain (default, resolution-tunable), Leiden, or label propagation. OPTIONAL add-ons (all off by default, additive): `directed` adds directed metrics (in/out degree, HITS hubs/authorities, strongly-connected-component id + directed betweenness); `hierarchy` adds a multi-level community hierarchy (per-node communityPath + a hierarchy summary); `embed=spectral` adds per-node spectral embeddings (Laplacian eigenmaps, `dims` coordinates). Plus optional structural observability (?observability=1): dead-weight detection (nodes with no path to an output) + reachability.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -582,11 +582,12 @@ const TOOLS = [
         hierarchy: { type: 'boolean', description: 'Add a multi-level community hierarchy (per-node communityPath + hierarchy summary).' },
         embed: { type: 'string', enum: ['spectral'], description: 'Add per-node spectral embeddings (Laplacian eigenmaps).' },
         dims: { type: 'number', description: 'Embedding dimensionality when embed=spectral (default 8, clamped).' },
+        observability: { type: 'boolean', description: 'Add structural observability: per-node reachesOutput/reachableFromInput/deadWeight + dead-weight count in summary (implies directed).' },
       },
       required: ['name'],
       additionalProperties: false,
     },
-    handler: ({ name, community, resolution, directed, hierarchy, embed, dims }) => {
+    handler: ({ name, community, resolution, directed, hierarchy, embed, dims, observability }) => {
       const params = {};
       if (community) params.community = community;
       if (resolution !== undefined) params.resolution = resolution;
@@ -594,12 +595,13 @@ const TOOLS = [
       if (hierarchy) params.hierarchy = 1;
       if (embed) params.embed = embed;
       if (dims !== undefined) params.dims = dims;
+      if (observability) params.observability = 1;
       return callWeb(`/graph/metrics/${encodeURIComponent(name)}`, params);
     },
   },
   {
     name: 'gitnexus_graph_lens_metrics',
-    description: 'Graph-theory metrics over a CODE-graph lens projection of a repo. Available lenses: imports-deps (file-level import dependency graph), file-graph (file-level over ALL relationship types — imports + calls + extends + …), and symbol-graph (the raw symbol-level graph — functions/classes/files — no collapse). Same metric set as gitnexus_graph_metrics — surfaces central hub nodes, articulation points (fragile single-points-of-failure), and communities (= modules). Community method selectable (louvain/leiden/labelprop). Large projections are node-capped: above `cap` nodes the super-linear metrics are skipped (summary.capped), OR — with `approx=<N>` — estimated by sampling N source nodes (summary.approximate/sampleSize) instead of zeroed. OPTIONAL add-ons (all off by default, additive): `directed` adds directed metrics (in/out degree, HITS hubs/authorities, strongly-connected-component id + directed betweenness); `hierarchy` adds a multi-level community hierarchy (per-node communityPath + hierarchy summary); `embed=spectral` adds per-node spectral embeddings (Laplacian eigenmaps, `dims` coordinates; skipped + reported when the graph is capped).',
+    description: 'Graph-theory metrics over a CODE-graph lens projection of a repo. Available lenses: imports-deps (file-level import dependency graph), file-graph (file-level over ALL relationship types — imports + calls + extends + …), and symbol-graph (the raw symbol-level graph — functions/classes/files — no collapse). Same metric set as gitnexus_graph_metrics — surfaces central hub nodes, articulation points (fragile single-points-of-failure), and communities (= modules). Community method selectable (louvain/leiden/labelprop). Large projections are node-capped: above `cap` nodes the super-linear metrics are skipped (summary.capped), OR — with `approx=<N>` — estimated by sampling N source nodes (summary.approximate/sampleSize) instead of zeroed. OPTIONAL add-ons (all off by default, additive): `directed` adds directed metrics (in/out degree, HITS hubs/authorities, strongly-connected-component id + directed betweenness); `hierarchy` adds a multi-level community hierarchy (per-node communityPath + hierarchy summary); `embed=spectral` adds per-node spectral embeddings (Laplacian eigenmaps, `dims` coordinates; skipped + reported when the graph is capped). Plus optional structural observability (?observability=1): dead-weight detection (nodes with no path to an output) + reachability.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -613,11 +615,12 @@ const TOOLS = [
         hierarchy: { type: 'boolean', description: 'Add a multi-level community hierarchy (per-node communityPath + hierarchy summary).' },
         embed: { type: 'string', enum: ['spectral'], description: 'Add per-node spectral embeddings (Laplacian eigenmaps); skipped + reported when capped.' },
         dims: { type: 'number', description: 'Embedding dimensionality when embed=spectral (default 8, clamped).' },
+        observability: { type: 'boolean', description: 'Add structural observability: per-node reachesOutput/reachableFromInput/deadWeight + dead-weight count in summary (implies directed).' },
       },
       required: ['lensId', 'repo'],
       additionalProperties: false,
     },
-    handler: ({ lensId, repo, community, resolution, cap, approx, directed, hierarchy, embed, dims }) => {
+    handler: ({ lensId, repo, community, resolution, cap, approx, directed, hierarchy, embed, dims, observability }) => {
       const params = { repo };
       if (community) params.community = community;
       if (resolution !== undefined) params.resolution = resolution;
@@ -627,6 +630,7 @@ const TOOLS = [
       if (hierarchy) params.hierarchy = 1;
       if (embed) params.embed = embed;
       if (dims !== undefined) params.dims = dims;
+      if (observability) params.observability = 1;
       return callWeb(`/graph/metrics/lens/${encodeURIComponent(lensId)}`, params);
     },
   },

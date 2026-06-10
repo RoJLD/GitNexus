@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { degreeCentrality, pageRank, louvain, louvainMultiLevel, computeMetrics, computeMetricsCapped, betweenness, eigenvector, connectedComponents, density, articulationPointsAndBridges, kCore, clusteringCoefficient, closeness, harmonic, katz, labelPropagation, leiden, betweennessApprox, closenessApprox, harmonicApprox } from '../../upstream/docker-server-graph-theory-core.mjs';
 import { directedAdj, inOutDegree, hits, stronglyConnectedComponents, directedBetweenness } from '../../upstream/docker-server-graph-theory-core.mjs';
+import { reachability, staticObservability } from '../../upstream/docker-server-graph-theory-core.mjs';
 
 const STAR = { nodes: [{ id: 'h' }, { id: 'a' }, { id: 'b' }, { id: 'c' }],
                edges: [{ source: 'h', target: 'a' }, { source: 'h', target: 'b' }, { source: 'h', target: 'c' }] };
@@ -667,5 +668,82 @@ describe('computeMetrics — P2.3 additivity + opts', () => {
     expect(r.summary.directed).toBe(true);
     expect(r.hierarchy.method).toBe('louvain');
     expect(r.summary.embedding).toEqual({ method: 'spectral', dims: 2 });
+  });
+});
+
+describe('reachability', () => {
+  it('marks nodes that can reach an output and that are reachable from an input', () => {
+    const g = { nodes: ['a','b','c'].map((id) => ({ id })),
+      edges: [{ source: 'a', target: 'b' }, { source: 'b', target: 'c' }] };
+    const { reachesOutput, reachableFromInput } = reachability(g, { outputs: new Set(['c']), inputs: new Set(['a']) });
+    expect(reachesOutput.a).toBe(true); expect(reachesOutput.b).toBe(true); expect(reachesOutput.c).toBe(true);
+    expect(reachableFromInput.c).toBe(true); expect(reachableFromInput.a).toBe(true);
+  });
+  it('a node with no path to any output is not reachesOutput', () => {
+    const g = { nodes: ['a','c','d'].map((id) => ({ id })),
+      edges: [{ source: 'a', target: 'c' }, { source: 'd', target: 'd' }] };
+    const { reachesOutput } = reachability(g, { outputs: new Set(['c']), inputs: new Set(['a']) });
+    expect(reachesOutput.a).toBe(true);
+    expect(reachesOutput.d).toBe(false);
+  });
+});
+
+describe('staticObservability', () => {
+  it('on an HMM-shaped graph (states emit to observation sinks), all states reach an output', () => {
+    const g = { nodes: ['s0','s1','obs'].map((id) => ({ id })),
+      edges: [{ source: 's0', target: 's1' }, { source: 's1', target: 's0' }, { source: 's0', target: 'obs' }, { source: 's1', target: 'obs' }] };
+    const o = staticObservability(g);
+    expect(o.outputs.has('obs')).toBe(true);
+    expect(o.outputCount).toBe(1);
+    expect(o.reachesOutput.s0).toBe(true);
+    expect(o.reachesOutput.s1).toBe(true);
+    expect(o.deadWeight.s0).toBe(false);
+    expect(Object.values(o.deadWeight).filter(Boolean).length).toBe(0);
+  });
+  it('flags a pruned node (no path to any output) as a dead-weight', () => {
+    const g = { nodes: ['s0','obs','p','q'].map((id) => ({ id })),
+      edges: [{ source: 's0', target: 'obs' }, { source: 'q', target: 'p' }, { source: 'p', target: 'q' }] };
+    const o = staticObservability(g);
+    expect(o.deadWeight.p).toBe(true);
+    expect(o.deadWeight.q).toBe(true);
+    expect(o.deadWeight.s0).toBe(false);
+  });
+  it('edgeless graph → all dead + degenerate flags', () => {
+    const o = staticObservability({ nodes: [{ id: 'x' }, { id: 'y' }], edges: [] });
+    expect(o.outputCount).toBe(0);
+    expect(o.degenerateOutputs).toBe(true);
+    expect(o.deadWeight.x).toBe(true);
+  });
+  it('single pure cycle (no sinks) → outputCount 0 + degenerate, no throw', () => {
+    const o = staticObservability({ nodes: ['a','b'].map((id) => ({ id })),
+      edges: [{ source: 'a', target: 'b' }, { source: 'b', target: 'a' }] });
+    expect(o.outputCount).toBe(0);
+    expect(o.degenerateOutputs).toBe(true);
+  });
+});
+
+describe('computeMetrics — observability', () => {
+  const HMM = { nodes: ['s0','s1','obs'].map((id) => ({ id })),
+    edges: [{ source: 's0', target: 's1' }, { source: 's1', target: 's0' }, { source: 's0', target: 'obs' }, { source: 's1', target: 'obs' }] };
+  it('off by default: no observability fields, additive', () => {
+    const r = computeMetrics(HMM, {});
+    expect(r.nodes[0].deadWeight).toBeUndefined();
+    expect(r.summary.deadWeightCount).toBeUndefined();
+  });
+  it('on: adds reachesOutput/deadWeight + summary counts and implies directed', () => {
+    const r = computeMetrics(HMM, { observability: true });
+    const obs = r.nodes.find((n) => n.id === 'obs');
+    expect(typeof obs.reachesOutput).toBe('boolean');
+    expect(r.nodes.find((n) => n.id === 's0').deadWeight).toBe(false);
+    expect(r.summary.deadWeightCount).toBe(0);
+    expect(r.summary.outputCount).toBe(1);
+    expect(r.summary.directed).toBe(true);             // implied
+    expect(typeof r.nodes[0].sccId).toBe('number');    // directed fields present
+  });
+  it('capped graph still computes observability (near-linear)', () => {
+    const r = computeMetricsCapped(HMM, { observability: true, cap: 1 });
+    expect(r.summary.capped).toBe(true);
+    expect(r.summary.deadWeightCount).toBe(0);
+    expect(r.nodes[0].deadWeight).toBeDefined();
   });
 });

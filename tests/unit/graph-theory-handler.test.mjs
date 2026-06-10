@@ -44,3 +44,9 @@ describe('parseMetricsParams — P2.3 params', () => {
   it('rejects an unknown embed method', () => { expect(() => P('embed=node2vec')).toThrow(/embed/); });
   it('rejects a non-positive dims', () => { expect(() => P('dims=0')).toThrow(/dims/); });
 });
+
+describe('parseMetricsParams — observability', () => {
+  const P = (q) => parseMetricsParams(new URL('http://x/g?' + q).searchParams);
+  it('defaults off', () => { expect(P('').observability).toBe(false); });
+  it('parses observability=1', () => { expect(P('observability=1').observability).toBe(true); });
+});

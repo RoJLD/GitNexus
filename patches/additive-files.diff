@@ -5288,10 +5288,10 @@ index 00000000..7c9f5525
 +}
 diff --git a/docker-server-graph-theory-core.mjs b/docker-server-graph-theory-core.mjs
 new file mode 100644
-index 00000000..163e39d2
+index 00000000..337d34f3
 --- /dev/null
 +++ b/docker-server-graph-theory-core.mjs
-@@ -0,0 +1,1016 @@
+@@ -0,0 +1,1101 @@
 +/**
 + * Graph-theory engine — pure JS, ZERO deps (matches every docker-server-*.mjs;
 + * graphology is a frontend-only dep). Operates on the universal render shape
@@ -5671,6 +5671,74 @@ index 00000000..163e39d2
 +    }
 +  }
 +  return scc;
++}
++
++/**
++ * Directed reachability to terminals. `outputs`/`inputs` are id Sets (arrays accepted —
++ * normalized via new Set(...)); terminal ids not present in the graph are ignored.
++ *   reachesOutput[v] : v has a forward directed path (following OUT-edges) to SOME output.
++ *     Computed by ONE multi-source BFS over the REVERSED adjacency (walk `in`-edges) seeded
++ *     with ALL outputs at once — every node reached backward from an output forward-reaches it.
++ *   reachableFromInput[v] : v is reached by a forward BFS (OUT-edges) seeded with all inputs.
++ * Every graph id is present in both maps (default false). Empty graph → empty maps, no throw.
++ */
++export function reachability(graph, { outputs, inputs } = {}) {
++  const { ids, out, in: inn } = directedAdj(graph);
++  const idSet = new Set(ids);
++  const outSet = new Set(outputs || []);
++  const inSet = new Set(inputs || []);
++  // Multi-source BFS: seed with every terminal that is an actual node id, walk `adj`.
++  const multiBfs = (seeds, adj) => {
++    const reached = {};
++    for (const id of ids) reached[id] = false;
++    const queue = [];
++    for (const s of seeds) { if (idSet.has(s) && !reached[s]) { reached[s] = true; queue.push(s); } }
++    while (queue.length) {
++      const v = queue.shift();
++      for (const w of adj.get(v)) { if (!reached[w]) { reached[w] = true; queue.push(w); } }
++    }
++    return reached;
++  };
++  return {
++    reachesOutput: multiBfs(outSet, inn),         // reversed adjacency → forward-reaches an output
++    reachableFromInput: multiBfs(inSet, out),     // forward adjacency → reachable from an input
++  };
++}
++
++/**
++ * Structural observability of a digraph. Terminals are derived STRUCTURALLY from directedAdj:
++ *   outputs = genuine sinks  (out-degree 0 AND in-degree > 0 — receives something, emits nothing);
++ *   inputs  = genuine sources (in-degree 0 AND out-degree > 0 — emits something, receives nothing).
++ * deadWeight[v] = !reachesOutput[v] — a node contributing to NO output is prunable dead-weight.
++ * Empty/edgeless graph: every node is isolated (out==0 AND in==0 → neither sink nor source), so
++ * outputs/inputs are empty (degenerate), and every node is dead-weight. No throw.
++ * Note: directedAdj is built over cleanEdges (self-loops dropped), so a node whose only edge is a
++ * self-loop is isolated → not a genuine terminal → reachesOutput=false → dead-weight.
++ */
++export function staticObservability(graph) {
++  const { ids, out, in: inn } = directedAdj(graph);
++  const outputs = new Set();
++  const inputs = new Set();
++  for (const id of ids) {
++    const o = out.get(id).length;
++    const i = inn.get(id).length;
++    if (o === 0 && i > 0) outputs.add(id);
++    if (i === 0 && o > 0) inputs.add(id);
++  }
++  const { reachesOutput, reachableFromInput } = reachability(graph, { outputs, inputs });
++  const deadWeight = {};
++  for (const id of ids) deadWeight[id] = !reachesOutput[id];
++  return {
++    reachesOutput,
++    reachableFromInput,
++    deadWeight,
++    outputs,
++    inputs,
++    outputCount: outputs.size,
++    inputCount: inputs.size,
++    degenerateOutputs: outputs.size === 0,
++    degenerateInputs: inputs.size === 0,
++  };
 +}
 +
 +/** Normalize raw directed Brandes scores in place: /((N-1)(N-2)) — directed is NOT halved. */
@@ -6167,7 +6235,10 @@ index 00000000..163e39d2
 +  return { communities };
 +}
 +
-+export function computeMetrics(graph, { community = 'louvain', resolution = 1, seed = 1, skipSuperLinear = false, approx = null, directed = false, hierarchy = false, embed = null, dims = 8 } = {}) {
++export function computeMetrics(graph, { community = 'louvain', resolution = 1, seed = 1, skipSuperLinear = false, approx = null, directed = false, hierarchy = false, embed = null, dims = 8, observability = false } = {}) {
++  // Observability IMPLIES directed: it needs the directed terminals/reachability, so it also
++  // emits the directed near-linear fields (inDegree/outDegree/hubs/authorities/sccId + directed betweenness).
++  const directedEff = directed || observability;
 +  const ids = nodeIds(graph);
 +  const deg = degreeCentrality(graph);
 +  const pr = pageRank(graph);
@@ -6179,7 +6250,7 @@ index 00000000..163e39d2
 +  // when skipping it follows the exact same approx/zero gating as the undirected case (no O(V·E)).
 +  const bt = skipSuperLinear
 +    ? (useApprox ? betweennessApprox(graph, { samples: approx, seed }) : {})
-+    : (directed ? directedBetweenness(graph) : betweenness(graph));
++    : (directedEff ? directedBetweenness(graph) : betweenness(graph));
 +  const cl = skipSuperLinear ? (useApprox ? closenessApprox(graph, { samples: approx, seed }) : {}) : closeness(graph);
 +  const hr = skipSuperLinear ? (useApprox ? harmonicApprox(graph, { samples: approx, seed }) : {}) : harmonic(graph);
 +  // k-core + clustering are NOT approximated — skipped whenever skipSuperLinear.
@@ -6190,11 +6261,14 @@ index 00000000..163e39d2
 +
 +  // ── OPT-IN directed metrics (near-linear — computed even when capped). ──
 +  let inDeg = null, outDeg = null, hubScore = null, authScore = null, scc = null;
-+  if (directed) {
++  if (directedEff) {
 +    ({ inDegree: inDeg, outDegree: outDeg } = inOutDegree(graph));
 +    ({ hubs: hubScore, authorities: authScore } = hits(graph));
 +    scc = stronglyConnectedComponents(graph);
 +  }
++  // ── OPT-IN structural observability (near-linear — computed even when capped). ──
++  let obs = null;
++  if (observability) obs = staticObservability(graph);
 +  // ── OPT-IN hierarchical community (multi-level Louvain). ──
 +  let hier = null;
 +  if (hierarchy) hier = louvainMultiLevel(graph, { seed, resolution });
@@ -6231,12 +6305,17 @@ index 00000000..163e39d2
 +      community: communities[id] ?? 0,
 +    };
 +    // Additive opt-in fields — present ONLY when their feature was requested.
-+    if (directed) {
++    if (directedEff) {
 +      node.inDegree = inDeg[id] ?? 0;
 +      node.outDegree = outDeg[id] ?? 0;
 +      node.hubs = hubScore[id] ?? 0;
 +      node.authorities = authScore[id] ?? 0;
 +      node.sccId = scc.get(id) ?? 0;
++    }
++    if (obs) {
++      node.reachesOutput = !!obs.reachesOutput[id];
++      node.reachableFromInput = !!obs.reachableFromInput[id];
++      node.deadWeight = !!obs.deadWeight[id];
 +    }
 +    if (hier) node.communityPath = hier.levels.map((l) => l.communities[id] ?? 0);
 +    if (embedding) node.embedding = embedding[id] ?? [];
@@ -6251,9 +6330,15 @@ index 00000000..163e39d2
 +    density: density(graph),
 +    componentCount: new Set(comp.values()).size,
 +    transitivity,
-+    directed: !!directed,
++    directed: !!directedEff,
 +  };
-+  if (directed) summary.stronglyConnectedComponentCount = new Set(scc.values()).size;
++  if (directedEff) summary.stronglyConnectedComponentCount = new Set(scc.values()).size;
++  if (obs) {
++    summary.deadWeightCount = ids.reduce((acc, id) => acc + (obs.deadWeight[id] ? 1 : 0), 0);
++    summary.outputCount = obs.outputCount;
++    summary.inputCount = obs.inputCount;
++    summary.observabilityDegenerate = obs.degenerateOutputs || obs.degenerateInputs;
++  }
 +  if (embedding) {
 +    const first = nodes.find((n) => Array.isArray(n.embedding));
 +    summary.embedding = { method: 'spectral', dims: first ? first.embedding.length : 0 };
@@ -6310,10 +6395,10 @@ index 00000000..163e39d2
 +}
 diff --git a/docker-server-graph-theory.mjs b/docker-server-graph-theory.mjs
 new file mode 100644
-index 00000000..168127f8
+index 00000000..052fb2e5
 --- /dev/null
 +++ b/docker-server-graph-theory.mjs
-@@ -0,0 +1,144 @@
+@@ -0,0 +1,145 @@
 +/**
 + * Graph-theory metrics routes (web container).
 + *   GET /graph/metrics/:name            → sidecar graph metrics
@@ -6365,7 +6450,7 @@ index 00000000..168127f8
 +
 +const metricsCache = makeMetricsCache();
 +export function metricsCacheKey(kind, idOrName, lensId, params) {
-+  return `${kind}|${idOrName}|${lensId || ''}|${params.community}|${params.resolution}|${params.cap}|${params.approx ?? ''}|${params.directed ? 1 : 0}|${params.hierarchy ? 1 : 0}|${params.embed ?? ''}|${params.dims}`;
++  return `${kind}|${idOrName}|${lensId || ''}|${params.community}|${params.resolution}|${params.cap}|${params.approx ?? ''}|${params.directed ? 1 : 0}|${params.hierarchy ? 1 : 0}|${params.embed ?? ''}|${params.dims}|${params.observability ? 1 : 0}`;
 +}
 +
 +/** Parse a positive-integer query param. Returns `def` when absent/empty; throws on ≤0/non-int; clamps to clampMax. */
@@ -6395,7 +6480,8 @@ index 00000000..168127f8
 +  if (embedRaw != null && embedRaw !== '' && embedRaw !== 'spectral') throw new Error(`unknown embed "${embedRaw}" (use spectral)`);
 +  const embed = embedRaw === 'spectral' ? 'spectral' : null;
 +  const dims = parsePosInt(searchParams, 'dims', { def: 8, clampMax: 64 });
-+  return { community, resolution, cap, approx, directed, hierarchy, embed, dims };
++  const observability = ['1', 'true'].includes((searchParams.get('observability') || '').toLowerCase());
++  return { community, resolution, cap, approx, directed, hierarchy, embed, dims, observability };
 +}
 +
 +/** Pure: project an /api/graph JSON via a lens, then compute capped metrics. Throws on unknown lens.
@@ -24813,10 +24899,10 @@ index 00000000..29d9f355
 +export const COMMUNITY_PALETTE = ['#60a5fa', '#f59e0b', '#34d399', '#f472b6', '#a78bfa', '#fb7185', '#22d3ee', '#facc15', '#4ade80', '#c084fc'];
 diff --git a/gitnexus-web/src/lib/research-graph-adapter.ts b/gitnexus-web/src/lib/research-graph-adapter.ts
 new file mode 100644
-index 00000000..9ea24f1a
+index 00000000..a6174460
 --- /dev/null
 +++ b/gitnexus-web/src/lib/research-graph-adapter.ts
-@@ -0,0 +1,113 @@
+@@ -0,0 +1,118 @@
 +import Graph from 'graphology';
 +import type { SigmaNodeAttributes, SigmaEdgeAttributes } from './graph-adapter';
 +import { RESEARCH_COLORS, RESEARCH_FALLBACK_COLOR, COMMUNITY_PALETTE } from './research-colors';
@@ -24869,9 +24955,10 @@ index 00000000..9ea24f1a
 +    articulationIds?: Set<string>;
 +    bridgeKeys?: Set<string>;
 +    layoutMode?: 'force' | 'hierarchical' | 'circular';
++    deadNodeIds?: Set<string>;
 +  } = {},
 +): Graph<SigmaNodeAttributes, SigmaEdgeAttributes> {
-+  const { colorMode = 'community', highlightStructure = false, isolateCommunity = null, articulationIds, bridgeKeys, layoutMode = 'force' } = opts;
++  const { colorMode = 'community', highlightStructure = false, isolateCommunity = null, articulationIds, bridgeKeys, layoutMode = 'force', deadNodeIds = undefined } = opts;
 +  const graph = new Graph<SigmaNodeAttributes, SigmaEdgeAttributes>();
 +  const nodes = rg.nodes || [];
 +  const total = Math.max(1, nodes.length);
@@ -24898,6 +24985,10 @@ index 00000000..9ea24f1a
 +    let size = m ? 4 + 16 * Math.sqrt((m[sizeBy] ?? 0) / maxV) : 5;
 +    const isArticulation = !!(highlightStructure && articulationIds?.has(node.id));
 +    if (dimmed) { color = '#374151'; size = 2; }   // dim non-isolated (no opacity attr → gray+small)
++    // Observability — a dead-weight node (no directed path to any output) pops in red,
++    // taking precedence over the community/heatmap color but respecting `dimmed`.
++    const isDead = !!(deadNodeIds?.has(node.id) && !dimmed);
++    if (isDead) color = '#ef4444';   // dead-weight red
 +    graph.addNode(node.id, {
 +      x: layered?.get(node.id)?.x ?? Math.cos(angle) * r,
 +      y: layered?.get(node.id)?.y ?? Math.sin(angle) * r,
@@ -24907,7 +24998,7 @@ index 00000000..9ea24f1a
 +      nodeType: 'CodeElement',
 +      filePath: node.path,
 +      mass: 3,
-+      ...(isArticulation && !dimmed ? { highlighted: true, zIndex: 2 } : {}),
++      ...((isArticulation && !dimmed) || isDead ? { highlighted: true, zIndex: 2 } : {}),
 +    });
 +    i++;
 +  }
@@ -25433,10 +25524,10 @@ index 00000000..607b24cf
 +}
 diff --git a/gitnexus-web/src/services/graph-theory-client.ts b/gitnexus-web/src/services/graph-theory-client.ts
 new file mode 100644
-index 00000000..493d0fd6
+index 00000000..087b6c2c
 --- /dev/null
 +++ b/gitnexus-web/src/services/graph-theory-client.ts
-@@ -0,0 +1,49 @@
+@@ -0,0 +1,54 @@
 +export interface GraphMetricNode {
 +  id: string;
 +  degree: number;
@@ -25451,22 +25542,27 @@ index 00000000..493d0fd6
 +  articulation: boolean;
 +  componentId: number;
 +  community: number;
++  // Observability (only present when fetched with &observability=1).
++  deadWeight?: boolean;
++  reachesOutput?: boolean;
++  reachableFromInput?: boolean;
 +}
 +export interface GraphMetrics {
 +  nodes: GraphMetricNode[];
 +  bridges: { source: string; target: string }[];
-+  summary: { nodeCount: number; edgeCount: number; communityCount: number; modularity: number; density: number; componentCount: number; transitivity: number; capped?: boolean; omittedMetrics?: string[]; approximate?: boolean; sampleSize?: number | null };
++  summary: { nodeCount: number; edgeCount: number; communityCount: number; modularity: number; density: number; componentCount: number; transitivity: number; capped?: boolean; omittedMetrics?: string[]; approximate?: boolean; sampleSize?: number | null; deadWeightCount?: number; outputCount?: number; inputCount?: number };
 +}
 +
 +export type SizeMetric = 'degree' | 'pagerank' | 'betweenness' | 'eigenvector' | 'closeness' | 'katz' | 'harmonic' | 'coreness' | 'clustering';
 +
 +export type CommunityMethod = 'louvain' | 'leiden' | 'labelprop';
-+export interface MetricsOpts { community?: CommunityMethod; resolution?: number }
++export interface MetricsOpts { community?: CommunityMethod; resolution?: number; observability?: boolean }
 +
 +function metricsQuery(opts?: MetricsOpts, base?: URLSearchParams): string {
 +  const q = base ?? new URLSearchParams();
 +  if (opts?.community) q.set('community', opts.community);
 +  if (opts?.resolution !== undefined) q.set('resolution', String(opts.resolution));
++  if (opts?.observability) q.set('observability', '1');
 +  const s = q.toString();
 +  return s ? `?${s}` : '';
 +}

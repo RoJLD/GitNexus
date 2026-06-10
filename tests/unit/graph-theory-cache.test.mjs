@@ -21,4 +21,9 @@ describe('metricsCacheKey — P2.3 params', () => {
     expect(k({})).not.toBe(k({ embed: 'spectral' }));
     expect(k({ dims: 8 })).not.toBe(k({ dims: 4 }));
   });
+  it('cache key varies with observability', () => {
+    const base = { community:'louvain', resolution:1, cap:2000, approx:null, directed:false, hierarchy:false, embed:null, dims:8, observability:false };
+    const k = (o) => metricsCacheKey('sidecar','g','',{ ...base, ...o });
+    expect(k({})).not.toBe(k({ observability: true }));
+  });
 });
