@@ -5024,10 +5024,10 @@ index 00000000..4bf2da66
 +}
 diff --git a/docker-server-graph-templates-core.mjs b/docker-server-graph-templates-core.mjs
 new file mode 100644
-index 00000000..42550119
+index 00000000..2ba4a00d
 --- /dev/null
 +++ b/docker-server-graph-templates-core.mjs
-@@ -0,0 +1,163 @@
+@@ -0,0 +1,181 @@
 +/**
 + * Graph-templates engine (web container, pure Node — no Kùzu).
 + * Registry + built-in descriptors + index store + Kùzu sidecar client. Graphs
@@ -5168,6 +5168,24 @@ index 00000000..42550119
 +  } },
 +});
 +
++registerTemplate({
++  id: 'model-graph',
++  kind: 'import',
++  label: 'Model Graph',
++  schema_type: 'model-graph',
++  description: 'A trained model as a graph (HMM states/transitions/emissions; later ONNX/PyTorch ops/tensors), imported from a curated model-graph.json emit. First slice of the IA/Model-as-graph vision — renders on the canvas, queryable by the P2 graph-theory toolkit + P3 views.',
++  importer: 'model-graph-json',
++  include: ['model-graph.json'],
++  exclude: [],
++  ddl: [
++    'CREATE NODE TABLE ModelNode(id STRING, type STRING, label STRING, layer STRING, PRIMARY KEY(id))',
++    'CREATE REL TABLE ModelEdge(FROM ModelNode TO ModelNode, id STRING, kind STRING, weight DOUBLE)',
++  ],
++  visual: { nodeColors: {
++    state: '#60a5fa', observation: '#f59e0b', op: '#34d399', layer: '#a78bfa', 'param-group': '#f472b6',
++  } },
++});
++
 +// ---- sidecar client helpers --------------------------------------------
 +
 +const GRAPHS_URL = process.env.GRAPHS_URL || 'http://gitnexus-graphs:4749';
@@ -5193,10 +5211,10 @@ index 00000000..42550119
 +}
 diff --git a/docker-server-graph-templates.mjs b/docker-server-graph-templates.mjs
 new file mode 100644
-index 00000000..8f58a462
+index 00000000..7c9f5525
 --- /dev/null
 +++ b/docker-server-graph-templates.mjs
-@@ -0,0 +1,70 @@
+@@ -0,0 +1,71 @@
 +/**
 + * Graph templates routes (web container) — sidecar-backed (Kùzu).
 + *   GET  /graph/templates              -> { templates }
@@ -5213,10 +5231,11 @@ index 00000000..8f58a462
 +import { importResearchFs } from './docker-server-research-fs-importer.mjs';
 +import { importAcademicJson } from './docker-server-academic-json-importer.mjs';
 +import { importResearchGraph } from './docker-server-research-graph-importer.mjs';
++import { importModelGraph } from './docker-server-model-graph-importer.mjs';
 +
 +function sendJson(res, code, obj) { res.writeHead(code, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(obj)); }
 +async function readBody(req) { let b = ''; for await (const c of req) b += c; return b ? JSON.parse(b) : {}; }
-+const IMPORTERS = { 'research-fs': importResearchFs, 'academic-json': importAcademicJson, 'research-graph-json': importResearchGraph };
++const IMPORTERS = { 'research-fs': importResearchFs, 'academic-json': importAcademicJson, 'research-graph-json': importResearchGraph, 'model-graph-json': importModelGraph };
 +
 +export async function handleGraphTemplatesRoute(req, url, res, _opts) {
 +  const path = url.pathname;
@@ -7562,6 +7581,65 @@ index 00000000..c998bf94
 +    return true;
 +  }
 +  return false;
++}
+diff --git a/docker-server-model-graph-importer.mjs b/docker-server-model-graph-importer.mjs
+new file mode 100644
+index 00000000..7cea6630
+--- /dev/null
++++ b/docker-server-model-graph-importer.mjs
+@@ -0,0 +1,53 @@
++/**
++ * model-graph importer: read model-graph.json (a trained model expressed as a
++ * graph — states/observations/layers + transition/emission/etc. edges, the
++ * IA/Model-as-graph vision) and emit the generic sidecar ingest shape.
++ * ModelNode/ModelEdge tables, type-as-property. Self-loops are kept (only the
++ * downstream metrics engine drops them). Pure Node, deterministic.
++ * Modeled exactly on the research-graph importer.
++ */
++import { readFile } from 'node:fs/promises';
++import { join } from 'node:path';
++
++export async function importModelGraph(absSourceDir) {
++  let doc;
++  try { doc = JSON.parse(await readFile(join(absSourceDir, 'model-graph.json'), 'utf8')); }
++  catch (e) { throw new Error(`cannot read model-graph.json in source: ${e.message}`); }
++  const inNodes = Array.isArray(doc.nodes) ? doc.nodes : [];
++  const inEdges = Array.isArray(doc.edges) ? doc.edges : [];
++
++  const seenNode = new Set();
++  const nodes = [];
++  const skipped = [];
++  for (const n of inNodes) {
++    if (n.id == null || n.id === '') { skipped.push({ reason: 'missing id', type: n.type ?? null }); continue; }
++    const id = String(n.id);
++    if (!n.type || n.type === '') { skipped.push({ reason: 'missing type', id }); continue; }
++    if (seenNode.has(id)) { skipped.push({ reason: 'duplicate id', id }); continue; }
++    seenNode.add(id);
++    nodes.push({ table: 'ModelNode', props: { id, type: String(n.type), label: String(n.label ?? '') || String(id), layer: String(n.layer ?? '') } });
++  }
++
++  const seenEdges = new Set();
++  const edges = [];
++  for (const e of inEdges) {
++    const from = String(e.from ?? '');
++    const to = String(e.to ?? '');
++    if (!from || !to || !seenNode.has(from) || !seenNode.has(to)) { skipped.push({ reason: 'dangling edge', from, to }); continue; }
++    const kind = String(e.kind ?? e.type ?? '');
++    const weight = Number.isFinite(Number(e.weight)) ? Number(e.weight) : 1.0;
++    const eid = `${from}->${kind}->${to}`;
++    if (seenEdges.has(eid)) continue;
++    seenEdges.add(eid);
++    edges.push({ table: 'ModelEdge', from, to, props: { id: eid, kind, weight } });
++  }
++
++  const byType = {}; for (const n of nodes) byType[n.props.type] = (byType[n.props.type] || 0) + 1; // by node-type property (all rows are table 'ModelNode')
++  const byKind = {}; for (const e of edges) byKind[e.props.kind] = (byKind[e.props.kind] || 0) + 1;
++
++  return {
++    schema_type: 'model-graph', template: 'model-graph', name: null, source: null,
++    nodes, edges,
++    report: { nodes: nodes.length, edges: edges.length, byType, byKind, unresolvedLinks: [], skipped, model: doc.model ?? null },
++  };
 +}
 diff --git a/docker-server-nodes-alive-between.mjs b/docker-server-nodes-alive-between.mjs
 new file mode 100644
@@ -24704,10 +24782,10 @@ index 00000000..c6e6433c
 +}
 diff --git a/gitnexus-web/src/lib/research-colors.ts b/gitnexus-web/src/lib/research-colors.ts
 new file mode 100644
-index 00000000..2226a9f1
+index 00000000..29d9f355
 --- /dev/null
 +++ b/gitnexus-web/src/lib/research-colors.ts
-@@ -0,0 +1,18 @@
+@@ -0,0 +1,25 @@
 +// Per-type colors for research-artifacts graphs (node.type -> hex).
 +// Mirrors the template's visual.nodeColors in docker-server-graph-templates-core.mjs.
 +export const RESEARCH_COLORS: Record<string, string> = {
@@ -24717,6 +24795,13 @@ index 00000000..2226a9f1
 +  result: '#10b981',
 +  dataset: '#14b8a6',
 +  note: '#64748b',
++  // model-graph node types (mirror visual.nodeColors of the model-graph template
++  // in docker-server-graph-templates-core.mjs) so model nodes render distinctly.
++  state: '#60a5fa',
++  observation: '#f59e0b',
++  op: '#34d399',
++  layer: '#a78bfa',
++  'param-group': '#f472b6',
 +};
 +
 +export const RESEARCH_FALLBACK_COLOR = '#9ca3af';

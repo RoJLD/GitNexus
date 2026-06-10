@@ -75,4 +75,14 @@ describe('template kinds + ddl', () => {
     expect(rg.ddl.some((s) => /CREATE NODE TABLE Entity/.test(s))).toBe(true);
     expect(rg.ddl.some((s) => /CREATE REL TABLE Relates/.test(s))).toBe(true);
   });
+
+  it('registers the model-graph import template (ModelNode/ModelEdge DDL)', () => {
+    const mg = listTemplates().find((t) => t.id === 'model-graph');
+    expect(mg).toBeTruthy();
+    expect(mg.kind).toBe('import');
+    expect(mg.schema_type).toBe('model-graph');
+    expect(mg.importer).toBe('model-graph-json');
+    expect(mg.ddl.some((s) => /CREATE NODE TABLE ModelNode\(.*type STRING.*\)/.test(s))).toBe(true);
+    expect(mg.ddl.some((s) => /CREATE REL TABLE ModelEdge\(.*kind STRING.*weight DOUBLE.*\)/.test(s))).toBe(true);
+  });
 });

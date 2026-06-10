@@ -96,4 +96,24 @@ describe('graph-templates routes', () => {
     expect(types.has('Experiment')).toBe(true);
     expect(graph.edges.some((e) => e.kind === 'validates')).toBe(true);
   });
+
+  it('scaffolds, imports, and serves a model-graph (ModelNode/ModelEdge)', async () => {
+    const name = 'it-model-graph';
+    const scaffold = await fetch(`${BASE}/graph/scaffold`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ templateId: 'model-graph', name, source: 'model-graph-corpus' }),
+    });
+    expect(scaffold.status).toBe(201);
+    const imp = await fetch(`${BASE}/graph/import`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }),
+    });
+    expect(imp.status).toBe(200);
+    const report = (await imp.json()).report;
+    expect(report.nodes).toBe(4);   // 2 state + 2 observation
+    expect(report.edges).toBe(8);   // 4 transition + 4 emission
+    expect(report.byType.state).toBe(2);
+    const graph = await (await fetch(`${BASE}/graph/research/${name}`)).json();
+    expect(graph.nodes.some((n) => n.type === 'state')).toBe(true);
+    expect(graph.edges.some((e) => ['transition', 'emission'].includes(e.kind))).toBe(true);
+  });
 });

@@ -275,6 +275,38 @@ writeFileSync(
   ) + '\n',
 );
 
+// Build model-graph-corpus alongside the others (non-breaking: separate dir,
+// others untouched). model-graph-corpus/ is NOT a git repo — it simply provides
+// model-graph.json for the model-graph integ test at
+// /data/projects/model-graph-corpus/model-graph.json. Mirrors the synthetic
+// emit in tests/fixtures/model-graph/model-graph.json (toy 2-state HMM).
+const modelGraphDir = join(buildParent, 'model-graph-corpus');
+console.log('Building model-graph-corpus fixture…');
+mkdirSync(modelGraphDir, { recursive: true });
+writeFileSync(
+  join(modelGraphDir, 'model-graph.json'),
+  JSON.stringify(
+    { model: { name: 'toy-hmm', framework: 'hmm', version: '1.0' },
+      nodes: [
+        { id: 's0', type: 'state', label: 'Bull', layer: '' },
+        { id: 's1', type: 'state', label: 'Bear', layer: '' },
+        { id: 'obs_up', type: 'observation', label: 'Up' },
+        { id: 'obs_down', type: 'observation', label: 'Down' },
+      ],
+      edges: [
+        { from: 's0', to: 's0', kind: 'transition', weight: 0.7 },
+        { from: 's0', to: 's1', kind: 'transition', weight: 0.3 },
+        { from: 's1', to: 's1', kind: 'transition', weight: 0.6 },
+        { from: 's1', to: 's0', kind: 'transition', weight: 0.4 },
+        { from: 's0', to: 'obs_up', kind: 'emission', weight: 0.8 },
+        { from: 's0', to: 'obs_down', kind: 'emission', weight: 0.2 },
+        { from: 's1', to: 'obs_up', kind: 'emission', weight: 0.3 },
+        { from: 's1', to: 'obs_down', kind: 'emission', weight: 0.7 },
+      ] },
+    null, 0,
+  ) + '\n',
+);
+
 console.log('Packing tarball…');
 // Windows tar.exe (GNU tar on Git for Windows) does not accept
 // drive-letter paths (e.g. C:\...) in -f or -C arguments.
@@ -282,7 +314,7 @@ console.log('Packing tarball…');
 // the tarball with a relative path so no drive letter appears.
 const tarRelOut   = '../sample-repo.tar.gz';  // Fix B: POSIX literal — avoids Windows backslash
 execSync(
-  `tar -czf "${tarRelOut}" --sort=name --mtime='2025-01-30T11:00:00Z' --owner=0 --group=0 --numeric-owner sample-repo academic-corpus research-graph-corpus`,
+  `tar -czf "${tarRelOut}" --sort=name --mtime='2025-01-30T11:00:00Z' --owner=0 --group=0 --numeric-owner sample-repo academic-corpus research-graph-corpus model-graph-corpus`,
   { cwd: buildParent, stdio: 'inherit' },
 );
 console.log(`Wrote ${TARBALL}`);

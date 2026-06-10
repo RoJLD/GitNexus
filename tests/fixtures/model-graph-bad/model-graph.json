@@ -1,0 +1,9 @@
+{
+  "nodes": [
+    { "id": "s0", "type": "state", "label": "ok" },
+    { "type": "state", "label": "no-id" }
+  ],
+  "edges": [
+    { "from": "s0", "to": "ghost", "kind": "transition", "weight": 1.0 }
+  ]
+}

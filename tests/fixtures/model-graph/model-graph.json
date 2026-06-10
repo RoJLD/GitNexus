@@ -1,0 +1,19 @@
+{
+  "model": { "name": "toy-hmm", "framework": "hmm", "version": "1.0" },
+  "nodes": [
+    { "id": "s0", "type": "state", "label": "Bull", "layer": "" },
+    { "id": "s1", "type": "state", "label": "Bear", "layer": "" },
+    { "id": "obs_up", "type": "observation", "label": "Up" },
+    { "id": "obs_down", "type": "observation", "label": "Down" }
+  ],
+  "edges": [
+    { "from": "s0", "to": "s0", "kind": "transition", "weight": 0.7 },
+    { "from": "s0", "to": "s1", "kind": "transition", "weight": 0.3 },
+    { "from": "s1", "to": "s1", "kind": "transition", "weight": 0.6 },
+    { "from": "s1", "to": "s0", "kind": "transition", "weight": 0.4 },
+    { "from": "s0", "to": "obs_up", "kind": "emission", "weight": 0.8 },
+    { "from": "s0", "to": "obs_down", "kind": "emission", "weight": 0.2 },
+    { "from": "s1", "to": "obs_up", "kind": "emission", "weight": 0.3 },
+    { "from": "s1", "to": "obs_down", "kind": "emission", "weight": 0.7 }
+  ]
+}
