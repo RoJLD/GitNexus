@@ -16233,10 +16233,10 @@ index 00000000..dabff90b
 +}
 diff --git a/gitnexus-web/src/components/Graph3DCanvas.tsx b/gitnexus-web/src/components/Graph3DCanvas.tsx
 new file mode 100644
-index 00000000..05e76180
+index 00000000..4cc7c53e
 --- /dev/null
 +++ b/gitnexus-web/src/components/Graph3DCanvas.tsx
-@@ -0,0 +1,574 @@
+@@ -0,0 +1,632 @@
 +/**
 + * Graph3DCanvas — 3D rendering surface for the knowledge graph.
 + *
@@ -16269,6 +16269,10 @@ index 00000000..05e76180
 +} from '@/lib/lucide-icons';
 +import { useAppState } from '../hooks/useAppState';
 +import { NODE_COLORS, NODE_SIZES, EDGE_INFO, type EdgeType } from '../lib/constants';
++import { getResearchGraph, applyLens } from '../services/research-client';
++import { getGraphMetrics, getGraphLensMetrics, type SizeMetric } from '../services/graph-theory-client';
++import { researchTo3D } from '../lib/research-to-3d';
++import type { ResearchGraph } from '../lib/research-graph-adapter';
 +
 +// ── Palette ──────────────────────────────────────────────────────────────────
 +// Kept in sync with useSigma.ts so 2D ↔ 3D toggling doesn't shift colors.
@@ -16310,10 +16314,11 @@ index 00000000..05e76180
 +interface Node3D {
 +  id: string;
 +  name: string;
-+  label: NodeLabel;
++  label: NodeLabel | string;
 +  baseColor: string;
 +  val: number;
-+  raw: GraphNode;
++  raw?: GraphNode;
++  research?: boolean;
 +}
 +
 +interface Link3D {
@@ -16352,6 +16357,31 @@ index 00000000..05e76180
 +  const [hoveredNodeName, setHoveredNodeName] = useState<string | null>(null);
 +  const [size, setSize] = useState({ width: 0, height: 0 });
 +  const [layoutRunning, setLayoutRunning] = useState(true);
++
++  // ── Research/lens overlay (parity with the 2D GraphCanvas toggle) ───────────
++  const researchName = new URLSearchParams(window.location.search).get('research');
++  const lensId = new URLSearchParams(window.location.search).get('lens');
++  const lensRepo = new URLSearchParams(window.location.search).get('repo');
++  const [researchData, setResearchData] = useState<ResearchGraph | null>(null);
++  const [metricsOn, setMetricsOn] = useState(false);
++  const [metricsById3D, setMetricsById3D] = useState<Map<string, { community: number } & Record<string, number>> | null>(null);
++  const [sizeMetric3D, setSizeMetric3D] = useState<SizeMetric>('pagerank');
++
++  useEffect(() => {
++    if (researchName) { getResearchGraph(researchName).then(setResearchData).catch((e) => console.error('research 3D load failed', e)); return; }
++    if (lensId && lensRepo) { applyLens(lensId, lensRepo).then(setResearchData).catch((e) => console.error('lens 3D load failed', e)); return; }
++    setResearchData(null);
++  }, [researchName, lensId, lensRepo]);
++
++  useEffect(() => {
++    const active = !!(researchName || (lensId && lensRepo));
++    if (!metricsOn || !active) { setMetricsById3D(null); return; }
++    let cancelled = false;
++    const p = researchName ? getGraphMetrics(researchName) : getGraphLensMetrics(lensId!, lensRepo!);
++    p.then((mm) => { if (!cancelled) setMetricsById3D(new Map(mm.nodes.map((n) => [n.id, n as unknown as { community: number } & Record<string, number>]))); })
++     .catch((e) => { if (!cancelled) console.error('3D metrics load failed', e); });
++    return () => { cancelled = true; };
++  }, [metricsOn, researchName, lensId, lensRepo]);
 +
 +  // ── Camera/layout controls ─────────────────────────────────────────────────
 +  // TS quirk: cameraPosition()'s no-arg getter form isn't in the public types;
@@ -16420,6 +16450,10 @@ index 00000000..05e76180
 +  // ── Build the visible dataset ──────────────────────────────────────────────
 +  // Order: label filter → depth filter (BFS from selection) → diff coloring.
 +  const data = useMemo<{ nodes: Node3D[]; links: Link3D[] }>(() => {
++    if (researchData) {
++      const r = researchTo3D(researchData, metricsOn ? (metricsById3D ?? undefined) : undefined, sizeMetric3D);
++      return { nodes: r.nodes as Node3D[], links: r.links as Link3D[] };
++    }
 +    if (!graph) return { nodes: [], links: [] };
 +
 +    const visibleLabelSet = new Set(visibleLabels);
@@ -16493,7 +16527,7 @@ index 00000000..05e76180
 +      links.push({ source: r.sourceId, target: r.targetId, type: r.type, baseColor });
 +    }
 +    return { nodes, links };
-+  }, [graph, visibleLabels, visibleEdgeTypes, depthFilter, appSelectedNode, diffData]);
++  }, [graph, visibleLabels, visibleEdgeTypes, depthFilter, appSelectedNode, diffData, researchData, metricsOn, metricsById3D, sizeMetric3D]);
 +
 +  // Neighbor set for the current selection — drives the "bright neighbors, dim
 +  // everything else" effect. Built from `data.links` (post-filter) so depth /
@@ -16691,6 +16725,7 @@ index 00000000..05e76180
 +          enableNodeDrag={false}
 +          controlType="orbit"
 +          onNodeClick={(n) => {
++            if (n.research || !n.raw) return;
 +            setSelectedNode(n.raw);
 +            openCodePanel();
 +          }}
@@ -16797,8 +16832,31 @@ index 00000000..05e76180
 +        </button>
 +      </div>
 +
-+      {/* Top Right: switch back to 2D */}
-+      <div className="absolute top-4 right-4 z-20">
++      {/* Top Right: research/lens metrics controls + switch back to 2D */}
++      <div className="absolute top-4 right-4 z-20 flex items-center gap-2">
++        {(researchName || (lensId && lensRepo)) && (
++          <button
++            onClick={() => setMetricsOn((v) => !v)}
++            className={metricsOn
++              ? 'flex h-10 items-center gap-1.5 rounded-lg border border-indigo-400/40 bg-indigo-500/15 px-3 text-indigo-200'
++              : 'flex h-10 items-center gap-1.5 rounded-lg border border-border-subtle bg-elevated px-3 text-text-secondary transition-colors hover:bg-hover hover:text-text-primary'}
++            data-testid="metrics-toggle-3d" title={metricsOn ? 'Hide metrics' : 'Show metrics'}
++          ><span className="font-mono text-xs font-semibold">Metrics: {metricsOn ? 'on' : 'off'}</span></button>
++        )}
++        {metricsOn && (researchName || (lensId && lensRepo)) && (
++          <select
++            value={sizeMetric3D}
++            onChange={(e) => setSizeMetric3D(e.target.value as SizeMetric)}
++            className="flex h-10 items-center rounded-lg border border-indigo-400/40 bg-indigo-500/15 px-3 font-mono text-xs font-semibold text-indigo-200"
++            data-testid="metric-select-3d" title="Size metric"
++          >
++            <option value="degree">Degree</option><option value="pagerank">PageRank</option>
++            <option value="betweenness">Betweenness</option><option value="eigenvector">Eigenvector</option>
++            <option value="closeness">Closeness</option><option value="katz">Katz</option>
++            <option value="harmonic">Harmonic</option><option value="coreness">k-core</option>
++            <option value="clustering">Clustering</option>
++          </select>
++        )}
 +        <button
 +          onClick={toggleViewDimension}
 +          className="flex h-10 items-center gap-1.5 rounded-lg border border-accent/40 bg-accent/15 px-3 text-accent transition-colors hover:bg-accent/25"
@@ -24184,10 +24242,10 @@ index 00000000..a70ff336
 +}
 diff --git a/gitnexus-web/src/lib/research-colors.ts b/gitnexus-web/src/lib/research-colors.ts
 new file mode 100644
-index 00000000..c57b5944
+index 00000000..2226a9f1
 --- /dev/null
 +++ b/gitnexus-web/src/lib/research-colors.ts
-@@ -0,0 +1,12 @@
+@@ -0,0 +1,18 @@
 +// Per-type colors for research-artifacts graphs (node.type -> hex).
 +// Mirrors the template's visual.nodeColors in docker-server-graph-templates-core.mjs.
 +export const RESEARCH_COLORS: Record<string, string> = {
@@ -24200,19 +24258,27 @@ index 00000000..c57b5944
 +};
 +
 +export const RESEARCH_FALLBACK_COLOR = '#9ca3af';
++
++// Community palette for metrics overlays (node.community % len). Lives here (dep-free)
++// so both research-graph-adapter (2D) and research-to-3d (3D) share ONE source — and
++// so the 3D mapper can import it without pulling graphology (which the unit runner
++// can't resolve from web src). 2D ↔ 3D community colors stay in lockstep.
++export const COMMUNITY_PALETTE = ['#60a5fa', '#f59e0b', '#34d399', '#f472b6', '#a78bfa', '#fb7185', '#22d3ee', '#facc15', '#4ade80', '#c084fc'];
 diff --git a/gitnexus-web/src/lib/research-graph-adapter.ts b/gitnexus-web/src/lib/research-graph-adapter.ts
 new file mode 100644
-index 00000000..59c7f584
+index 00000000..9ea24f1a
 --- /dev/null
 +++ b/gitnexus-web/src/lib/research-graph-adapter.ts
-@@ -0,0 +1,111 @@
+@@ -0,0 +1,113 @@
 +import Graph from 'graphology';
 +import type { SigmaNodeAttributes, SigmaEdgeAttributes } from './graph-adapter';
-+import { RESEARCH_COLORS, RESEARCH_FALLBACK_COLOR } from './research-colors';
++import { RESEARCH_COLORS, RESEARCH_FALLBACK_COLOR, COMMUNITY_PALETTE } from './research-colors';
 +import { heatColor } from './metrics-view';
 +import { layeredLayout } from './layered-layout';
 +
-+export const COMMUNITY_PALETTE = ['#60a5fa','#f59e0b','#34d399','#f472b6','#a78bfa','#fb7185','#22d3ee','#facc15','#4ade80','#c084fc'];
++// Re-exported so existing consumers (e.g. AdjacencyMatrix) keep importing it from here;
++// the single source of truth now lives in research-colors.ts (dep-free).
++export { COMMUNITY_PALETTE };
 +
 +export interface ResearchNode {
 +  id: string;
@@ -24316,6 +24382,54 @@ index 00000000..59c7f584
 +    });
 +  }
 +  return graph;
++}
+diff --git a/gitnexus-web/src/lib/research-to-3d.ts b/gitnexus-web/src/lib/research-to-3d.ts
+new file mode 100644
+index 00000000..c6f41e47
+--- /dev/null
++++ b/gitnexus-web/src/lib/research-to-3d.ts
+@@ -0,0 +1,42 @@
++import type { ResearchGraph } from './research-graph-adapter';
++import { RESEARCH_COLORS, RESEARCH_FALLBACK_COLOR, COMMUNITY_PALETTE } from './research-colors';
++
++export interface Node3DLite { id: string; name: string; label: string; baseColor: string; val: number; research: true }
++export interface Link3DLite { source: string; target: string; type: string; baseColor: string }
++
++const EDGE_COLOR = '#475569';
++
++/** Map a ResearchGraph (+optional metrics) to 3D node/link shapes. Community color + centrality
++ *  size when metricsById present, else research-type color + fixed size. Dedups edges, drops
++ *  self-loops + dangling. Pure. */
++export function researchTo3D(
++  rg: ResearchGraph,
++  metricsById?: Map<string, { community: number } & Record<string, number>>,
++  sizeBy: string = 'pagerank',
++): { nodes: Node3DLite[]; links: Link3DLite[] } {
++  const maxV = metricsById
++    ? Math.max(...[...metricsById.values()].map((v) => v[sizeBy] ?? 0), 1e-9)
++    : 1;
++  const nodes: Node3DLite[] = [];
++  const idSet = new Set<string>();
++  for (const n of rg.nodes || []) {
++    if (!n || n.id == null || idSet.has(n.id)) continue;
++    idSet.add(n.id);
++    const m = metricsById?.get(n.id);
++    const baseColor = m
++      ? COMMUNITY_PALETTE[m.community % COMMUNITY_PALETTE.length]
++      : (RESEARCH_COLORS[n.type] || RESEARCH_FALLBACK_COLOR);
++    const val = m ? 2 + 8 * Math.sqrt((m[sizeBy] ?? 0) / maxV) : 4;
++    nodes.push({ id: n.id, name: n.label, label: n.type, baseColor, val, research: true });
++  }
++  const eseen = new Set<string>();
++  const links: Link3DLite[] = [];
++  for (const e of rg.edges || []) {
++    if (!e || !idSet.has(e.source) || !idSet.has(e.target) || e.source === e.target) continue;
++    const key = `${e.source}\0${e.target}`;
++    if (eseen.has(key)) continue;
++    eseen.add(key);
++    links.push({ source: e.source, target: e.target, type: e.kind, baseColor: EDGE_COLOR });
++  }
++  return { nodes, links };
 +}
 diff --git a/gitnexus-web/src/lib/temporal-filter.ts b/gitnexus-web/src/lib/temporal-filter.ts
 new file mode 100644
