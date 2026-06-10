@@ -2498,7 +2498,7 @@ index 98c20c68..50a414e4 100644
            <div className="mt-6 border-t border-border-subtle pt-4">
              <h3 className="mb-3 text-xs font-medium tracking-wide text-text-secondary uppercase">
 diff --git a/gitnexus-web/src/components/GraphCanvas.tsx b/gitnexus-web/src/components/GraphCanvas.tsx
-index e34fd434..b53e5ab2 100644
+index e34fd434..af37c003 100644
 --- a/gitnexus-web/src/components/GraphCanvas.tsx
 +++ b/gitnexus-web/src/components/GraphCanvas.tsx
 @@ -1,4 +1,4 @@
@@ -2515,7 +2515,7 @@ index e34fd434..b53e5ab2 100644
  } from '@/lib/lucide-icons';
  import { useSigma } from '../hooks/useSigma';
  import { useAppState } from '../hooks/useAppState';
-@@ -18,15 +19,42 @@ import {
+@@ -18,15 +19,44 @@ import {
    SigmaNodeAttributes,
    SigmaEdgeAttributes,
  } from '../lib/graph-adapter';
@@ -2548,6 +2548,8 @@ index e34fd434..b53e5ab2 100644
 +import { getGraphMetrics, getGraphLensMetrics, type CommunityMethod } from '../services/graph-theory-client';
 +import type { GraphMetrics } from '../services/graph-theory-client';
 +import { topNByMetric, metricsToCsv, metricsToJson, downloadText } from '../lib/metrics-view';
++import { AdjacencyMatrix } from './AdjacencyMatrix';
++import type { MatrixNodeMetric } from '../lib/adjacency-matrix';
  
  export interface GraphCanvasHandle {
    focusNode: (nodeId: string) => void;
@@ -2558,7 +2560,7 @@ index e34fd434..b53e5ab2 100644
    const {
      graph,
      setSelectedNode,
-@@ -46,9 +74,129 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -46,9 +76,134 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
      clearAICitationHighlights,
      clearBlastRadius,
      animatedNodes,
@@ -2618,6 +2620,7 @@ index e34fd434..b53e5ab2 100644
 +  const [metricsById, setMetricsById] = useState<Map<string, { degree: number; pagerank: number; betweenness: number; eigenvector: number; closeness: number; katz: number; harmonic: number; coreness: number; clustering: number; community: number }> | null>(null);
 +  const [sizeMetric, setSizeMetric] = useState<'degree' | 'pagerank' | 'betweenness' | 'eigenvector' | 'closeness' | 'katz' | 'harmonic' | 'coreness' | 'clustering'>('pagerank');
 +  const [layoutMode, setLayoutMode] = useState<'force' | 'hierarchical' | 'circular'>('force');
++  const [view, setView] = useState<'graph' | 'matrix'>('graph');
 +  const [communityMethod, setCommunityMethod] = useState<CommunityMethod>('louvain');
 +  const [metricsData, setMetricsData] = useState<GraphMetrics | null>(null);
 +  const [topNOpen, setTopNOpen] = useState(false);
@@ -2635,6 +2638,10 @@ index e34fd434..b53e5ab2 100644
 +  }, [metricsData]);
 +  const communityIds = useMemo(
 +    () => [...new Set((metricsData?.nodes ?? []).map((n) => n.community))].sort((a, b) => a - b),
++    [metricsData],
++  );
++  const matrixMetrics = useMemo(
++    () => new Map<string, MatrixNodeMetric>((metricsData?.nodes ?? []).map((n) => [n.id, { community: n.community, degree: n.degree }])),
 +    [metricsData],
 +  );
 +
@@ -2689,7 +2696,7 @@ index e34fd434..b53e5ab2 100644
    const effectiveHighlightedNodeIds = useMemo(() => {
      if (!isAIHighlightsEnabled) return highlightedNodeIds;
      const next = new Set(highlightedNodeIds);
-@@ -82,6 +230,23 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -82,6 +237,23 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
  
    const handleNodeClick = useCallback(
      (nodeId: string) => {
@@ -2713,7 +2720,7 @@ index e34fd434..b53e5ab2 100644
        if (!graph) return;
        const node = nodeById.get(nodeId);
        if (node) {
-@@ -89,6 +254,7 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -89,6 +261,7 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
          openCodePanel();
        }
      },
@@ -2721,7 +2728,7 @@ index e34fd434..b53e5ab2 100644
      [graph, nodeById, setSelectedNode, openCodePanel],
    );
  
-@@ -130,6 +296,7 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -130,6 +303,7 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
      containerRef,
      sigmaRef,
      setGraph: setSigmaGraph,
@@ -2729,7 +2736,7 @@ index e34fd434..b53e5ab2 100644
      zoomIn,
      zoomOut,
      resetZoom,
-@@ -139,6 +306,12 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -139,6 +313,12 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
      stopLayout,
      selectedNode: sigmaSelectedNode,
      setSelectedNode: setSigmaSelectedNode,
@@ -2742,7 +2749,7 @@ index e34fd434..b53e5ab2 100644
    } = useSigma({
      onNodeClick: handleNodeClick,
      onNodeHover: handleNodeHover,
-@@ -147,6 +320,10 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -147,6 +327,10 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
      blastRadiusNodeIds: effectiveBlastRadiusNodeIds,
      animatedNodes: effectiveAnimatedNodes,
      visibleEdgeTypes,
@@ -2753,7 +2760,7 @@ index e34fd434..b53e5ab2 100644
    });
  
    // Expose focusNode to parent via ref
-@@ -170,6 +347,8 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -170,6 +354,8 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
  
    // Update Sigma graph when KnowledgeGraph changes
    useEffect(() => {
@@ -2762,7 +2769,7 @@ index e34fd434..b53e5ab2 100644
      if (!graph) return;
  
      // Build communityMemberships map from MEMBER_OF relationships
-@@ -189,8 +368,41 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -189,8 +375,41 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
      });
  
      const sigmaGraph = knowledgeGraphToGraphology(graph, communityMemberships);
@@ -2806,7 +2813,7 @@ index e34fd434..b53e5ab2 100644
  
    // Update node visibility when filters change
    useEffect(() => {
-@@ -205,6 +417,198 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -205,6 +424,198 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
      // eslint-disable-next-line react-hooks/exhaustive-deps -- sigmaRef identity never changes
    }, [visibleLabels, depthFilter, appSelectedNode]);
  
@@ -3005,10 +3012,21 @@ index e34fd434..b53e5ab2 100644
    // Sync app selected node with sigma
    useEffect(() => {
      if (appSelectedNode) {
-@@ -249,6 +653,130 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -249,6 +660,141 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
          className="sigma-container h-full w-full cursor-grab active:cursor-grabbing"
        />
  
++      {view === 'matrix' && researchData && (
++        <div className="absolute inset-0 z-10 bg-void">
++          <AdjacencyMatrix
++            nodes={researchData.nodes}
++            edges={researchData.edges}
++            metricsById={metricsOn ? matrixMetrics : undefined}
++            order={metricsOn ? 'community' : 'input'}
++          />
++        </div>
++      )}
++
 +      {/* Cluster halos — SVG overlay above the canvas (Sigma 3 has no
 +          native polygon primitive). The svg is pointer-events:none on
 +          its container so the canvas keeps receiving drags, but the
@@ -3136,7 +3154,7 @@ index e34fd434..b53e5ab2 100644
        {/* Hovered node tooltip - only show when NOT selected */}
        {hoveredNodeName && !sigmaSelectedNode && (
          <div className="pointer-events-none absolute top-4 left-1/2 z-20 -translate-x-1/2 animate-fade-in rounded-lg border border-border-subtle bg-elevated/95 px-3 py-1.5 backdrop-blur-sm">
-@@ -350,8 +878,162 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -350,8 +896,173 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
        {/* Query FAB */}
        <QueryFAB />
  
@@ -3202,6 +3220,17 @@ index e34fd434..b53e5ab2 100644
 +            <option value="force">Layout: force</option>
 +            <option value="hierarchical">Layout: hierarchical</option>
 +            <option value="circular">Layout: circular</option>
++          </select>
++        )}
++        {(researchName || (lensId && lensRepo)) && (
++          <select
++            value={view}
++            onChange={(e) => setView(e.target.value as 'graph' | 'matrix')}
++            className="flex h-10 items-center rounded-lg border border-border-subtle bg-elevated px-3 font-mono text-xs font-semibold text-text-secondary transition-colors hover:bg-hover hover:text-text-primary"
++            data-testid="view-select" title="Render mode"
++          >
++            <option value="graph">View: graph</option>
++            <option value="matrix">View: matrix</option>
 +          </select>
 +        )}
 +        {metricsOn && (researchName || (lensId && lensRepo)) && (
@@ -3301,7 +3330,7 @@ index e34fd434..b53e5ab2 100644
          <button
            onClick={handleToggleAIHighlights}
            className={
-@@ -369,6 +1051,20 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -369,6 +1080,20 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
            )}
          </button>
        </div>

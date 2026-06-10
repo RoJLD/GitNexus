@@ -15250,6 +15250,90 @@ index 2ee3569a..152d0517 100644
      </div>
    );
  };
+diff --git a/gitnexus-web/src/components/AdjacencyMatrix.tsx b/gitnexus-web/src/components/AdjacencyMatrix.tsx
+new file mode 100644
+index 00000000..134659ff
+--- /dev/null
++++ b/gitnexus-web/src/components/AdjacencyMatrix.tsx
+@@ -0,0 +1,78 @@
++import { useEffect, useMemo, useRef } from 'react';
++import { orderNodes, matrixCells, type MatrixOrder, type MatrixNodeMetric } from '../lib/adjacency-matrix';
++import { COMMUNITY_PALETTE } from '../lib/research-graph-adapter';
++
++const MATRIX_MAX = 400;
++
++interface AdjacencyMatrixProps {
++  nodes: { id: string }[];
++  edges: { source: string; target: string }[];
++  metricsById?: Map<string, MatrixNodeMetric>;
++  order: MatrixOrder;
++}
++
++export function AdjacencyMatrix({ nodes, edges, metricsById, order }: AdjacencyMatrixProps) {
++  const canvasRef = useRef<HTMLCanvasElement>(null);
++  const wrapRef = useRef<HTMLDivElement>(null);
++
++  const { ordered, capped, total } = useMemo(() => {
++    const ids = orderNodes(nodes.map((n) => n.id), metricsById, order);
++    const tot = ids.length;
++    if (ids.length <= MATRIX_MAX) return { ordered: ids, capped: false, total: tot };
++    const byDeg = [...ids].sort((a, b) => (metricsById?.get(b)?.degree ?? 0) - (metricsById?.get(a)?.degree ?? 0));
++    return { ordered: orderNodes(byDeg.slice(0, MATRIX_MAX), metricsById, order), capped: true, total: tot };
++  }, [nodes, metricsById, order]);
++
++  const cells = useMemo(() => matrixCells(ordered, edges), [ordered, edges]);
++
++  useEffect(() => {
++    const canvas = canvasRef.current;
++    const wrap = wrapRef.current;
++    if (!canvas || !wrap) return;
++    const draw = () => {
++      const w = wrap.clientWidth;
++      const h = wrap.clientHeight;
++      const dpr = window.devicePixelRatio || 1;
++      canvas.width = Math.max(1, w * dpr);
++      canvas.height = Math.max(1, h * dpr);
++      canvas.style.width = `${w}px`;
++      canvas.style.height = `${h}px`;
++      const ctx = canvas.getContext('2d');
++      if (!ctx) return;
++      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
++      ctx.clearRect(0, 0, w, h);
++      const N = ordered.length;
++      if (N === 0) return;
++      const size = Math.max(1, Math.floor(Math.min(w, h) / N));
++      for (const key of cells) {
++        const comma = key.indexOf(',');
++        const i = Number(key.slice(0, comma));
++        const j = Number(key.slice(comma + 1));
++        const c = metricsById?.get(ordered[i])?.community;
++        ctx.fillStyle = c !== undefined ? COMMUNITY_PALETTE[c % COMMUNITY_PALETTE.length] : '#60a5fa';
++        ctx.fillRect(j * size, i * size, size, size);
++      }
++      if (N <= 60) {
++        ctx.strokeStyle = 'rgba(148,163,184,0.12)';
++        ctx.lineWidth = 1;
++        for (let k = 0; k <= N; k++) {
++          ctx.beginPath(); ctx.moveTo(k * size, 0); ctx.lineTo(k * size, N * size); ctx.stroke();
++          ctx.beginPath(); ctx.moveTo(0, k * size); ctx.lineTo(N * size, k * size); ctx.stroke();
++        }
++      }
++    };
++    draw();
++    const ro = new ResizeObserver(draw);
++    ro.observe(wrap);
++    return () => ro.disconnect();
++  }, [ordered, cells, metricsById]);
++
++  return (
++    <div ref={wrapRef} className="relative h-full w-full" data-testid="adjacency-matrix">
++      <canvas ref={canvasRef} />
++      <div className="pointer-events-none absolute bottom-2 left-2 font-mono text-xs text-text-secondary">
++        Adjacency matrix — {ordered.length}{capped ? ` of ${total} (top by degree)` : ''} nodes
++      </div>
++    </div>
++  );
++}
 diff --git a/gitnexus-web/src/components/AuditPanel.tsx b/gitnexus-web/src/components/AuditPanel.tsx
 new file mode 100644
 index 00000000..2ba192ea
@@ -19227,7 +19311,7 @@ index 00000000..05e76180
 +  );
 +};
 diff --git a/gitnexus-web/src/components/GraphCanvas.tsx b/gitnexus-web/src/components/GraphCanvas.tsx
-index e34fd434..b53e5ab2 100644
+index e34fd434..af37c003 100644
 --- a/gitnexus-web/src/components/GraphCanvas.tsx
 +++ b/gitnexus-web/src/components/GraphCanvas.tsx
 @@ -1,4 +1,4 @@
@@ -19244,7 +19328,7 @@ index e34fd434..b53e5ab2 100644
  } from '@/lib/lucide-icons';
  import { useSigma } from '../hooks/useSigma';
  import { useAppState } from '../hooks/useAppState';
-@@ -18,15 +19,42 @@ import {
+@@ -18,15 +19,44 @@ import {
    SigmaNodeAttributes,
    SigmaEdgeAttributes,
  } from '../lib/graph-adapter';
@@ -19277,6 +19361,8 @@ index e34fd434..b53e5ab2 100644
 +import { getGraphMetrics, getGraphLensMetrics, type CommunityMethod } from '../services/graph-theory-client';
 +import type { GraphMetrics } from '../services/graph-theory-client';
 +import { topNByMetric, metricsToCsv, metricsToJson, downloadText } from '../lib/metrics-view';
++import { AdjacencyMatrix } from './AdjacencyMatrix';
++import type { MatrixNodeMetric } from '../lib/adjacency-matrix';
  
  export interface GraphCanvasHandle {
    focusNode: (nodeId: string) => void;
@@ -19287,7 +19373,7 @@ index e34fd434..b53e5ab2 100644
    const {
      graph,
      setSelectedNode,
-@@ -46,9 +74,129 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -46,9 +76,134 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
      clearAICitationHighlights,
      clearBlastRadius,
      animatedNodes,
@@ -19347,6 +19433,7 @@ index e34fd434..b53e5ab2 100644
 +  const [metricsById, setMetricsById] = useState<Map<string, { degree: number; pagerank: number; betweenness: number; eigenvector: number; closeness: number; katz: number; harmonic: number; coreness: number; clustering: number; community: number }> | null>(null);
 +  const [sizeMetric, setSizeMetric] = useState<'degree' | 'pagerank' | 'betweenness' | 'eigenvector' | 'closeness' | 'katz' | 'harmonic' | 'coreness' | 'clustering'>('pagerank');
 +  const [layoutMode, setLayoutMode] = useState<'force' | 'hierarchical' | 'circular'>('force');
++  const [view, setView] = useState<'graph' | 'matrix'>('graph');
 +  const [communityMethod, setCommunityMethod] = useState<CommunityMethod>('louvain');
 +  const [metricsData, setMetricsData] = useState<GraphMetrics | null>(null);
 +  const [topNOpen, setTopNOpen] = useState(false);
@@ -19364,6 +19451,10 @@ index e34fd434..b53e5ab2 100644
 +  }, [metricsData]);
 +  const communityIds = useMemo(
 +    () => [...new Set((metricsData?.nodes ?? []).map((n) => n.community))].sort((a, b) => a - b),
++    [metricsData],
++  );
++  const matrixMetrics = useMemo(
++    () => new Map<string, MatrixNodeMetric>((metricsData?.nodes ?? []).map((n) => [n.id, { community: n.community, degree: n.degree }])),
 +    [metricsData],
 +  );
 +
@@ -19418,7 +19509,7 @@ index e34fd434..b53e5ab2 100644
    const effectiveHighlightedNodeIds = useMemo(() => {
      if (!isAIHighlightsEnabled) return highlightedNodeIds;
      const next = new Set(highlightedNodeIds);
-@@ -82,6 +230,23 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -82,6 +237,23 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
  
    const handleNodeClick = useCallback(
      (nodeId: string) => {
@@ -19442,7 +19533,7 @@ index e34fd434..b53e5ab2 100644
        if (!graph) return;
        const node = nodeById.get(nodeId);
        if (node) {
-@@ -89,6 +254,7 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -89,6 +261,7 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
          openCodePanel();
        }
      },
@@ -19450,7 +19541,7 @@ index e34fd434..b53e5ab2 100644
      [graph, nodeById, setSelectedNode, openCodePanel],
    );
  
-@@ -130,6 +296,7 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -130,6 +303,7 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
      containerRef,
      sigmaRef,
      setGraph: setSigmaGraph,
@@ -19458,7 +19549,7 @@ index e34fd434..b53e5ab2 100644
      zoomIn,
      zoomOut,
      resetZoom,
-@@ -139,6 +306,12 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -139,6 +313,12 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
      stopLayout,
      selectedNode: sigmaSelectedNode,
      setSelectedNode: setSigmaSelectedNode,
@@ -19471,7 +19562,7 @@ index e34fd434..b53e5ab2 100644
    } = useSigma({
      onNodeClick: handleNodeClick,
      onNodeHover: handleNodeHover,
-@@ -147,6 +320,10 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -147,6 +327,10 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
      blastRadiusNodeIds: effectiveBlastRadiusNodeIds,
      animatedNodes: effectiveAnimatedNodes,
      visibleEdgeTypes,
@@ -19482,7 +19573,7 @@ index e34fd434..b53e5ab2 100644
    });
  
    // Expose focusNode to parent via ref
-@@ -170,6 +347,8 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -170,6 +354,8 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
  
    // Update Sigma graph when KnowledgeGraph changes
    useEffect(() => {
@@ -19491,7 +19582,7 @@ index e34fd434..b53e5ab2 100644
      if (!graph) return;
  
      // Build communityMemberships map from MEMBER_OF relationships
-@@ -189,8 +368,41 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -189,8 +375,41 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
      });
  
      const sigmaGraph = knowledgeGraphToGraphology(graph, communityMemberships);
@@ -19535,7 +19626,7 @@ index e34fd434..b53e5ab2 100644
  
    // Update node visibility when filters change
    useEffect(() => {
-@@ -205,6 +417,198 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -205,6 +424,198 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
      // eslint-disable-next-line react-hooks/exhaustive-deps -- sigmaRef identity never changes
    }, [visibleLabels, depthFilter, appSelectedNode]);
  
@@ -19734,10 +19825,21 @@ index e34fd434..b53e5ab2 100644
    // Sync app selected node with sigma
    useEffect(() => {
      if (appSelectedNode) {
-@@ -249,6 +653,130 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -249,6 +660,141 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
          className="sigma-container h-full w-full cursor-grab active:cursor-grabbing"
        />
  
++      {view === 'matrix' && researchData && (
++        <div className="absolute inset-0 z-10 bg-void">
++          <AdjacencyMatrix
++            nodes={researchData.nodes}
++            edges={researchData.edges}
++            metricsById={metricsOn ? matrixMetrics : undefined}
++            order={metricsOn ? 'community' : 'input'}
++          />
++        </div>
++      )}
++
 +      {/* Cluster halos — SVG overlay above the canvas (Sigma 3 has no
 +          native polygon primitive). The svg is pointer-events:none on
 +          its container so the canvas keeps receiving drags, but the
@@ -19865,7 +19967,7 @@ index e34fd434..b53e5ab2 100644
        {/* Hovered node tooltip - only show when NOT selected */}
        {hoveredNodeName && !sigmaSelectedNode && (
          <div className="pointer-events-none absolute top-4 left-1/2 z-20 -translate-x-1/2 animate-fade-in rounded-lg border border-border-subtle bg-elevated/95 px-3 py-1.5 backdrop-blur-sm">
-@@ -350,8 +878,162 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -350,8 +896,173 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
        {/* Query FAB */}
        <QueryFAB />
  
@@ -19931,6 +20033,17 @@ index e34fd434..b53e5ab2 100644
 +            <option value="force">Layout: force</option>
 +            <option value="hierarchical">Layout: hierarchical</option>
 +            <option value="circular">Layout: circular</option>
++          </select>
++        )}
++        {(researchName || (lensId && lensRepo)) && (
++          <select
++            value={view}
++            onChange={(e) => setView(e.target.value as 'graph' | 'matrix')}
++            className="flex h-10 items-center rounded-lg border border-border-subtle bg-elevated px-3 font-mono text-xs font-semibold text-text-secondary transition-colors hover:bg-hover hover:text-text-primary"
++            data-testid="view-select" title="Render mode"
++          >
++            <option value="graph">View: graph</option>
++            <option value="matrix">View: matrix</option>
 +          </select>
 +        )}
 +        {metricsOn && (researchName || (lensId && lensRepo)) && (
@@ -20030,7 +20143,7 @@ index e34fd434..b53e5ab2 100644
          <button
            onClick={handleToggleAIHighlights}
            className={
-@@ -369,6 +1051,20 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -369,6 +1080,20 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
            )}
          </button>
        </div>
@@ -30430,6 +30543,43 @@ index 6c660b0a..937fd909 100644
  /* ═══════════════════════════════════════════════════════════════
     REDUCED MOTION — respect OS-level motion preferences (WCAG 2.3.3)
  ═══════════════════════════════════════════════════════════════ */
+diff --git a/gitnexus-web/src/lib/adjacency-matrix.ts b/gitnexus-web/src/lib/adjacency-matrix.ts
+new file mode 100644
+index 00000000..16dd509f
+--- /dev/null
++++ b/gitnexus-web/src/lib/adjacency-matrix.ts
+@@ -0,0 +1,31 @@
++export type MatrixOrder = 'community' | 'degree' | 'input';
++export interface MatrixNodeMetric { community: number; degree: number }
++
++const byId = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
++
++/** Order node ids for the matrix. community → grouped by community asc then id; degree → desc then id;
++ *  input (or no metrics) → as given. Deterministic, non-mutating. */
++export function orderNodes(ids: string[], metricsById: Map<string, MatrixNodeMetric> | undefined, mode: MatrixOrder): string[] {
++  const arr = [...ids];
++  if (!metricsById || mode === 'input') return arr;
++  if (mode === 'community') {
++    return arr.sort((a, b) => ((metricsById.get(a)?.community ?? -1) - (metricsById.get(b)?.community ?? -1)) || byId(a, b));
++  }
++  return arr.sort((a, b) => ((metricsById.get(b)?.degree ?? 0) - (metricsById.get(a)?.degree ?? 0)) || byId(a, b));
++}
++
++/** Occupancy set of "row,col" index strings (UNDIRECTED — both (i,j) and (j,i); self-loops + danglers dropped). */
++export function matrixCells(orderedIds: string[], edges: { source: string; target: string }[]): Set<string> {
++  const idx = new Map<string, number>();
++  orderedIds.forEach((id, i) => idx.set(id, i));
++  const cells = new Set<string>();
++  for (const e of edges || []) {
++    if (!e) continue;
++    const i = idx.get(e.source);
++    const j = idx.get(e.target);
++    if (i === undefined || j === undefined || i === j) continue;
++    cells.add(`${i},${j}`);
++    cells.add(`${j},${i}`);
++  }
++  return cells;
++}
 diff --git a/gitnexus-web/src/lib/augmented-timeline.ts b/gitnexus-web/src/lib/augmented-timeline.ts
 new file mode 100644
 index 00000000..e05156f0
@@ -32040,7 +32190,7 @@ index 00000000..c57b5944
 +export const RESEARCH_FALLBACK_COLOR = '#9ca3af';
 diff --git a/gitnexus-web/src/lib/research-graph-adapter.ts b/gitnexus-web/src/lib/research-graph-adapter.ts
 new file mode 100644
-index 00000000..a1a1cd98
+index 00000000..59c7f584
 --- /dev/null
 +++ b/gitnexus-web/src/lib/research-graph-adapter.ts
 @@ -0,0 +1,111 @@
@@ -32050,7 +32200,7 @@ index 00000000..a1a1cd98
 +import { heatColor } from './metrics-view';
 +import { layeredLayout } from './layered-layout';
 +
-+const COMMUNITY_PALETTE = ['#60a5fa','#f59e0b','#34d399','#f472b6','#a78bfa','#fb7185','#22d3ee','#facc15','#4ade80','#c084fc'];
++export const COMMUNITY_PALETTE = ['#60a5fa','#f59e0b','#34d399','#f472b6','#a78bfa','#fb7185','#22d3ee','#facc15','#4ade80','#c084fc'];
 +
 +export interface ResearchNode {
 +  id: string;

@@ -12894,6 +12894,90 @@ index 00000000..35099d66
 +
 +  return false;
 +}
+diff --git a/gitnexus-web/src/components/AdjacencyMatrix.tsx b/gitnexus-web/src/components/AdjacencyMatrix.tsx
+new file mode 100644
+index 00000000..134659ff
+--- /dev/null
++++ b/gitnexus-web/src/components/AdjacencyMatrix.tsx
+@@ -0,0 +1,78 @@
++import { useEffect, useMemo, useRef } from 'react';
++import { orderNodes, matrixCells, type MatrixOrder, type MatrixNodeMetric } from '../lib/adjacency-matrix';
++import { COMMUNITY_PALETTE } from '../lib/research-graph-adapter';
++
++const MATRIX_MAX = 400;
++
++interface AdjacencyMatrixProps {
++  nodes: { id: string }[];
++  edges: { source: string; target: string }[];
++  metricsById?: Map<string, MatrixNodeMetric>;
++  order: MatrixOrder;
++}
++
++export function AdjacencyMatrix({ nodes, edges, metricsById, order }: AdjacencyMatrixProps) {
++  const canvasRef = useRef<HTMLCanvasElement>(null);
++  const wrapRef = useRef<HTMLDivElement>(null);
++
++  const { ordered, capped, total } = useMemo(() => {
++    const ids = orderNodes(nodes.map((n) => n.id), metricsById, order);
++    const tot = ids.length;
++    if (ids.length <= MATRIX_MAX) return { ordered: ids, capped: false, total: tot };
++    const byDeg = [...ids].sort((a, b) => (metricsById?.get(b)?.degree ?? 0) - (metricsById?.get(a)?.degree ?? 0));
++    return { ordered: orderNodes(byDeg.slice(0, MATRIX_MAX), metricsById, order), capped: true, total: tot };
++  }, [nodes, metricsById, order]);
++
++  const cells = useMemo(() => matrixCells(ordered, edges), [ordered, edges]);
++
++  useEffect(() => {
++    const canvas = canvasRef.current;
++    const wrap = wrapRef.current;
++    if (!canvas || !wrap) return;
++    const draw = () => {
++      const w = wrap.clientWidth;
++      const h = wrap.clientHeight;
++      const dpr = window.devicePixelRatio || 1;
++      canvas.width = Math.max(1, w * dpr);
++      canvas.height = Math.max(1, h * dpr);
++      canvas.style.width = `${w}px`;
++      canvas.style.height = `${h}px`;
++      const ctx = canvas.getContext('2d');
++      if (!ctx) return;
++      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
++      ctx.clearRect(0, 0, w, h);
++      const N = ordered.length;
++      if (N === 0) return;
++      const size = Math.max(1, Math.floor(Math.min(w, h) / N));
++      for (const key of cells) {
++        const comma = key.indexOf(',');
++        const i = Number(key.slice(0, comma));
++        const j = Number(key.slice(comma + 1));
++        const c = metricsById?.get(ordered[i])?.community;
++        ctx.fillStyle = c !== undefined ? COMMUNITY_PALETTE[c % COMMUNITY_PALETTE.length] : '#60a5fa';
++        ctx.fillRect(j * size, i * size, size, size);
++      }
++      if (N <= 60) {
++        ctx.strokeStyle = 'rgba(148,163,184,0.12)';
++        ctx.lineWidth = 1;
++        for (let k = 0; k <= N; k++) {
++          ctx.beginPath(); ctx.moveTo(k * size, 0); ctx.lineTo(k * size, N * size); ctx.stroke();
++          ctx.beginPath(); ctx.moveTo(0, k * size); ctx.lineTo(N * size, k * size); ctx.stroke();
++        }
++      }
++    };
++    draw();
++    const ro = new ResizeObserver(draw);
++    ro.observe(wrap);
++    return () => ro.disconnect();
++  }, [ordered, cells, metricsById]);
++
++  return (
++    <div ref={wrapRef} className="relative h-full w-full" data-testid="adjacency-matrix">
++      <canvas ref={canvasRef} />
++      <div className="pointer-events-none absolute bottom-2 left-2 font-mono text-xs text-text-secondary">
++        Adjacency matrix — {ordered.length}{capped ? ` of ${total} (top by degree)` : ''} nodes
++      </div>
++    </div>
++  );
++}
 diff --git a/gitnexus-web/src/components/AuditPanel.tsx b/gitnexus-web/src/components/AuditPanel.tsx
 new file mode 100644
 index 00000000..2ba192ea
@@ -22543,6 +22627,43 @@ index 00000000..f405dfe6
 +    // eslint-disable-next-line react-hooks/exhaustive-deps
 +  }, [cursorA, cursorB, zoomWindow, graphMode, temporalFilterMode, availableRepos, baseRepo]);
 +}
+diff --git a/gitnexus-web/src/lib/adjacency-matrix.ts b/gitnexus-web/src/lib/adjacency-matrix.ts
+new file mode 100644
+index 00000000..16dd509f
+--- /dev/null
++++ b/gitnexus-web/src/lib/adjacency-matrix.ts
+@@ -0,0 +1,31 @@
++export type MatrixOrder = 'community' | 'degree' | 'input';
++export interface MatrixNodeMetric { community: number; degree: number }
++
++const byId = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
++
++/** Order node ids for the matrix. community → grouped by community asc then id; degree → desc then id;
++ *  input (or no metrics) → as given. Deterministic, non-mutating. */
++export function orderNodes(ids: string[], metricsById: Map<string, MatrixNodeMetric> | undefined, mode: MatrixOrder): string[] {
++  const arr = [...ids];
++  if (!metricsById || mode === 'input') return arr;
++  if (mode === 'community') {
++    return arr.sort((a, b) => ((metricsById.get(a)?.community ?? -1) - (metricsById.get(b)?.community ?? -1)) || byId(a, b));
++  }
++  return arr.sort((a, b) => ((metricsById.get(b)?.degree ?? 0) - (metricsById.get(a)?.degree ?? 0)) || byId(a, b));
++}
++
++/** Occupancy set of "row,col" index strings (UNDIRECTED — both (i,j) and (j,i); self-loops + danglers dropped). */
++export function matrixCells(orderedIds: string[], edges: { source: string; target: string }[]): Set<string> {
++  const idx = new Map<string, number>();
++  orderedIds.forEach((id, i) => idx.set(id, i));
++  const cells = new Set<string>();
++  for (const e of edges || []) {
++    if (!e) continue;
++    const i = idx.get(e.source);
++    const j = idx.get(e.target);
++    if (i === undefined || j === undefined || i === j) continue;
++    cells.add(`${i},${j}`);
++    cells.add(`${j},${i}`);
++  }
++  return cells;
++}
 diff --git a/gitnexus-web/src/lib/augmented-timeline.ts b/gitnexus-web/src/lib/augmented-timeline.ts
 new file mode 100644
 index 00000000..e05156f0
@@ -24081,7 +24202,7 @@ index 00000000..c57b5944
 +export const RESEARCH_FALLBACK_COLOR = '#9ca3af';
 diff --git a/gitnexus-web/src/lib/research-graph-adapter.ts b/gitnexus-web/src/lib/research-graph-adapter.ts
 new file mode 100644
-index 00000000..a1a1cd98
+index 00000000..59c7f584
 --- /dev/null
 +++ b/gitnexus-web/src/lib/research-graph-adapter.ts
 @@ -0,0 +1,111 @@
@@ -24091,7 +24212,7 @@ index 00000000..a1a1cd98
 +import { heatColor } from './metrics-view';
 +import { layeredLayout } from './layered-layout';
 +
-+const COMMUNITY_PALETTE = ['#60a5fa','#f59e0b','#34d399','#f472b6','#a78bfa','#fb7185','#22d3ee','#facc15','#4ade80','#c084fc'];
++export const COMMUNITY_PALETTE = ['#60a5fa','#f59e0b','#34d399','#f472b6','#a78bfa','#fb7185','#22d3ee','#facc15','#4ade80','#c084fc'];
 +
 +export interface ResearchNode {
 +  id: string;
