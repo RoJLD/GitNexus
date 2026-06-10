@@ -19369,7 +19369,7 @@ index 00000000..4cc7c53e
 +  );
 +};
 diff --git a/gitnexus-web/src/components/GraphCanvas.tsx b/gitnexus-web/src/components/GraphCanvas.tsx
-index e34fd434..af37c003 100644
+index e34fd434..26927667 100644
 --- a/gitnexus-web/src/components/GraphCanvas.tsx
 +++ b/gitnexus-web/src/components/GraphCanvas.tsx
 @@ -1,4 +1,4 @@
@@ -20081,7 +20081,7 @@ index e34fd434..af37c003 100644
 +            <span className="font-mono text-xs font-semibold">Metrics: {metricsOn ? 'on' : 'off'}</span>
 +          </button>
 +        )}
-+        {(researchName || (lensId && lensRepo)) && (
++        {(researchName || (lensId && lensRepo)) && view !== 'matrix' && (
 +          <select
 +            value={layoutMode}
 +            onChange={(e) => setLayoutMode(e.target.value as 'force' | 'hierarchical' | 'circular')}
@@ -20104,7 +20104,7 @@ index e34fd434..af37c003 100644
 +            <option value="matrix">View: matrix</option>
 +          </select>
 +        )}
-+        {metricsOn && (researchName || (lensId && lensRepo)) && (
++        {metricsOn && (researchName || (lensId && lensRepo)) && view !== 'matrix' && (
 +          <select
 +            value={sizeMetric}
 +            onChange={(e) => setSizeMetric(e.target.value as 'degree' | 'pagerank' | 'betweenness' | 'eigenvector' | 'closeness' | 'katz' | 'harmonic' | 'coreness' | 'clustering')}
@@ -20135,7 +20135,7 @@ index e34fd434..af37c003 100644
 +            <option value="labelprop">Label prop</option>
 +          </select>
 +        )}
-+        {metricsOn && (researchName || (lensId && lensRepo)) && (
++        {metricsOn && (researchName || (lensId && lensRepo)) && view !== 'matrix' && (
 +          <select
 +            value={colorMode}
 +            onChange={(e) => setColorMode(e.target.value as 'community' | 'heatmap')}
@@ -20146,7 +20146,7 @@ index e34fd434..af37c003 100644
 +            <option value="heatmap">Color: heatmap</option>
 +          </select>
 +        )}
-+        {metricsOn && (researchName || (lensId && lensRepo)) && (
++        {metricsOn && (researchName || (lensId && lensRepo)) && view !== 'matrix' && (
 +          <button
 +            onClick={() => setHighlightStructure((v) => !v)}
 +            className={highlightStructure
@@ -20155,7 +20155,7 @@ index e34fd434..af37c003 100644
 +            data-testid="highlight-toggle" title="Highlight articulation points + bridges"
 +          >Highlight</button>
 +        )}
-+        {metricsOn && (researchName || (lensId && lensRepo)) && communityIds.length > 1 && (
++        {metricsOn && (researchName || (lensId && lensRepo)) && communityIds.length > 1 && view !== 'matrix' && (
 +          <select
 +            value={isolateCommunity == null ? '' : String(isolateCommunity)}
 +            onChange={(e) => setIsolateCommunity(e.target.value === '' ? null : Number(e.target.value))}
@@ -29569,7 +29569,7 @@ index 25c57767..310692db 100644
  
    return <AppStateContext.Provider value={value}>{children}</AppStateContext.Provider>;
 diff --git a/gitnexus-web/src/hooks/useSigma.ts b/gitnexus-web/src/hooks/useSigma.ts
-index 461de0f5..dd0add20 100644
+index 461de0f5..65c044ed 100644
 --- a/gitnexus-web/src/hooks/useSigma.ts
 +++ b/gitnexus-web/src/hooks/useSigma.ts
 @@ -8,6 +8,34 @@ import EdgeCurveProgram from '@sigma/edge-curve';
@@ -30072,7 +30072,16 @@ index 461de0f5..dd0add20 100644
        const sigma = sigmaRef.current;
        if (!sigma) return;
  
-@@ -560,12 +897,46 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
+@@ -555,17 +892,55 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
+         clearTimeout(layoutTimeoutRef.current);
+         layoutTimeoutRef.current = null;
+       }
++      // Any in-flight FA2 was just killed; clear the "Layout optimizing…" indicator.
++      // The paths that skip runLayout (skipLayout / cache-restore) leave it false;
++      // runLayout below re-sets it true when FA2 actually starts.
++      setIsLayoutRunning(false);
+ 
+       graphRef.current = newGraph;
        sigma.setGraph(newGraph);
        setSelectedNode(null);
  
@@ -30120,7 +30129,7 @@ index 461de0f5..dd0add20 100644
    const focusNode = useCallback((nodeId: string) => {
      const sigma = sigmaRef.current;
      const graph = graphRef.current;
-@@ -629,10 +1000,313 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
+@@ -629,10 +1004,313 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
      sigmaRef.current?.refresh();
    }, []);
  
@@ -30434,7 +30443,7 @@ index 461de0f5..dd0add20 100644
      zoomIn,
      zoomOut,
      resetZoom,
-@@ -643,5 +1317,18 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
+@@ -643,5 +1321,18 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
      selectedNode,
      setSelectedNode,
      refreshHighlights,
