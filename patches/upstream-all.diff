@@ -19227,7 +19227,7 @@ index 00000000..05e76180
 +  );
 +};
 diff --git a/gitnexus-web/src/components/GraphCanvas.tsx b/gitnexus-web/src/components/GraphCanvas.tsx
-index e34fd434..80106183 100644
+index e34fd434..b53e5ab2 100644
 --- a/gitnexus-web/src/components/GraphCanvas.tsx
 +++ b/gitnexus-web/src/components/GraphCanvas.tsx
 @@ -1,4 +1,4 @@
@@ -19287,7 +19287,7 @@ index e34fd434..80106183 100644
    const {
      graph,
      setSelectedNode,
-@@ -46,9 +74,128 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -46,9 +74,129 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
      clearAICitationHighlights,
      clearBlastRadius,
      animatedNodes,
@@ -19346,6 +19346,7 @@ index e34fd434..80106183 100644
 +  const [metricsOn, setMetricsOn] = useState(false);
 +  const [metricsById, setMetricsById] = useState<Map<string, { degree: number; pagerank: number; betweenness: number; eigenvector: number; closeness: number; katz: number; harmonic: number; coreness: number; clustering: number; community: number }> | null>(null);
 +  const [sizeMetric, setSizeMetric] = useState<'degree' | 'pagerank' | 'betweenness' | 'eigenvector' | 'closeness' | 'katz' | 'harmonic' | 'coreness' | 'clustering'>('pagerank');
++  const [layoutMode, setLayoutMode] = useState<'force' | 'hierarchical' | 'circular'>('force');
 +  const [communityMethod, setCommunityMethod] = useState<CommunityMethod>('louvain');
 +  const [metricsData, setMetricsData] = useState<GraphMetrics | null>(null);
 +  const [topNOpen, setTopNOpen] = useState(false);
@@ -19417,7 +19418,7 @@ index e34fd434..80106183 100644
    const effectiveHighlightedNodeIds = useMemo(() => {
      if (!isAIHighlightsEnabled) return highlightedNodeIds;
      const next = new Set(highlightedNodeIds);
-@@ -82,6 +229,23 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -82,6 +230,23 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
  
    const handleNodeClick = useCallback(
      (nodeId: string) => {
@@ -19441,7 +19442,7 @@ index e34fd434..80106183 100644
        if (!graph) return;
        const node = nodeById.get(nodeId);
        if (node) {
-@@ -89,6 +253,7 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -89,6 +254,7 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
          openCodePanel();
        }
      },
@@ -19449,7 +19450,7 @@ index e34fd434..80106183 100644
      [graph, nodeById, setSelectedNode, openCodePanel],
    );
  
-@@ -130,6 +295,7 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -130,6 +296,7 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
      containerRef,
      sigmaRef,
      setGraph: setSigmaGraph,
@@ -19457,7 +19458,7 @@ index e34fd434..80106183 100644
      zoomIn,
      zoomOut,
      resetZoom,
-@@ -139,6 +305,12 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -139,6 +306,12 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
      stopLayout,
      selectedNode: sigmaSelectedNode,
      setSelectedNode: setSigmaSelectedNode,
@@ -19470,7 +19471,7 @@ index e34fd434..80106183 100644
    } = useSigma({
      onNodeClick: handleNodeClick,
      onNodeHover: handleNodeHover,
-@@ -147,6 +319,10 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -147,6 +320,10 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
      blastRadiusNodeIds: effectiveBlastRadiusNodeIds,
      animatedNodes: effectiveAnimatedNodes,
      visibleEdgeTypes,
@@ -19481,7 +19482,7 @@ index e34fd434..80106183 100644
    });
  
    // Expose focusNode to parent via ref
-@@ -170,6 +346,8 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -170,6 +347,8 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
  
    // Update Sigma graph when KnowledgeGraph changes
    useEffect(() => {
@@ -19490,7 +19491,7 @@ index e34fd434..80106183 100644
      if (!graph) return;
  
      // Build communityMemberships map from MEMBER_OF relationships
-@@ -189,8 +367,40 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -189,8 +368,41 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
      });
  
      const sigmaGraph = knowledgeGraphToGraphology(graph, communityMemberships);
@@ -19514,12 +19515,13 @@ index e34fd434..80106183 100644
 +    if (!researchData) return;
 +    if (!researchName && !lensId) return;
 +    const g = researchGraphToGraphology(researchData, metricsOn ? (metricsById ?? undefined) : undefined, sizeMetric, {
-+      colorMode, highlightStructure, isolateCommunity, articulationIds, bridgeKeys,
++      colorMode, highlightStructure, isolateCommunity, articulationIds, bridgeKeys, layoutMode,
 +    });
 +    const cacheKey = (researchName ? `research:${researchName}` : `lens:${lensId}:${lensRepo}`)
-+      + (metricsOn ? `:metrics:${sizeMetric}:${colorMode}:${highlightStructure}:${isolateCommunity}` : '');
-+    setSigmaGraph(g, { cacheKey });
-+  }, [researchName, lensId, lensRepo, researchData, setSigmaGraph, metricsOn, metricsById, sizeMetric, colorMode, highlightStructure, isolateCommunity, articulationIds, bridgeKeys]);
++      + (metricsOn ? `:metrics:${sizeMetric}:${colorMode}:${highlightStructure}:${isolateCommunity}` : '')
++      + `:layout:${layoutMode}`;
++    setSigmaGraph(g, { cacheKey, skipLayout: layoutMode !== 'force' });
++  }, [researchName, lensId, lensRepo, researchData, setSigmaGraph, metricsOn, metricsById, sizeMetric, colorMode, highlightStructure, isolateCommunity, articulationIds, bridgeKeys, layoutMode]);
 +
 +  // Expose useSigma.recomputeLayout up to useAppState so the Header
 +  // "Recompute layout" button can fire it. The action lives on
@@ -19533,7 +19535,7 @@ index e34fd434..80106183 100644
  
    // Update node visibility when filters change
    useEffect(() => {
-@@ -205,6 +415,198 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -205,6 +417,198 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
      // eslint-disable-next-line react-hooks/exhaustive-deps -- sigmaRef identity never changes
    }, [visibleLabels, depthFilter, appSelectedNode]);
  
@@ -19732,7 +19734,7 @@ index e34fd434..80106183 100644
    // Sync app selected node with sigma
    useEffect(() => {
      if (appSelectedNode) {
-@@ -249,6 +651,130 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -249,6 +653,130 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
          className="sigma-container h-full w-full cursor-grab active:cursor-grabbing"
        />
  
@@ -19863,7 +19865,7 @@ index e34fd434..80106183 100644
        {/* Hovered node tooltip - only show when NOT selected */}
        {hoveredNodeName && !sigmaSelectedNode && (
          <div className="pointer-events-none absolute top-4 left-1/2 z-20 -translate-x-1/2 animate-fade-in rounded-lg border border-border-subtle bg-elevated/95 px-3 py-1.5 backdrop-blur-sm">
-@@ -350,8 +876,150 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -350,8 +878,162 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
        {/* Query FAB */}
        <QueryFAB />
  
@@ -19918,6 +19920,18 @@ index e34fd434..80106183 100644
 +          >
 +            <span className="font-mono text-xs font-semibold">Metrics: {metricsOn ? 'on' : 'off'}</span>
 +          </button>
++        )}
++        {(researchName || (lensId && lensRepo)) && (
++          <select
++            value={layoutMode}
++            onChange={(e) => setLayoutMode(e.target.value as 'force' | 'hierarchical' | 'circular')}
++            className="flex h-10 items-center rounded-lg border border-border-subtle bg-elevated px-3 font-mono text-xs font-semibold text-text-secondary transition-colors hover:bg-hover hover:text-text-primary"
++            data-testid="layout-select" title="Graph layout"
++          >
++            <option value="force">Layout: force</option>
++            <option value="hierarchical">Layout: hierarchical</option>
++            <option value="circular">Layout: circular</option>
++          </select>
 +        )}
 +        {metricsOn && (researchName || (lensId && lensRepo)) && (
 +          <select
@@ -20016,7 +20030,7 @@ index e34fd434..80106183 100644
          <button
            onClick={handleToggleAIHighlights}
            className={
-@@ -369,6 +1037,20 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -369,6 +1051,20 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
            )}
          </button>
        </div>
@@ -29384,7 +29398,7 @@ index 25c57767..310692db 100644
  
    return <AppStateContext.Provider value={value}>{children}</AppStateContext.Provider>;
 diff --git a/gitnexus-web/src/hooks/useSigma.ts b/gitnexus-web/src/hooks/useSigma.ts
-index 461de0f5..d678e662 100644
+index 461de0f5..dd0add20 100644
 --- a/gitnexus-web/src/hooks/useSigma.ts
 +++ b/gitnexus-web/src/hooks/useSigma.ts
 @@ -8,6 +8,34 @@ import EdgeCurveProgram from '@sigma/edge-curve';
@@ -29479,7 +29493,7 @@ index 461de0f5..d678e662 100644
 -  setGraph: (graph: Graph<SigmaNodeAttributes, SigmaEdgeAttributes>) => void;
 +  setGraph: (
 +    graph: Graph<SigmaNodeAttributes, SigmaEdgeAttributes>,
-+    opts?: { cacheKey?: string },
++    opts?: { cacheKey?: string; skipLayout?: boolean },
 +  ) => void;
 +  /**
 +   * Wipe persisted layout cache for `cacheKey` and re-run FA2 on the
@@ -29882,16 +29896,24 @@ index 461de0f5..d678e662 100644
 -    (newGraph: Graph<SigmaNodeAttributes, SigmaEdgeAttributes>) => {
 +    (
 +      newGraph: Graph<SigmaNodeAttributes, SigmaEdgeAttributes>,
-+      opts: { cacheKey?: string } = {},
++      opts: { cacheKey?: string; skipLayout?: boolean } = {},
 +    ) => {
        const sigma = sigmaRef.current;
        if (!sigma) return;
  
-@@ -560,12 +897,38 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
+@@ -560,12 +897,46 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
        sigma.setGraph(newGraph);
        setSelectedNode(null);
  
 -      runLayout(newGraph);
++      // P3.1: hierarchical/circular layouts carry FINAL positions from the adapter —
++      // use them as-is (no FA2, no layout cache).
++      if (opts.skipLayout) {
++        sigma.refresh();
++        sigma.getCamera().animatedReset({ duration: 200 });
++        return;
++      }
++
 +      // Fast path: cached layout covers ≥80% of current node set →
 +      // restore positions, skip FA2, just animate camera and refresh.
 +      if (opts.cacheKey && newGraph.order > 0) {
@@ -29927,7 +29949,7 @@ index 461de0f5..d678e662 100644
    const focusNode = useCallback((nodeId: string) => {
      const sigma = sigmaRef.current;
      const graph = graphRef.current;
-@@ -629,10 +992,313 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
+@@ -629,10 +1000,313 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
      sigmaRef.current?.refresh();
    }, []);
  
@@ -30241,7 +30263,7 @@ index 461de0f5..d678e662 100644
      zoomIn,
      zoomOut,
      resetZoom,
-@@ -643,5 +1309,18 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
+@@ -643,5 +1317,18 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
      selectedNode,
      setSelectedNode,
      refreshHighlights,
@@ -31501,6 +31523,63 @@ index 00000000..4100064e
 +  }
 +  return graph;
 +}
+diff --git a/gitnexus-web/src/lib/layered-layout.ts b/gitnexus-web/src/lib/layered-layout.ts
+new file mode 100644
+index 00000000..ac0d50ef
+--- /dev/null
++++ b/gitnexus-web/src/lib/layered-layout.ts
+@@ -0,0 +1,51 @@
++export interface LayoutGraph {
++  nodes: { id: string }[];
++  edges: { source: string; target: string }[];
++}
++
++/**
++ * Hand-rolled BFS-rank layered layout (dep-free). rank = shortest hops from a source
++ * (in-degree-0 node, or each unranked node as a fresh root for cycles / unreachable);
++ * x = rank·DX, y = spread within the rank centered on 0. O(V+E), deterministic. No DOM.
++ */
++export function layeredLayout(graph: LayoutGraph, opts: { dx?: number; dy?: number } = {}): Map<string, { x: number; y: number }> {
++  const DX = opts.dx ?? 160;
++  const DY = opts.dy ?? 80;
++  const ids: string[] = [];
++  const seen = new Set<string>();
++  for (const n of graph.nodes || []) { if (n && n.id != null && !seen.has(n.id)) { seen.add(n.id); ids.push(n.id); } }
++  const idSet = new Set(ids);
++  const adj = new Map<string, string[]>(ids.map((id) => [id, []]));
++  const indeg = new Map<string, number>(ids.map((id) => [id, 0]));
++  for (const e of graph.edges || []) {
++    if (!e || !idSet.has(e.source) || !idSet.has(e.target) || e.source === e.target) continue;
++    adj.get(e.source)!.push(e.target);
++    indeg.set(e.target, (indeg.get(e.target) ?? 0) + 1);
++  }
++  const rank = new Map<string, number>();
++  const bfs = (starts: string[]) => {
++    let layer = starts.filter((s) => !rank.has(s));
++    for (const s of layer) rank.set(s, 0);
++    while (layer.length) {
++      const next: string[] = [];
++      for (const u of layer) {
++        for (const v of adj.get(u)!) {
++          if (!rank.has(v)) { rank.set(v, (rank.get(u) ?? 0) + 1); next.push(v); }
++        }
++      }
++      layer = next;
++    }
++  };
++  const roots = ids.filter((id) => (indeg.get(id) ?? 0) === 0);
++  if (roots.length) bfs(roots);
++  for (const id of ids) { if (!rank.has(id)) bfs([id]); }   // cycles / unreachable → fresh root
++
++  const byRank = new Map<number, string[]>();
++  for (const id of ids) { const r = rank.get(id)!; if (!byRank.has(r)) byRank.set(r, []); byRank.get(r)!.push(id); }
++  const pos = new Map<string, { x: number; y: number }>();
++  for (const [r, members] of byRank) {
++    const k = members.length;
++    members.forEach((id, i) => pos.set(id, { x: r * DX, y: (i - (k - 1) / 2) * DY }));
++  }
++  return pos;
++}
 diff --git a/gitnexus-web/src/lib/layout-cache.ts b/gitnexus-web/src/lib/layout-cache.ts
 new file mode 100644
 index 00000000..978f853e
@@ -31961,14 +32040,15 @@ index 00000000..c57b5944
 +export const RESEARCH_FALLBACK_COLOR = '#9ca3af';
 diff --git a/gitnexus-web/src/lib/research-graph-adapter.ts b/gitnexus-web/src/lib/research-graph-adapter.ts
 new file mode 100644
-index 00000000..2f754df5
+index 00000000..a1a1cd98
 --- /dev/null
 +++ b/gitnexus-web/src/lib/research-graph-adapter.ts
-@@ -0,0 +1,105 @@
+@@ -0,0 +1,111 @@
 +import Graph from 'graphology';
 +import type { SigmaNodeAttributes, SigmaEdgeAttributes } from './graph-adapter';
 +import { RESEARCH_COLORS, RESEARCH_FALLBACK_COLOR } from './research-colors';
 +import { heatColor } from './metrics-view';
++import { layeredLayout } from './layered-layout';
 +
 +const COMMUNITY_PALETTE = ['#60a5fa','#f59e0b','#34d399','#f472b6','#a78bfa','#fb7185','#22d3ee','#facc15','#4ade80','#c084fc'];
 +
@@ -32013,9 +32093,10 @@ index 00000000..2f754df5
 +    isolateCommunity?: number | null;
 +    articulationIds?: Set<string>;
 +    bridgeKeys?: Set<string>;
++    layoutMode?: 'force' | 'hierarchical' | 'circular';
 +  } = {},
 +): Graph<SigmaNodeAttributes, SigmaEdgeAttributes> {
-+  const { colorMode = 'community', highlightStructure = false, isolateCommunity = null, articulationIds, bridgeKeys } = opts;
++  const { colorMode = 'community', highlightStructure = false, isolateCommunity = null, articulationIds, bridgeKeys, layoutMode = 'force' } = opts;
 +  const graph = new Graph<SigmaNodeAttributes, SigmaEdgeAttributes>();
 +  const nodes = rg.nodes || [];
 +  const total = Math.max(1, nodes.length);
@@ -32024,6 +32105,10 @@ index 00000000..2f754df5
 +  const maxV = metricsById
 +    ? Math.max(...[...metricsById.values()].map((v) => v[sizeBy]), 1e-9)
 +    : 1;
++
++  const layered = layoutMode === 'hierarchical'
++    ? layeredLayout({ nodes: nodes.map((n) => ({ id: n.id })), edges: (rg.edges || []).map((e) => ({ source: e.source, target: e.target })) })
++    : null;
 +
 +  let i = 0;
 +  for (const node of nodes) {
@@ -32039,8 +32124,8 @@ index 00000000..2f754df5
 +    const isArticulation = !!(highlightStructure && articulationIds?.has(node.id));
 +    if (dimmed) { color = '#374151'; size = 2; }   // dim non-isolated (no opacity attr → gray+small)
 +    graph.addNode(node.id, {
-+      x: Math.cos(angle) * r,
-+      y: Math.sin(angle) * r,
++      x: layered?.get(node.id)?.x ?? Math.cos(angle) * r,
++      y: layered?.get(node.id)?.y ?? Math.sin(angle) * r,
 +      size,
 +      color,
 +      label: node.label,
