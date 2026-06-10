@@ -1,0 +1,11 @@
+{
+  "model": "toy-hmm",
+  "run": "run-001",
+  "nodes": { "s0": 0.82, "s1": 0.18, "obs_up": 0.55, "obs_down": 0.45 },
+  "edges": {
+    "s0->transition->s0": 0.7, "s0->transition->s1": 0.3,
+    "s1->transition->s1": 0.6, "s1->transition->s0": 0.4,
+    "s0->emission->obs_up": 0.8, "s0->emission->obs_down": 0.2,
+    "s1->emission->obs_up": 0.3, "s1->emission->obs_down": 0.7
+  }
+}

@@ -510,6 +510,15 @@ const TOOLS = [
     handler: () => callWeb('/graph/list'),
   },
   {
+    name: 'gitnexus_graph_activations',
+    description: 'Read a captured inference-run activation overlay for a model graph (per-node activation magnitude + optional per-edge frequency, from model-activations.json in the graph source dir). Surfaces hot nodes/paths of a model. Returns {nodes:{id→magnitude}, edges:{id→freq}, report:{min,max,...}}.',
+    inputSchema: { type: 'object', properties: {
+      name: { type: 'string', description: 'Model graph name (as scaffolded).' },
+      run: { type: 'string', description: 'Optional run id → reads model-activations.<run>.json.' },
+    }, required: ['name'], additionalProperties: false },
+    handler: ({ name, run }) => callWeb(`/graph/activations/${encodeURIComponent(name)}`, run ? { run } : {}),
+  },
+  {
     name: 'gitnexus_create_graph_from_template',
     description: 'Scaffold a new graph from a template. Records the graph (name + template + source dir relative to /data/projects) so it can then be imported. Does NOT populate it — call gitnexus_import_into_graph next. Returns the index record.',
     inputSchema: {

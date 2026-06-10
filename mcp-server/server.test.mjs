@@ -150,6 +150,19 @@ describe('mcp-server/server.mjs — Task 11.13 smoke', () => {
     assert.ok(src.includes("callWeb('/graph/list')"), 'handler must call /graph/list');
   });
 
+  // ── gitnexus_graph_activations (P-IA.2 dynamic-observability overlay) ──
+  it("registers 'gitnexus_graph_activations' requiring name + hitting /graph/activations/", () => {
+    assert.ok(src.includes("name: 'gitnexus_graph_activations'"), 'TOOLS must contain gitnexus_graph_activations');
+    assert.ok(
+      /name: 'gitnexus_graph_activations'[\s\S]*?required: \['name'\]/.test(src),
+      "gitnexus_graph_activations inputSchema must declare required: ['name']",
+    );
+    assert.ok(
+      src.includes('/graph/activations/${encodeURIComponent(name)}'),
+      'handler must call the /graph/activations/ path with the encoded name',
+    );
+  });
+
   // ── P2.3 directed / hierarchy / spectral-embedding params ─────────
   it('gitnexus_graph_metrics inputSchema offers directed/hierarchy/embed/dims', () => {
     assert.ok(/directed: \{ type: 'boolean'/.test(src), 'graph_metrics schema must offer a directed boolean');

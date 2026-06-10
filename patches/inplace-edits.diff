@@ -2502,7 +2502,7 @@ index 98c20c68..50a414e4 100644
            <div className="mt-6 border-t border-border-subtle pt-4">
              <h3 className="mb-3 text-xs font-medium tracking-wide text-text-secondary uppercase">
 diff --git a/gitnexus-web/src/components/GraphCanvas.tsx b/gitnexus-web/src/components/GraphCanvas.tsx
-index e34fd434..c286dd7e 100644
+index e34fd434..82182b0e 100644
 --- a/gitnexus-web/src/components/GraphCanvas.tsx
 +++ b/gitnexus-web/src/components/GraphCanvas.tsx
 @@ -1,4 +1,4 @@
@@ -2548,7 +2548,7 @@ index e34fd434..c286dd7e 100644
 +} from '../lib/augmented-timeline';
 +import { prefetchSnapshotGhosts } from '../services/snapshot-ghosts-cache';
 +import { researchGraphToGraphology, type ResearchGraph } from '../lib/research-graph-adapter';
-+import { getResearchGraph, applyLens } from '../services/research-client';
++import { getResearchGraph, applyLens, getActivations, type GraphActivations } from '../services/research-client';
 +import { getGraphMetrics, getGraphLensMetrics, type CommunityMethod } from '../services/graph-theory-client';
 +import type { GraphMetrics } from '../services/graph-theory-client';
 +import { topNByMetric, metricsToCsv, metricsToJson, downloadText } from '../lib/metrics-view';
@@ -2565,7 +2565,7 @@ index e34fd434..c286dd7e 100644
    const {
      graph,
      setSelectedNode,
-@@ -46,9 +77,142 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -46,9 +77,167 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
      clearAICitationHighlights,
      clearBlastRadius,
      animatedNodes,
@@ -2632,6 +2632,8 @@ index e34fd434..c286dd7e 100644
 +  const [colorMode, setColorMode] = useState<'community' | 'heatmap'>('community');
 +  const [highlightStructure, setHighlightStructure] = useState(false);
 +  const [observabilityOn, setObservabilityOn] = useState(false);
++  const [activationsOn, setActivationsOn] = useState(false);
++  const [activationData, setActivationData] = useState<GraphActivations | null>(null);
 +  const [isolateCommunity, setIsolateCommunity] = useState<number | null>(null);
 +  const articulationIds = useMemo(
 +    () => new Set((metricsData?.nodes ?? []).filter((n) => n.articulation).map((n) => n.id)),
@@ -2688,6 +2690,29 @@ index e34fd434..c286dd7e 100644
 +    return () => { cancelled = true; };
 +  }, [metricsOn, researchName, lensId, lensRepo, communityMethod, observabilityOn]);
 +
++  // Activations overlay — when the toggle is on for a sidecar MODEL graph (?research=),
++  // load /graph/activations/:name (a captured inference-run heat overlay). Activations are
++  // model-graph-specific, NOT for lenses. On 404/error → null (renders "no capture" note).
++  useEffect(() => {
++    if (!activationsOn || !researchName) {
++      setActivationData(null);
++      return;
++    }
++    let cancelled = false;
++    getActivations(researchName)
++      .then((d) => { if (!cancelled) setActivationData(d); })
++      .catch(() => { if (!cancelled) setActivationData(null); });
++    return () => { cancelled = true; };
++  }, [activationsOn, researchName]);
++
++  // Activations — magnitude lookup + normalization max for the heat overlay.
++  // Absent data → undefined map so the adapter's behavior is byte-identical.
++  const activationById = useMemo(
++    () => (activationData ? new Map(Object.entries(activationData.nodes)) : undefined),
++    [activationData],
++  );
++  const activationMax = activationData?.report.max ?? 0;
++
 +  // Augmented graph (Section D — Task 9 / Section F — Task 12).
 +  // `ghosts` is the payload fetched from /ghosts (via the cached
 +  // ghosts-client) whenever the active repo changes; `selectedGhostId`
@@ -2709,7 +2734,7 @@ index e34fd434..c286dd7e 100644
    const effectiveHighlightedNodeIds = useMemo(() => {
      if (!isAIHighlightsEnabled) return highlightedNodeIds;
      const next = new Set(highlightedNodeIds);
-@@ -82,6 +246,23 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -82,6 +271,23 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
  
    const handleNodeClick = useCallback(
      (nodeId: string) => {
@@ -2733,7 +2758,7 @@ index e34fd434..c286dd7e 100644
        if (!graph) return;
        const node = nodeById.get(nodeId);
        if (node) {
-@@ -89,6 +270,7 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -89,6 +295,7 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
          openCodePanel();
        }
      },
@@ -2741,7 +2766,7 @@ index e34fd434..c286dd7e 100644
      [graph, nodeById, setSelectedNode, openCodePanel],
    );
  
-@@ -130,6 +312,7 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -130,6 +337,7 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
      containerRef,
      sigmaRef,
      setGraph: setSigmaGraph,
@@ -2749,7 +2774,7 @@ index e34fd434..c286dd7e 100644
      zoomIn,
      zoomOut,
      resetZoom,
-@@ -139,6 +322,12 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -139,6 +347,12 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
      stopLayout,
      selectedNode: sigmaSelectedNode,
      setSelectedNode: setSigmaSelectedNode,
@@ -2762,7 +2787,7 @@ index e34fd434..c286dd7e 100644
    } = useSigma({
      onNodeClick: handleNodeClick,
      onNodeHover: handleNodeHover,
-@@ -147,6 +336,10 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -147,6 +361,10 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
      blastRadiusNodeIds: effectiveBlastRadiusNodeIds,
      animatedNodes: effectiveAnimatedNodes,
      visibleEdgeTypes,
@@ -2773,7 +2798,7 @@ index e34fd434..c286dd7e 100644
    });
  
    // Expose focusNode to parent via ref
-@@ -170,6 +363,8 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -170,6 +388,8 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
  
    // Update Sigma graph when KnowledgeGraph changes
    useEffect(() => {
@@ -2782,7 +2807,7 @@ index e34fd434..c286dd7e 100644
      if (!graph) return;
  
      // Build communityMemberships map from MEMBER_OF relationships
-@@ -189,8 +384,42 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -189,8 +409,45 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
      });
  
      const sigmaGraph = knowledgeGraphToGraphology(graph, communityMemberships);
@@ -2808,12 +2833,15 @@ index e34fd434..c286dd7e 100644
 +    const g = researchGraphToGraphology(researchData, metricsOn ? (metricsById ?? undefined) : undefined, sizeMetric, {
 +      colorMode, highlightStructure, isolateCommunity, articulationIds, bridgeKeys, layoutMode,
 +      deadNodeIds: observabilityOn ? deadNodeIds : undefined,
++      activationById: activationsOn ? activationById : undefined,
++      activationMax,
 +    });
 +    const cacheKey = (researchName ? `research:${researchName}` : `lens:${lensId}:${lensRepo}`)
 +      + (metricsOn ? `:metrics:${sizeMetric}:${colorMode}:${highlightStructure}:${isolateCommunity}:${observabilityOn ? 'obs' : ''}` : '')
++      + (activationsOn ? ':act' : '')
 +      + `:layout:${layoutMode}`;
 +    setSigmaGraph(g, { cacheKey, skipLayout: layoutMode !== 'force' });
-+  }, [researchName, lensId, lensRepo, researchData, setSigmaGraph, metricsOn, metricsById, sizeMetric, colorMode, highlightStructure, isolateCommunity, articulationIds, bridgeKeys, layoutMode, observabilityOn, deadNodeIds]);
++  }, [researchName, lensId, lensRepo, researchData, setSigmaGraph, metricsOn, metricsById, sizeMetric, colorMode, highlightStructure, isolateCommunity, articulationIds, bridgeKeys, layoutMode, observabilityOn, deadNodeIds, activationsOn, activationData, activationById, activationMax]);
 +
 +  // Expose useSigma.recomputeLayout up to useAppState so the Header
 +  // "Recompute layout" button can fire it. The action lives on
@@ -2827,7 +2855,7 @@ index e34fd434..c286dd7e 100644
  
    // Update node visibility when filters change
    useEffect(() => {
-@@ -205,6 +434,198 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -205,6 +462,198 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
      // eslint-disable-next-line react-hooks/exhaustive-deps -- sigmaRef identity never changes
    }, [visibleLabels, depthFilter, appSelectedNode]);
  
@@ -3026,7 +3054,7 @@ index e34fd434..c286dd7e 100644
    // Sync app selected node with sigma
    useEffect(() => {
      if (appSelectedNode) {
-@@ -249,6 +670,153 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -249,6 +698,153 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
          className="sigma-container h-full w-full cursor-grab active:cursor-grabbing"
        />
  
@@ -3180,7 +3208,7 @@ index e34fd434..c286dd7e 100644
        {/* Hovered node tooltip - only show when NOT selected */}
        {hoveredNodeName && !sigmaSelectedNode && (
          <div className="pointer-events-none absolute top-4 left-1/2 z-20 -translate-x-1/2 animate-fade-in rounded-lg border border-border-subtle bg-elevated/95 px-3 py-1.5 backdrop-blur-sm">
-@@ -350,8 +918,190 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -350,8 +946,214 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
        {/* Query FAB */}
        <QueryFAB />
  
@@ -3327,6 +3355,30 @@ index e34fd434..c286dd7e 100644
 +            )}
 +          </button>
 +        )}
++        {metricsOn && researchName && view !== 'matrix' && (
++          <button
++            onClick={() => setActivationsOn((v) => !v)}
++            className={activationsOn
++              ? 'flex h-10 items-center gap-1.5 rounded-lg border border-amber-400/50 bg-amber-500/15 px-3 font-mono text-xs font-semibold text-amber-200'
++              : 'flex h-10 items-center rounded-lg border border-border-subtle bg-elevated px-3 font-mono text-xs font-semibold text-text-secondary transition-colors hover:bg-hover hover:text-text-primary'}
++            data-testid="activations-toggle" title="Heat overlay from a captured inference run"
++          >
++            <span>Activations</span>
++            {activationsOn && activationData && (
++              <span className="flex items-center gap-1">
++                <span
++                  className="inline-block h-2 w-6 rounded-sm"
++                  style={{ background: 'linear-gradient(to right, #1e3a8a, #f59e0b, #ef4444)' }}
++                  title={`min ${activationData.report.min} · max ${activationData.report.max}`}
++                />
++                <span className="text-amber-100">{activationData.report.model ?? '?'}{activationData.report.run ? ` / ${activationData.report.run}` : ''}</span>
++              </span>
++            )}
++            {activationsOn && !activationData && (
++              <span className="text-text-muted">no activation capture</span>
++            )}
++          </button>
++        )}
 +        {metricsOn && (researchName || (lensId && lensRepo)) && communityIds.length > 1 && view !== 'matrix' && (
 +          <select
 +            value={isolateCommunity == null ? '' : String(isolateCommunity)}
@@ -3373,7 +3425,7 @@ index e34fd434..c286dd7e 100644
          <button
            onClick={handleToggleAIHighlights}
            className={
-@@ -369,6 +1119,20 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -369,6 +1171,20 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
            )}
          </button>
        </div>

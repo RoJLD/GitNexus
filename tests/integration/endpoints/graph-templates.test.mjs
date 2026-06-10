@@ -116,4 +116,23 @@ describe('graph-templates routes', () => {
     expect(graph.nodes.some((n) => n.type === 'state')).toBe(true);
     expect(graph.edges.some((e) => ['transition', 'emission'].includes(e.kind))).toBe(true);
   });
+
+  it('serves a captured activation overlay for a model graph', async () => {
+    const name = 'it-model-activations';
+    const scaffold = await fetch(`${BASE}/graph/scaffold`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ templateId: 'model-graph', name, source: 'model-graph-corpus' }),
+    });
+    expect(scaffold.status).toBe(201);
+    const imp = await fetch(`${BASE}/graph/import`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }),
+    });
+    expect(imp.status).toBe(200);
+
+    const act = await fetch(`${BASE}/graph/activations/${name}`);
+    expect(act.status).toBe(200);
+    const body = await act.json();
+    expect(typeof body.nodes.s0).toBe('number');
+    expect(Number.isFinite(body.report.max)).toBe(true);
+  });
 });

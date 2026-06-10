@@ -5153,10 +5153,10 @@ index 00000000..4bf2da66
 +}
 diff --git a/docker-server-graph-templates-core.mjs b/docker-server-graph-templates-core.mjs
 new file mode 100644
-index 00000000..2ba4a00d
+index 00000000..edbf644f
 --- /dev/null
 +++ b/docker-server-graph-templates-core.mjs
-@@ -0,0 +1,181 @@
+@@ -0,0 +1,233 @@
 +/**
 + * Graph-templates engine (web container, pure Node — no Kùzu).
 + * Registry + built-in descriptors + index store + Kùzu sidecar client. Graphs
@@ -5315,6 +5315,58 @@ index 00000000..2ba4a00d
 +  } },
 +});
 +
++// ---- activations (dynamic observability overlay) -----------------------
++
++/**
++ * Validate + shape a captured inference-run activation file (parsed object,
++ * no IO). Returns { nodes, edges, report } where nodes/edges map id -> finite
++ * number, dropping non-numeric values and recording them in the report.
++ */
++export function shapeActivations(doc) {
++  if (!doc || typeof doc.nodes !== 'object' || doc.nodes === null || Array.isArray(doc.nodes)) {
++    throw new Error('model-activations: missing nodes object');
++  }
++  const coerce = (v) =>
++    typeof v === 'number' ? v : (typeof v === 'string' && v.trim() !== '' ? Number(v) : NaN);
++
++  const nodes = {};
++  const droppedNodes = [];
++  for (const [id, v] of Object.entries(doc.nodes)) {
++    const n = coerce(v);
++    if (Number.isFinite(n)) nodes[id] = n;
++    else droppedNodes.push(id);
++  }
++
++  let edges = {};
++  const droppedEdges = [];
++  if (doc.edges && typeof doc.edges === 'object' && !Array.isArray(doc.edges)) {
++    for (const [id, v] of Object.entries(doc.edges)) {
++      const n = coerce(v);
++      if (Number.isFinite(n)) edges[id] = n;
++      else droppedEdges.push(id);
++    }
++  }
++
++  const vals = Object.values(nodes);
++  const min = vals.length ? Math.min(...vals) : 0;
++  const max = vals.length ? Math.max(...vals) : 0;
++
++  return {
++    nodes,
++    edges,
++    report: {
++      nodeCount: Object.keys(nodes).length,
++      edgeCount: Object.keys(edges).length,
++      min,
++      max,
++      droppedNodes,
++      droppedEdges,
++      model: doc.model ?? null,
++      run: doc.run ?? null,
++    },
++  };
++}
++
 +// ---- sidecar client helpers --------------------------------------------
 +
 +const GRAPHS_URL = process.env.GRAPHS_URL || 'http://gitnexus-graphs:4749';
@@ -5340,10 +5392,10 @@ index 00000000..2ba4a00d
 +}
 diff --git a/docker-server-graph-templates.mjs b/docker-server-graph-templates.mjs
 new file mode 100644
-index 00000000..7c9f5525
+index 00000000..10f08b10
 --- /dev/null
 +++ b/docker-server-graph-templates.mjs
-@@ -0,0 +1,71 @@
+@@ -0,0 +1,90 @@
 +/**
 + * Graph templates routes (web container) — sidecar-backed (Kùzu).
 + *   GET  /graph/templates              -> { templates }
@@ -5351,10 +5403,13 @@ index 00000000..7c9f5525
 + *   POST /graph/import   {name}        -> { report }              (importer -> sidecar ingest)
 + *   GET  /graph/research               -> { graphs }              (index records)
 + *   GET  /graph/research/:name         -> { nodes, edges }        (sidecar render)
++ *   GET  /graph/activations/:name      -> { nodes, edges, report } (model-activations.json overlay)
 + */
++import { readFile } from 'node:fs/promises';
++import { join } from 'node:path';
 +import {
 +  listTemplates, getTemplate, sanitizeSource,
-+  readIndex, writeIndexRecord,
++  readIndex, writeIndexRecord, shapeActivations,
 +  sidecarCreate, sidecarIngest, sidecarRender,
 +} from './docker-server-graph-templates-core.mjs';
 +import { importResearchFs } from './docker-server-research-fs-importer.mjs';
@@ -5411,6 +5466,22 @@ index 00000000..7c9f5525
 +    const name = decodeURIComponent(path.slice('/graph/research/'.length));
 +    try { sendJson(res, 200, await sidecarRender(name)); }
 +    catch (e) { sendJson(res, 404, { error: `graph "${name}" not available: ${e.message}` }); return true; }
++    return true;
++  }
++
++  if (path.startsWith('/graph/activations/') && req.method === 'GET') {
++    const name = decodeURIComponent(path.slice('/graph/activations/'.length));
++    const index = await readIndex();
++    const record = index.graphs.find((g) => g.name === name);
++    if (!record) { sendJson(res, 404, { error: `no scaffolded graph named "${name}"` }); return true; }
++    let abs; try { abs = sanitizeSource(record.source); } catch (e) { sendJson(res, 400, { error: e.message }); return true; }
++    const run = url.searchParams.get('run');
++    const file = run ? `model-activations.${run}.json` : 'model-activations.json';
++    let raw;
++    try { raw = await readFile(join(abs, file), 'utf8'); }
++    catch { sendJson(res, 404, { error: `no activations capture for "${name}"` }); return true; }
++    try { sendJson(res, 200, shapeActivations(JSON.parse(raw))); }
++    catch (e) { sendJson(res, 400, { error: `bad activations capture: ${e.message}` }); return true; }
 +    return true;
 +  }
 +  return false;
@@ -19916,7 +19987,7 @@ index 00000000..4cc7c53e
 +  );
 +};
 diff --git a/gitnexus-web/src/components/GraphCanvas.tsx b/gitnexus-web/src/components/GraphCanvas.tsx
-index e34fd434..c286dd7e 100644
+index e34fd434..82182b0e 100644
 --- a/gitnexus-web/src/components/GraphCanvas.tsx
 +++ b/gitnexus-web/src/components/GraphCanvas.tsx
 @@ -1,4 +1,4 @@
@@ -19962,7 +20033,7 @@ index e34fd434..c286dd7e 100644
 +} from '../lib/augmented-timeline';
 +import { prefetchSnapshotGhosts } from '../services/snapshot-ghosts-cache';
 +import { researchGraphToGraphology, type ResearchGraph } from '../lib/research-graph-adapter';
-+import { getResearchGraph, applyLens } from '../services/research-client';
++import { getResearchGraph, applyLens, getActivations, type GraphActivations } from '../services/research-client';
 +import { getGraphMetrics, getGraphLensMetrics, type CommunityMethod } from '../services/graph-theory-client';
 +import type { GraphMetrics } from '../services/graph-theory-client';
 +import { topNByMetric, metricsToCsv, metricsToJson, downloadText } from '../lib/metrics-view';
@@ -19979,7 +20050,7 @@ index e34fd434..c286dd7e 100644
    const {
      graph,
      setSelectedNode,
-@@ -46,9 +77,142 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -46,9 +77,167 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
      clearAICitationHighlights,
      clearBlastRadius,
      animatedNodes,
@@ -20046,6 +20117,8 @@ index e34fd434..c286dd7e 100644
 +  const [colorMode, setColorMode] = useState<'community' | 'heatmap'>('community');
 +  const [highlightStructure, setHighlightStructure] = useState(false);
 +  const [observabilityOn, setObservabilityOn] = useState(false);
++  const [activationsOn, setActivationsOn] = useState(false);
++  const [activationData, setActivationData] = useState<GraphActivations | null>(null);
 +  const [isolateCommunity, setIsolateCommunity] = useState<number | null>(null);
 +  const articulationIds = useMemo(
 +    () => new Set((metricsData?.nodes ?? []).filter((n) => n.articulation).map((n) => n.id)),
@@ -20102,6 +20175,29 @@ index e34fd434..c286dd7e 100644
 +    return () => { cancelled = true; };
 +  }, [metricsOn, researchName, lensId, lensRepo, communityMethod, observabilityOn]);
 +
++  // Activations overlay — when the toggle is on for a sidecar MODEL graph (?research=),
++  // load /graph/activations/:name (a captured inference-run heat overlay). Activations are
++  // model-graph-specific, NOT for lenses. On 404/error → null (renders "no capture" note).
++  useEffect(() => {
++    if (!activationsOn || !researchName) {
++      setActivationData(null);
++      return;
++    }
++    let cancelled = false;
++    getActivations(researchName)
++      .then((d) => { if (!cancelled) setActivationData(d); })
++      .catch(() => { if (!cancelled) setActivationData(null); });
++    return () => { cancelled = true; };
++  }, [activationsOn, researchName]);
++
++  // Activations — magnitude lookup + normalization max for the heat overlay.
++  // Absent data → undefined map so the adapter's behavior is byte-identical.
++  const activationById = useMemo(
++    () => (activationData ? new Map(Object.entries(activationData.nodes)) : undefined),
++    [activationData],
++  );
++  const activationMax = activationData?.report.max ?? 0;
++
 +  // Augmented graph (Section D — Task 9 / Section F — Task 12).
 +  // `ghosts` is the payload fetched from /ghosts (via the cached
 +  // ghosts-client) whenever the active repo changes; `selectedGhostId`
@@ -20123,7 +20219,7 @@ index e34fd434..c286dd7e 100644
    const effectiveHighlightedNodeIds = useMemo(() => {
      if (!isAIHighlightsEnabled) return highlightedNodeIds;
      const next = new Set(highlightedNodeIds);
-@@ -82,6 +246,23 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -82,6 +271,23 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
  
    const handleNodeClick = useCallback(
      (nodeId: string) => {
@@ -20147,7 +20243,7 @@ index e34fd434..c286dd7e 100644
        if (!graph) return;
        const node = nodeById.get(nodeId);
        if (node) {
-@@ -89,6 +270,7 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -89,6 +295,7 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
          openCodePanel();
        }
      },
@@ -20155,7 +20251,7 @@ index e34fd434..c286dd7e 100644
      [graph, nodeById, setSelectedNode, openCodePanel],
    );
  
-@@ -130,6 +312,7 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -130,6 +337,7 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
      containerRef,
      sigmaRef,
      setGraph: setSigmaGraph,
@@ -20163,7 +20259,7 @@ index e34fd434..c286dd7e 100644
      zoomIn,
      zoomOut,
      resetZoom,
-@@ -139,6 +322,12 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -139,6 +347,12 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
      stopLayout,
      selectedNode: sigmaSelectedNode,
      setSelectedNode: setSigmaSelectedNode,
@@ -20176,7 +20272,7 @@ index e34fd434..c286dd7e 100644
    } = useSigma({
      onNodeClick: handleNodeClick,
      onNodeHover: handleNodeHover,
-@@ -147,6 +336,10 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -147,6 +361,10 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
      blastRadiusNodeIds: effectiveBlastRadiusNodeIds,
      animatedNodes: effectiveAnimatedNodes,
      visibleEdgeTypes,
@@ -20187,7 +20283,7 @@ index e34fd434..c286dd7e 100644
    });
  
    // Expose focusNode to parent via ref
-@@ -170,6 +363,8 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -170,6 +388,8 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
  
    // Update Sigma graph when KnowledgeGraph changes
    useEffect(() => {
@@ -20196,7 +20292,7 @@ index e34fd434..c286dd7e 100644
      if (!graph) return;
  
      // Build communityMemberships map from MEMBER_OF relationships
-@@ -189,8 +384,42 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -189,8 +409,45 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
      });
  
      const sigmaGraph = knowledgeGraphToGraphology(graph, communityMemberships);
@@ -20222,12 +20318,15 @@ index e34fd434..c286dd7e 100644
 +    const g = researchGraphToGraphology(researchData, metricsOn ? (metricsById ?? undefined) : undefined, sizeMetric, {
 +      colorMode, highlightStructure, isolateCommunity, articulationIds, bridgeKeys, layoutMode,
 +      deadNodeIds: observabilityOn ? deadNodeIds : undefined,
++      activationById: activationsOn ? activationById : undefined,
++      activationMax,
 +    });
 +    const cacheKey = (researchName ? `research:${researchName}` : `lens:${lensId}:${lensRepo}`)
 +      + (metricsOn ? `:metrics:${sizeMetric}:${colorMode}:${highlightStructure}:${isolateCommunity}:${observabilityOn ? 'obs' : ''}` : '')
++      + (activationsOn ? ':act' : '')
 +      + `:layout:${layoutMode}`;
 +    setSigmaGraph(g, { cacheKey, skipLayout: layoutMode !== 'force' });
-+  }, [researchName, lensId, lensRepo, researchData, setSigmaGraph, metricsOn, metricsById, sizeMetric, colorMode, highlightStructure, isolateCommunity, articulationIds, bridgeKeys, layoutMode, observabilityOn, deadNodeIds]);
++  }, [researchName, lensId, lensRepo, researchData, setSigmaGraph, metricsOn, metricsById, sizeMetric, colorMode, highlightStructure, isolateCommunity, articulationIds, bridgeKeys, layoutMode, observabilityOn, deadNodeIds, activationsOn, activationData, activationById, activationMax]);
 +
 +  // Expose useSigma.recomputeLayout up to useAppState so the Header
 +  // "Recompute layout" button can fire it. The action lives on
@@ -20241,7 +20340,7 @@ index e34fd434..c286dd7e 100644
  
    // Update node visibility when filters change
    useEffect(() => {
-@@ -205,6 +434,198 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -205,6 +462,198 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
      // eslint-disable-next-line react-hooks/exhaustive-deps -- sigmaRef identity never changes
    }, [visibleLabels, depthFilter, appSelectedNode]);
  
@@ -20440,7 +20539,7 @@ index e34fd434..c286dd7e 100644
    // Sync app selected node with sigma
    useEffect(() => {
      if (appSelectedNode) {
-@@ -249,6 +670,153 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -249,6 +698,153 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
          className="sigma-container h-full w-full cursor-grab active:cursor-grabbing"
        />
  
@@ -20594,7 +20693,7 @@ index e34fd434..c286dd7e 100644
        {/* Hovered node tooltip - only show when NOT selected */}
        {hoveredNodeName && !sigmaSelectedNode && (
          <div className="pointer-events-none absolute top-4 left-1/2 z-20 -translate-x-1/2 animate-fade-in rounded-lg border border-border-subtle bg-elevated/95 px-3 py-1.5 backdrop-blur-sm">
-@@ -350,8 +918,190 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -350,8 +946,214 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
        {/* Query FAB */}
        <QueryFAB />
  
@@ -20741,6 +20840,30 @@ index e34fd434..c286dd7e 100644
 +            )}
 +          </button>
 +        )}
++        {metricsOn && researchName && view !== 'matrix' && (
++          <button
++            onClick={() => setActivationsOn((v) => !v)}
++            className={activationsOn
++              ? 'flex h-10 items-center gap-1.5 rounded-lg border border-amber-400/50 bg-amber-500/15 px-3 font-mono text-xs font-semibold text-amber-200'
++              : 'flex h-10 items-center rounded-lg border border-border-subtle bg-elevated px-3 font-mono text-xs font-semibold text-text-secondary transition-colors hover:bg-hover hover:text-text-primary'}
++            data-testid="activations-toggle" title="Heat overlay from a captured inference run"
++          >
++            <span>Activations</span>
++            {activationsOn && activationData && (
++              <span className="flex items-center gap-1">
++                <span
++                  className="inline-block h-2 w-6 rounded-sm"
++                  style={{ background: 'linear-gradient(to right, #1e3a8a, #f59e0b, #ef4444)' }}
++                  title={`min ${activationData.report.min} · max ${activationData.report.max}`}
++                />
++                <span className="text-amber-100">{activationData.report.model ?? '?'}{activationData.report.run ? ` / ${activationData.report.run}` : ''}</span>
++              </span>
++            )}
++            {activationsOn && !activationData && (
++              <span className="text-text-muted">no activation capture</span>
++            )}
++          </button>
++        )}
 +        {metricsOn && (researchName || (lensId && lensRepo)) && communityIds.length > 1 && view !== 'matrix' && (
 +          <select
 +            value={isolateCommunity == null ? '' : String(isolateCommunity)}
@@ -20787,7 +20910,7 @@ index e34fd434..c286dd7e 100644
          <button
            onClick={handleToggleAIHighlights}
            className={
-@@ -369,6 +1119,20 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -369,6 +1171,20 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
            )}
          </button>
        </div>
@@ -32939,10 +33062,10 @@ index 00000000..29d9f355
 +export const COMMUNITY_PALETTE = ['#60a5fa', '#f59e0b', '#34d399', '#f472b6', '#a78bfa', '#fb7185', '#22d3ee', '#facc15', '#4ade80', '#c084fc'];
 diff --git a/gitnexus-web/src/lib/research-graph-adapter.ts b/gitnexus-web/src/lib/research-graph-adapter.ts
 new file mode 100644
-index 00000000..a6174460
+index 00000000..82da1b03
 --- /dev/null
 +++ b/gitnexus-web/src/lib/research-graph-adapter.ts
-@@ -0,0 +1,118 @@
+@@ -0,0 +1,129 @@
 +import Graph from 'graphology';
 +import type { SigmaNodeAttributes, SigmaEdgeAttributes } from './graph-adapter';
 +import { RESEARCH_COLORS, RESEARCH_FALLBACK_COLOR, COMMUNITY_PALETTE } from './research-colors';
@@ -32996,9 +33119,11 @@ index 00000000..a6174460
 +    bridgeKeys?: Set<string>;
 +    layoutMode?: 'force' | 'hierarchical' | 'circular';
 +    deadNodeIds?: Set<string>;
++    activationById?: Map<string, number>;
++    activationMax?: number;
 +  } = {},
 +): Graph<SigmaNodeAttributes, SigmaEdgeAttributes> {
-+  const { colorMode = 'community', highlightStructure = false, isolateCommunity = null, articulationIds, bridgeKeys, layoutMode = 'force', deadNodeIds = undefined } = opts;
++  const { colorMode = 'community', highlightStructure = false, isolateCommunity = null, articulationIds, bridgeKeys, layoutMode = 'force', deadNodeIds = undefined, activationById = undefined, activationMax = 0 } = opts;
 +  const graph = new Graph<SigmaNodeAttributes, SigmaEdgeAttributes>();
 +  const nodes = rg.nodes || [];
 +  const total = Math.max(1, nodes.length);
@@ -33029,6 +33154,15 @@ index 00000000..a6174460
 +    // taking precedence over the community/heatmap color but respecting `dimmed`.
 +    const isDead = !!(deadNodeIds?.has(node.id) && !dimmed);
 +    if (isDead) color = '#ef4444';   // dead-weight red
++    // Activations — a captured inference-run heat overlay. When present (and not
++    // dimmed) it overrides community/metric/dead color with a magnitude heatmap,
++    // taking precedence over everything but the isolate-community dim.
++    const act = activationById?.get(node.id);
++    if (act != null && !dimmed) {
++      const t = activationMax && activationMax > 0 ? act / activationMax : 0;
++      color = heatColor(t);
++      size = 4 + 16 * Math.sqrt(Math.max(0, Math.min(1, t)));
++    }
 +    graph.addNode(node.id, {
 +      x: layered?.get(node.id)?.x ?? Math.cos(angle) * r,
 +      y: layered?.get(node.id)?.y ?? Math.sin(angle) * r,
@@ -33888,10 +34022,10 @@ index 00000000..02e6bf4e
 +}
 diff --git a/gitnexus-web/src/services/research-client.ts b/gitnexus-web/src/services/research-client.ts
 new file mode 100644
-index 00000000..d84e565b
+index 00000000..4dd248a6
 --- /dev/null
 +++ b/gitnexus-web/src/services/research-client.ts
-@@ -0,0 +1,60 @@
+@@ -0,0 +1,69 @@
 +import type { ResearchGraph } from '../lib/research-graph-adapter';
 +
 +export interface GraphTemplate {
@@ -33925,6 +34059,15 @@ index 00000000..d84e565b
 +}
 +export async function getResearchGraph(name: string): Promise<ResearchGraph> {
 +  return jsonOrThrow(await fetch(`/graph/research/${encodeURIComponent(name)}`));
++}
++
++export interface GraphActivations {
++  nodes: Record<string, number>;
++  edges: Record<string, number>;
++  report: { min: number; max: number; nodeCount: number; edgeCount: number; droppedNodes: string[]; droppedEdges: string[]; model: string | null; run: string | null };
++}
++export async function getActivations(name: string): Promise<GraphActivations> {
++  return jsonOrThrow(await fetch(`/graph/activations/${encodeURIComponent(name)}`));
 +}
 +export async function scaffoldGraph(templateId: string, name: string, source: string): Promise<ResearchRecord> {
 +  const res = await fetch('/graph/scaffold', {

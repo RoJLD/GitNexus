@@ -307,6 +307,18 @@ writeFileSync(
   ) + '\n',
 );
 
+// A captured inference-run activation overlay alongside model-graph.json, so the
+// /graph/activations/<name> integ test has a real model-activations.json to read.
+writeFileSync(
+  join(modelGraphDir, 'model-activations.json'),
+  JSON.stringify(
+    { model: 'toy-hmm', run: 'run-001',
+      nodes: { s0: 0.82, s1: 0.18, obs_up: 0.55, obs_down: 0.45 },
+      edges: { 's0->transition->s1': 0.3, 's0->emission->obs_up': 0.8 } },
+    null, 0,
+  ) + '\n',
+);
+
 console.log('Packing tarball…');
 // Windows tar.exe (GNU tar on Git for Windows) does not accept
 // drive-letter paths (e.g. C:\...) in -f or -C arguments.

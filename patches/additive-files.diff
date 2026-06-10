@@ -5024,10 +5024,10 @@ index 00000000..4bf2da66
 +}
 diff --git a/docker-server-graph-templates-core.mjs b/docker-server-graph-templates-core.mjs
 new file mode 100644
-index 00000000..2ba4a00d
+index 00000000..edbf644f
 --- /dev/null
 +++ b/docker-server-graph-templates-core.mjs
-@@ -0,0 +1,181 @@
+@@ -0,0 +1,233 @@
 +/**
 + * Graph-templates engine (web container, pure Node — no Kùzu).
 + * Registry + built-in descriptors + index store + Kùzu sidecar client. Graphs
@@ -5186,6 +5186,58 @@ index 00000000..2ba4a00d
 +  } },
 +});
 +
++// ---- activations (dynamic observability overlay) -----------------------
++
++/**
++ * Validate + shape a captured inference-run activation file (parsed object,
++ * no IO). Returns { nodes, edges, report } where nodes/edges map id -> finite
++ * number, dropping non-numeric values and recording them in the report.
++ */
++export function shapeActivations(doc) {
++  if (!doc || typeof doc.nodes !== 'object' || doc.nodes === null || Array.isArray(doc.nodes)) {
++    throw new Error('model-activations: missing nodes object');
++  }
++  const coerce = (v) =>
++    typeof v === 'number' ? v : (typeof v === 'string' && v.trim() !== '' ? Number(v) : NaN);
++
++  const nodes = {};
++  const droppedNodes = [];
++  for (const [id, v] of Object.entries(doc.nodes)) {
++    const n = coerce(v);
++    if (Number.isFinite(n)) nodes[id] = n;
++    else droppedNodes.push(id);
++  }
++
++  let edges = {};
++  const droppedEdges = [];
++  if (doc.edges && typeof doc.edges === 'object' && !Array.isArray(doc.edges)) {
++    for (const [id, v] of Object.entries(doc.edges)) {
++      const n = coerce(v);
++      if (Number.isFinite(n)) edges[id] = n;
++      else droppedEdges.push(id);
++    }
++  }
++
++  const vals = Object.values(nodes);
++  const min = vals.length ? Math.min(...vals) : 0;
++  const max = vals.length ? Math.max(...vals) : 0;
++
++  return {
++    nodes,
++    edges,
++    report: {
++      nodeCount: Object.keys(nodes).length,
++      edgeCount: Object.keys(edges).length,
++      min,
++      max,
++      droppedNodes,
++      droppedEdges,
++      model: doc.model ?? null,
++      run: doc.run ?? null,
++    },
++  };
++}
++
 +// ---- sidecar client helpers --------------------------------------------
 +
 +const GRAPHS_URL = process.env.GRAPHS_URL || 'http://gitnexus-graphs:4749';
@@ -5211,10 +5263,10 @@ index 00000000..2ba4a00d
 +}
 diff --git a/docker-server-graph-templates.mjs b/docker-server-graph-templates.mjs
 new file mode 100644
-index 00000000..7c9f5525
+index 00000000..10f08b10
 --- /dev/null
 +++ b/docker-server-graph-templates.mjs
-@@ -0,0 +1,71 @@
+@@ -0,0 +1,90 @@
 +/**
 + * Graph templates routes (web container) — sidecar-backed (Kùzu).
 + *   GET  /graph/templates              -> { templates }
@@ -5222,10 +5274,13 @@ index 00000000..7c9f5525
 + *   POST /graph/import   {name}        -> { report }              (importer -> sidecar ingest)
 + *   GET  /graph/research               -> { graphs }              (index records)
 + *   GET  /graph/research/:name         -> { nodes, edges }        (sidecar render)
++ *   GET  /graph/activations/:name      -> { nodes, edges, report } (model-activations.json overlay)
 + */
++import { readFile } from 'node:fs/promises';
++import { join } from 'node:path';
 +import {
 +  listTemplates, getTemplate, sanitizeSource,
-+  readIndex, writeIndexRecord,
++  readIndex, writeIndexRecord, shapeActivations,
 +  sidecarCreate, sidecarIngest, sidecarRender,
 +} from './docker-server-graph-templates-core.mjs';
 +import { importResearchFs } from './docker-server-research-fs-importer.mjs';
@@ -5282,6 +5337,22 @@ index 00000000..7c9f5525
 +    const name = decodeURIComponent(path.slice('/graph/research/'.length));
 +    try { sendJson(res, 200, await sidecarRender(name)); }
 +    catch (e) { sendJson(res, 404, { error: `graph "${name}" not available: ${e.message}` }); return true; }
++    return true;
++  }
++
++  if (path.startsWith('/graph/activations/') && req.method === 'GET') {
++    const name = decodeURIComponent(path.slice('/graph/activations/'.length));
++    const index = await readIndex();
++    const record = index.graphs.find((g) => g.name === name);
++    if (!record) { sendJson(res, 404, { error: `no scaffolded graph named "${name}"` }); return true; }
++    let abs; try { abs = sanitizeSource(record.source); } catch (e) { sendJson(res, 400, { error: e.message }); return true; }
++    const run = url.searchParams.get('run');
++    const file = run ? `model-activations.${run}.json` : 'model-activations.json';
++    let raw;
++    try { raw = await readFile(join(abs, file), 'utf8'); }
++    catch { sendJson(res, 404, { error: `no activations capture for "${name}"` }); return true; }
++    try { sendJson(res, 200, shapeActivations(JSON.parse(raw))); }
++    catch (e) { sendJson(res, 400, { error: `bad activations capture: ${e.message}` }); return true; }
 +    return true;
 +  }
 +  return false;
@@ -24899,10 +24970,10 @@ index 00000000..29d9f355
 +export const COMMUNITY_PALETTE = ['#60a5fa', '#f59e0b', '#34d399', '#f472b6', '#a78bfa', '#fb7185', '#22d3ee', '#facc15', '#4ade80', '#c084fc'];
 diff --git a/gitnexus-web/src/lib/research-graph-adapter.ts b/gitnexus-web/src/lib/research-graph-adapter.ts
 new file mode 100644
-index 00000000..a6174460
+index 00000000..82da1b03
 --- /dev/null
 +++ b/gitnexus-web/src/lib/research-graph-adapter.ts
-@@ -0,0 +1,118 @@
+@@ -0,0 +1,129 @@
 +import Graph from 'graphology';
 +import type { SigmaNodeAttributes, SigmaEdgeAttributes } from './graph-adapter';
 +import { RESEARCH_COLORS, RESEARCH_FALLBACK_COLOR, COMMUNITY_PALETTE } from './research-colors';
@@ -24956,9 +25027,11 @@ index 00000000..a6174460
 +    bridgeKeys?: Set<string>;
 +    layoutMode?: 'force' | 'hierarchical' | 'circular';
 +    deadNodeIds?: Set<string>;
++    activationById?: Map<string, number>;
++    activationMax?: number;
 +  } = {},
 +): Graph<SigmaNodeAttributes, SigmaEdgeAttributes> {
-+  const { colorMode = 'community', highlightStructure = false, isolateCommunity = null, articulationIds, bridgeKeys, layoutMode = 'force', deadNodeIds = undefined } = opts;
++  const { colorMode = 'community', highlightStructure = false, isolateCommunity = null, articulationIds, bridgeKeys, layoutMode = 'force', deadNodeIds = undefined, activationById = undefined, activationMax = 0 } = opts;
 +  const graph = new Graph<SigmaNodeAttributes, SigmaEdgeAttributes>();
 +  const nodes = rg.nodes || [];
 +  const total = Math.max(1, nodes.length);
@@ -24989,6 +25062,15 @@ index 00000000..a6174460
 +    // taking precedence over the community/heatmap color but respecting `dimmed`.
 +    const isDead = !!(deadNodeIds?.has(node.id) && !dimmed);
 +    if (isDead) color = '#ef4444';   // dead-weight red
++    // Activations — a captured inference-run heat overlay. When present (and not
++    // dimmed) it overrides community/metric/dead color with a magnitude heatmap,
++    // taking precedence over everything but the isolate-community dim.
++    const act = activationById?.get(node.id);
++    if (act != null && !dimmed) {
++      const t = activationMax && activationMax > 0 ? act / activationMax : 0;
++      color = heatColor(t);
++      size = 4 + 16 * Math.sqrt(Math.max(0, Math.min(1, t)));
++    }
 +    graph.addNode(node.id, {
 +      x: layered?.get(node.id)?.x ?? Math.cos(angle) * r,
 +      y: layered?.get(node.id)?.y ?? Math.sin(angle) * r,
@@ -25778,10 +25860,10 @@ index 00000000..02e6bf4e
 +}
 diff --git a/gitnexus-web/src/services/research-client.ts b/gitnexus-web/src/services/research-client.ts
 new file mode 100644
-index 00000000..d84e565b
+index 00000000..4dd248a6
 --- /dev/null
 +++ b/gitnexus-web/src/services/research-client.ts
-@@ -0,0 +1,60 @@
+@@ -0,0 +1,69 @@
 +import type { ResearchGraph } from '../lib/research-graph-adapter';
 +
 +export interface GraphTemplate {
@@ -25815,6 +25897,15 @@ index 00000000..d84e565b
 +}
 +export async function getResearchGraph(name: string): Promise<ResearchGraph> {
 +  return jsonOrThrow(await fetch(`/graph/research/${encodeURIComponent(name)}`));
++}
++
++export interface GraphActivations {
++  nodes: Record<string, number>;
++  edges: Record<string, number>;
++  report: { min: number; max: number; nodeCount: number; edgeCount: number; droppedNodes: string[]; droppedEdges: string[]; model: string | null; run: string | null };
++}
++export async function getActivations(name: string): Promise<GraphActivations> {
++  return jsonOrThrow(await fetch(`/graph/activations/${encodeURIComponent(name)}`));
 +}
 +export async function scaffoldGraph(templateId: string, name: string, source: string): Promise<ResearchRecord> {
 +  const res = await fetch('/graph/scaffold', {
