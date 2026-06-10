@@ -24381,6 +24381,47 @@ index 00000000..9301c0bd
 +  ctx.stroke();
 +  ctx.restore();
 +}
+diff --git a/gitnexus-web/src/lib/graph-diff-view.ts b/gitnexus-web/src/lib/graph-diff-view.ts
+new file mode 100644
+index 00000000..066ca005
+--- /dev/null
++++ b/gitnexus-web/src/lib/graph-diff-view.ts
+@@ -0,0 +1,35 @@
++// Pure, graphology-free helpers for the model-graph visual diff view (host-testable, like metrics-view.ts).
++export const DIFF_VIEW_COLORS = { added: '#10b981', removed: '#ef4444', changed: '#f59e0b', common: '#4b5563' } as const;
++export type DiffStatus = keyof typeof DIFF_VIEW_COLORS;
++
++export interface GraphDiffResponse {
++  nodes: { added: string[]; removed: string[]; changed: { id: string }[]; commonCount: number };
++  edges: { added: string[]; removed: string[]; changed?: { key: string }[]; commonCount: number };
++  summary: Record<string, number>;
++}
++
++/** node id -> diff status. added/removed take precedence over changed (a node won't be in both added and changed meaningfully, but be explicit). Unnamed ids are absent (caller defaults to 'common'). */
++export function buildDiffStatus(diff: GraphDiffResponse): Map<string, DiffStatus> {
++  const m = new Map<string, DiffStatus>();
++  for (const c of diff.nodes.changed) m.set(c.id, 'changed');
++  for (const id of diff.nodes.added) m.set(id, 'added');
++  for (const id of diff.nodes.removed) m.set(id, 'removed');
++  return m;
++}
++
++/**
++ * Merge two render graphs into one: nodes deduped by id (A wins), edges deduped by
++ * source|kind|target. Pure + GENERIC — preserves the caller's node/edge types
++ * (so passing two ResearchGraphs returns a ResearchGraph, no cast needed).
++ */
++export function unionResearchGraphs<
++  N extends { id: string },
++  E extends { source: string; target: string; kind?: string },
++>(a: { nodes: N[]; edges: E[] } | undefined, b: { nodes: N[]; edges: E[] } | undefined): { nodes: N[]; edges: E[] } {
++  const nodes: N[] = []; const seen = new Set<string>();
++  for (const n of [...(a?.nodes ?? []), ...(b?.nodes ?? [])]) { if (!seen.has(n.id)) { seen.add(n.id); nodes.push(n); } }
++  const edges: E[] = []; const seenE = new Set<string>();
++  const key = (e: E) => `${e.source}|${e.kind ?? ''}|${e.target}`;
++  for (const e of [...(a?.edges ?? []), ...(b?.edges ?? [])]) { const k = key(e); if (!seenE.has(k)) { seenE.add(k); edges.push(e); } }
++  return { nodes, edges };
++}
 diff --git a/gitnexus-web/src/lib/graph-diff.ts b/gitnexus-web/src/lib/graph-diff.ts
 new file mode 100644
 index 00000000..d01d2f87
@@ -25053,15 +25094,16 @@ index 00000000..29d9f355
 +export const COMMUNITY_PALETTE = ['#60a5fa', '#f59e0b', '#34d399', '#f472b6', '#a78bfa', '#fb7185', '#22d3ee', '#facc15', '#4ade80', '#c084fc'];
 diff --git a/gitnexus-web/src/lib/research-graph-adapter.ts b/gitnexus-web/src/lib/research-graph-adapter.ts
 new file mode 100644
-index 00000000..82da1b03
+index 00000000..7769a017
 --- /dev/null
 +++ b/gitnexus-web/src/lib/research-graph-adapter.ts
-@@ -0,0 +1,129 @@
+@@ -0,0 +1,137 @@
 +import Graph from 'graphology';
 +import type { SigmaNodeAttributes, SigmaEdgeAttributes } from './graph-adapter';
 +import { RESEARCH_COLORS, RESEARCH_FALLBACK_COLOR, COMMUNITY_PALETTE } from './research-colors';
 +import { heatColor } from './metrics-view';
 +import { layeredLayout } from './layered-layout';
++import { DIFF_VIEW_COLORS } from './graph-diff-view';
 +
 +// Re-exported so existing consumers (e.g. AdjacencyMatrix) keep importing it from here;
 +// the single source of truth now lives in research-colors.ts (dep-free).
@@ -25112,9 +25154,10 @@ index 00000000..82da1b03
 +    deadNodeIds?: Set<string>;
 +    activationById?: Map<string, number>;
 +    activationMax?: number;
++    diffStatusById?: Map<string, 'added' | 'removed' | 'changed' | 'common'>;
 +  } = {},
 +): Graph<SigmaNodeAttributes, SigmaEdgeAttributes> {
-+  const { colorMode = 'community', highlightStructure = false, isolateCommunity = null, articulationIds, bridgeKeys, layoutMode = 'force', deadNodeIds = undefined, activationById = undefined, activationMax = 0 } = opts;
++  const { colorMode = 'community', highlightStructure = false, isolateCommunity = null, articulationIds, bridgeKeys, layoutMode = 'force', deadNodeIds = undefined, activationById = undefined, activationMax = 0, diffStatusById = undefined } = opts;
 +  const graph = new Graph<SigmaNodeAttributes, SigmaEdgeAttributes>();
 +  const nodes = rg.nodes || [];
 +  const total = Math.max(1, nodes.length);
@@ -25154,6 +25197,12 @@ index 00000000..82da1b03
 +      color = heatColor(t);
 +      size = 4 + 16 * Math.sqrt(Math.max(0, Math.min(1, t)));
 +    }
++    // Compare/diff view — when a diff status map is present (and not dimmed),
++    // recolor every node by its diff status, taking precedence over
++    // community/metric/dead/activation color. Absent the map, behavior is
++    // byte-identical. Unmapped nodes default to 'common'.
++    const diffSt = diffStatusById?.get(node.id);
++    if (diffStatusById && !dimmed) { color = DIFF_VIEW_COLORS[diffSt ?? 'common']; }
 +    graph.addNode(node.id, {
 +      x: layered?.get(node.id)?.x ?? Math.cos(angle) * r,
 +      y: layered?.get(node.id)?.y ?? Math.sin(angle) * r,
@@ -25163,7 +25212,7 @@ index 00000000..82da1b03
 +      nodeType: 'CodeElement',
 +      filePath: node.path,
 +      mass: 3,
-+      ...((isArticulation && !dimmed) || isDead ? { highlighted: true, zIndex: 2 } : {}),
++      ...((isArticulation && !dimmed) || isDead || (diffStatusById && diffSt && diffSt !== 'common' && !dimmed) ? { highlighted: true, zIndex: 2 } : {}),
 +    });
 +    i++;
 +  }
@@ -25943,11 +25992,12 @@ index 00000000..02e6bf4e
 +}
 diff --git a/gitnexus-web/src/services/research-client.ts b/gitnexus-web/src/services/research-client.ts
 new file mode 100644
-index 00000000..4dd248a6
+index 00000000..63f23367
 --- /dev/null
 +++ b/gitnexus-web/src/services/research-client.ts
-@@ -0,0 +1,69 @@
+@@ -0,0 +1,77 @@
 +import type { ResearchGraph } from '../lib/research-graph-adapter';
++import type { GraphDiffResponse } from '../lib/graph-diff-view';
 +
 +export interface GraphTemplate {
 +  id: string;
@@ -26015,6 +26065,13 @@ index 00000000..4dd248a6
 +  const body = await res.json().catch(() => ({}));
 +  if (!res.ok) throw new Error((body as { error?: string }).error || `HTTP ${res.status}`);
 +  return (body as { graphs?: GraphInstance[] }).graphs ?? [];
++}
++
++// Visual diff between two model/research graphs (Task 2). The route returns
++// per-bucket node/edge id lists + a numeric summary; the pure helpers in
++// graph-diff-view.ts turn that into a render-time status map + a union graph.
++export async function getGraphDiff(a: string, b: string): Promise<GraphDiffResponse> {
++  return jsonOrThrow(await fetch(`/graph/diff?a=${encodeURIComponent(a)}&b=${encodeURIComponent(b)}`));
 +}
 diff --git a/gitnexus-web/src/services/semantic-labeler.ts b/gitnexus-web/src/services/semantic-labeler.ts
 new file mode 100644

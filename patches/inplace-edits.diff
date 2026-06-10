@@ -2502,7 +2502,7 @@ index 98c20c68..50a414e4 100644
            <div className="mt-6 border-t border-border-subtle pt-4">
              <h3 className="mb-3 text-xs font-medium tracking-wide text-text-secondary uppercase">
 diff --git a/gitnexus-web/src/components/GraphCanvas.tsx b/gitnexus-web/src/components/GraphCanvas.tsx
-index e34fd434..82182b0e 100644
+index e34fd434..93ebff0d 100644
 --- a/gitnexus-web/src/components/GraphCanvas.tsx
 +++ b/gitnexus-web/src/components/GraphCanvas.tsx
 @@ -1,4 +1,4 @@
@@ -2519,7 +2519,7 @@ index e34fd434..82182b0e 100644
  } from '@/lib/lucide-icons';
  import { useSigma } from '../hooks/useSigma';
  import { useAppState } from '../hooks/useAppState';
-@@ -18,15 +19,45 @@ import {
+@@ -18,15 +19,46 @@ import {
    SigmaNodeAttributes,
    SigmaEdgeAttributes,
  } from '../lib/graph-adapter';
@@ -2548,7 +2548,8 @@ index e34fd434..82182b0e 100644
 +} from '../lib/augmented-timeline';
 +import { prefetchSnapshotGhosts } from '../services/snapshot-ghosts-cache';
 +import { researchGraphToGraphology, type ResearchGraph } from '../lib/research-graph-adapter';
-+import { getResearchGraph, applyLens, getActivations, type GraphActivations } from '../services/research-client';
++import { getResearchGraph, applyLens, getActivations, getGraphDiff, listGraphs, type GraphActivations, type GraphInstance } from '../services/research-client';
++import { buildDiffStatus, unionResearchGraphs, DIFF_VIEW_COLORS, type DiffStatus } from '../lib/graph-diff-view';
 +import { getGraphMetrics, getGraphLensMetrics, type CommunityMethod } from '../services/graph-theory-client';
 +import type { GraphMetrics } from '../services/graph-theory-client';
 +import { topNByMetric, metricsToCsv, metricsToJson, downloadText } from '../lib/metrics-view';
@@ -2565,7 +2566,7 @@ index e34fd434..82182b0e 100644
    const {
      graph,
      setSelectedNode,
-@@ -46,9 +77,167 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -46,9 +78,205 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
      clearAICitationHighlights,
      clearBlastRadius,
      animatedNodes,
@@ -2634,6 +2635,13 @@ index e34fd434..82182b0e 100644
 +  const [observabilityOn, setObservabilityOn] = useState(false);
 +  const [activationsOn, setActivationsOn] = useState(false);
 +  const [activationData, setActivationData] = useState<GraphActivations | null>(null);
++  // Compare/diff view (Task 2) — pick a second model/research graph to diff against
++  // the current one. `compareB` is the picked graph name (null = no compare);
++  // `compareGraphs` are the picker options (other graphs); `diffView` is the
++  // derived render payload (a node-status map + a union render graph + counts).
++  const [compareB, setCompareB] = useState<string | null>(null);
++  const [compareGraphs, setCompareGraphs] = useState<GraphInstance[]>([]);
++  const [diffView, setDiffView] = useState<{ statusById: Map<string, DiffStatus>; unionRg: ResearchGraph; summary: Record<string, number> } | null>(null);
 +  const [isolateCommunity, setIsolateCommunity] = useState<number | null>(null);
 +  const articulationIds = useMemo(
 +    () => new Set((metricsData?.nodes ?? []).filter((n) => n.articulation).map((n) => n.id)),
@@ -2713,6 +2721,37 @@ index e34fd434..82182b0e 100644
 +  );
 +  const activationMax = activationData?.report.max ?? 0;
 +
++  // Compare picker options — list all graphs (minus the current one) so the
++  // user can pick a second graph to diff against. Fetched once per research
++  // name; the picker is only rendered for model/research graphs (not lenses).
++  useEffect(() => {
++    if (!researchName) { setCompareGraphs([]); return; }
++    let cancelled = false;
++    listGraphs()
++      .then((gs) => { if (!cancelled) setCompareGraphs(gs.filter((g) => g.name !== researchName)); })
++      .catch(() => { if (!cancelled) setCompareGraphs([]); });
++    return () => { cancelled = true; };
++  }, [researchName]);
++
++  // Compare/diff fetch — when a second graph is picked, fetch the diff + the
++  // other graph's render payload, then derive the status map + union graph.
++  // No pick (or missing current graph/data) → clear the diff view (normal render).
++  useEffect(() => {
++    if (!compareB || !researchName || !researchData) { setDiffView(null); return; }
++    let cancelled = false;
++    Promise.all([getGraphDiff(researchName, compareB), getResearchGraph(compareB)])
++      .then(([diff, rgB]) => {
++        if (cancelled) return;
++        setDiffView({
++          statusById: buildDiffStatus(diff),
++          unionRg: unionResearchGraphs(researchData, rgB),
++          summary: diff.summary,
++        });
++      })
++      .catch(() => { if (!cancelled) setDiffView(null); });
++    return () => { cancelled = true; };
++  }, [compareB, researchName, researchData]);
++
 +  // Augmented graph (Section D — Task 9 / Section F — Task 12).
 +  // `ghosts` is the payload fetched from /ghosts (via the cached
 +  // ghosts-client) whenever the active repo changes; `selectedGhostId`
@@ -2734,7 +2773,7 @@ index e34fd434..82182b0e 100644
    const effectiveHighlightedNodeIds = useMemo(() => {
      if (!isAIHighlightsEnabled) return highlightedNodeIds;
      const next = new Set(highlightedNodeIds);
-@@ -82,6 +271,23 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -82,6 +310,23 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
  
    const handleNodeClick = useCallback(
      (nodeId: string) => {
@@ -2758,7 +2797,7 @@ index e34fd434..82182b0e 100644
        if (!graph) return;
        const node = nodeById.get(nodeId);
        if (node) {
-@@ -89,6 +295,7 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -89,6 +334,7 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
          openCodePanel();
        }
      },
@@ -2766,7 +2805,7 @@ index e34fd434..82182b0e 100644
      [graph, nodeById, setSelectedNode, openCodePanel],
    );
  
-@@ -130,6 +337,7 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -130,6 +376,7 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
      containerRef,
      sigmaRef,
      setGraph: setSigmaGraph,
@@ -2774,7 +2813,7 @@ index e34fd434..82182b0e 100644
      zoomIn,
      zoomOut,
      resetZoom,
-@@ -139,6 +347,12 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -139,6 +386,12 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
      stopLayout,
      selectedNode: sigmaSelectedNode,
      setSelectedNode: setSigmaSelectedNode,
@@ -2787,7 +2826,7 @@ index e34fd434..82182b0e 100644
    } = useSigma({
      onNodeClick: handleNodeClick,
      onNodeHover: handleNodeHover,
-@@ -147,6 +361,10 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -147,6 +400,10 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
      blastRadiusNodeIds: effectiveBlastRadiusNodeIds,
      animatedNodes: effectiveAnimatedNodes,
      visibleEdgeTypes,
@@ -2798,7 +2837,7 @@ index e34fd434..82182b0e 100644
    });
  
    // Expose focusNode to parent via ref
-@@ -170,6 +388,8 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -170,6 +427,8 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
  
    // Update Sigma graph when KnowledgeGraph changes
    useEffect(() => {
@@ -2807,7 +2846,7 @@ index e34fd434..82182b0e 100644
      if (!graph) return;
  
      // Build communityMemberships map from MEMBER_OF relationships
-@@ -189,8 +409,45 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -189,8 +448,51 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
      });
  
      const sigmaGraph = knowledgeGraphToGraphology(graph, communityMemberships);
@@ -2830,18 +2869,24 @@ index e34fd434..82182b0e 100644
 +  useEffect(() => {
 +    if (!researchData) return;
 +    if (!researchName && !lensId) return;
-+    const g = researchGraphToGraphology(researchData, metricsOn ? (metricsById ?? undefined) : undefined, sizeMetric, {
++    // Compare/diff view — when a second graph is picked, render the union of
++    // both graphs and recolor every node by its diff status (the diff color
++    // wins via the adapter's ordering). Absent a pick, render normally.
++    const renderRg = diffView ? diffView.unionRg : researchData;
++    const g = researchGraphToGraphology(renderRg, metricsOn ? (metricsById ?? undefined) : undefined, sizeMetric, {
 +      colorMode, highlightStructure, isolateCommunity, articulationIds, bridgeKeys, layoutMode,
 +      deadNodeIds: observabilityOn ? deadNodeIds : undefined,
 +      activationById: activationsOn ? activationById : undefined,
 +      activationMax,
++      diffStatusById: diffView ? diffView.statusById : undefined,
 +    });
 +    const cacheKey = (researchName ? `research:${researchName}` : `lens:${lensId}:${lensRepo}`)
 +      + (metricsOn ? `:metrics:${sizeMetric}:${colorMode}:${highlightStructure}:${isolateCommunity}:${observabilityOn ? 'obs' : ''}` : '')
 +      + (activationsOn ? ':act' : '')
++      + `:diff:${compareB ?? ''}`
 +      + `:layout:${layoutMode}`;
 +    setSigmaGraph(g, { cacheKey, skipLayout: layoutMode !== 'force' });
-+  }, [researchName, lensId, lensRepo, researchData, setSigmaGraph, metricsOn, metricsById, sizeMetric, colorMode, highlightStructure, isolateCommunity, articulationIds, bridgeKeys, layoutMode, observabilityOn, deadNodeIds, activationsOn, activationData, activationById, activationMax]);
++  }, [researchName, lensId, lensRepo, researchData, setSigmaGraph, metricsOn, metricsById, sizeMetric, colorMode, highlightStructure, isolateCommunity, articulationIds, bridgeKeys, layoutMode, observabilityOn, deadNodeIds, activationsOn, activationData, activationById, activationMax, compareB, diffView]);
 +
 +  // Expose useSigma.recomputeLayout up to useAppState so the Header
 +  // "Recompute layout" button can fire it. The action lives on
@@ -2855,7 +2900,7 @@ index e34fd434..82182b0e 100644
  
    // Update node visibility when filters change
    useEffect(() => {
-@@ -205,6 +462,198 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -205,6 +507,198 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
      // eslint-disable-next-line react-hooks/exhaustive-deps -- sigmaRef identity never changes
    }, [visibleLabels, depthFilter, appSelectedNode]);
  
@@ -3054,7 +3099,7 @@ index e34fd434..82182b0e 100644
    // Sync app selected node with sigma
    useEffect(() => {
      if (appSelectedNode) {
-@@ -249,6 +698,153 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -249,6 +743,153 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
          className="sigma-container h-full w-full cursor-grab active:cursor-grabbing"
        />
  
@@ -3208,7 +3253,7 @@ index e34fd434..82182b0e 100644
        {/* Hovered node tooltip - only show when NOT selected */}
        {hoveredNodeName && !sigmaSelectedNode && (
          <div className="pointer-events-none absolute top-4 left-1/2 z-20 -translate-x-1/2 animate-fade-in rounded-lg border border-border-subtle bg-elevated/95 px-3 py-1.5 backdrop-blur-sm">
-@@ -350,8 +946,214 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -350,8 +991,227 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
        {/* Query FAB */}
        <QueryFAB />
  
@@ -3379,6 +3424,19 @@ index e34fd434..82182b0e 100644
 +            )}
 +          </button>
 +        )}
++        {researchName && view !== 'matrix' && (
++          <select
++            value={compareB ?? ''}
++            onChange={(e) => setCompareB(e.target.value === '' ? null : e.target.value)}
++            className={compareB
++              ? 'flex h-10 items-center rounded-lg border border-emerald-400/50 bg-emerald-500/15 px-3 font-mono text-xs font-semibold text-emerald-200 transition-colors hover:border-emerald-300/60 hover:bg-emerald-500/20'
++              : 'flex h-10 items-center rounded-lg border border-border-subtle bg-elevated px-3 font-mono text-xs font-semibold text-text-secondary transition-colors hover:bg-hover hover:text-text-primary'}
++            data-testid="compare-select" title="Compare against another graph (visual diff)"
++          >
++            <option value="">Compare: (none)</option>
++            {compareGraphs.map((g) => (<option key={g.name} value={g.name}>Compare: {g.name}</option>))}
++          </select>
++        )}
 +        {metricsOn && (researchName || (lensId && lensRepo)) && communityIds.length > 1 && view !== 'matrix' && (
 +          <select
 +            value={isolateCommunity == null ? '' : String(isolateCommunity)}
@@ -3425,7 +3483,7 @@ index e34fd434..82182b0e 100644
          <button
            onClick={handleToggleAIHighlights}
            className={
-@@ -369,6 +1171,20 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -369,6 +1229,50 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
            )}
          </button>
        </div>
@@ -3441,6 +3499,36 @@ index e34fd434..82182b0e 100644
 +              </li>
 +            ))}
 +          </ol>
++        </div>
++      )}
++
++      {/* Compare/diff legend (Task 2) — four DIFF_VIEW_COLORS swatches + counts
++          from the diff summary (added/removed/changed nodes + edges drift).
++          Only shown while a diff view is active. */}
++      {diffView && (
++        <div className="absolute left-3 bottom-3 z-20 rounded-lg border border-border-subtle bg-elevated/95 p-3 font-mono text-xs text-text-secondary shadow-lg" data-testid="diff-legend">
++          <div className="mb-2 font-semibold text-text-primary">Compare: {researchName} ↔ {compareB}</div>
++          <div className="space-y-1">
++            <div className="flex items-center gap-1.5">
++              <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ backgroundColor: DIFF_VIEW_COLORS.added }} />
++              <span>added nodes ({diffView.summary.addedNodes ?? 0})</span>
++            </div>
++            <div className="flex items-center gap-1.5">
++              <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ backgroundColor: DIFF_VIEW_COLORS.removed }} />
++              <span>removed nodes ({diffView.summary.removedNodes ?? 0})</span>
++            </div>
++            <div className="flex items-center gap-1.5">
++              <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ backgroundColor: DIFF_VIEW_COLORS.changed }} />
++              <span>changed nodes ({diffView.summary.changedNodes ?? 0})</span>
++            </div>
++            <div className="flex items-center gap-1.5">
++              <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ backgroundColor: DIFF_VIEW_COLORS.common }} />
++              <span>common</span>
++            </div>
++          </div>
++          <div className="mt-2 border-t border-border-subtle pt-1.5 text-text-muted">
++            edges +{diffView.summary.addedEdges ?? 0} / −{diffView.summary.removedEdges ?? 0} · drift {diffView.summary.drift ?? 0}
++          </div>
 +        </div>
 +      )}
      </div>
