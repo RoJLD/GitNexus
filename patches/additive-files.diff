@@ -5193,10 +5193,10 @@ index 00000000..42550119
 +}
 diff --git a/docker-server-graph-templates.mjs b/docker-server-graph-templates.mjs
 new file mode 100644
-index 00000000..1a4f7b60
+index 00000000..8f58a462
 --- /dev/null
 +++ b/docker-server-graph-templates.mjs
-@@ -0,0 +1,68 @@
+@@ -0,0 +1,70 @@
 +/**
 + * Graph templates routes (web container) — sidecar-backed (Kùzu).
 + *   GET  /graph/templates              -> { templates }
@@ -5222,6 +5222,8 @@ index 00000000..1a4f7b60
 +  const path = url.pathname;
 +
 +  if (path === '/graph/templates' && req.method === 'GET') { sendJson(res, 200, { templates: listTemplates() }); return true; }
++
++  if (path === '/graph/list' && req.method === 'GET') { sendJson(res, 200, { graphs: (await readIndex()).graphs }); return true; }
 +
 +  if (path === '/graph/scaffold' && req.method === 'POST') {
 +    let body; try { body = await readBody(req); } catch { sendJson(res, 400, { error: 'invalid JSON body' }); return true; }
@@ -16871,31 +16873,52 @@ index 00000000..4cc7c53e
 +};
 diff --git a/gitnexus-web/src/components/GraphSidebar.tsx b/gitnexus-web/src/components/GraphSidebar.tsx
 new file mode 100644
-index 00000000..f5fc5dbb
+index 00000000..5f78ddf7
 --- /dev/null
 +++ b/gitnexus-web/src/components/GraphSidebar.tsx
-@@ -0,0 +1,25 @@
-+// GraphSidebar — lists available research graphs and exposes a "+ New" action.
-+// Rendered under the ?multigraph=1 opt-in (and whenever onNewGraph is passed).
-+// Stage 1: minimal shell (list + New button). Richer browsing deferred to Stage 2.
+@@ -0,0 +1,46 @@
++import { useEffect, useState } from 'react';
++import { listGraphs, type GraphInstance } from '../services/research-client';
 +
-+interface GraphSidebarProps {
-+  onNewGraph?: () => void;
-+}
++interface GraphSidebarProps { onNewGraph?: () => void }
 +
 +export function GraphSidebar({ onNewGraph }: GraphSidebarProps) {
++  const [graphs, setGraphs] = useState<GraphInstance[] | null>(null);
++  const [error, setError] = useState<string | null>(null);
++  useEffect(() => {
++    listGraphs().then(setGraphs).catch((e) => setError(e instanceof Error ? e.message : 'failed to list graphs'));
++  }, []);
++  const active = new URLSearchParams(window.location.search).get('research');
++  // Preserve ?multigraph=1 (and any other params) so the sidebar persists after
++  // opening a graph — you can keep browsing/switching. research↔lens are mutually
++  // exclusive, so clear lens/repo when opening a research graph.
++  const open = (name: string) => {
++    const p = new URLSearchParams(window.location.search);
++    p.set('research', name);
++    p.delete('lens');
++    p.delete('repo');
++    window.location.search = `?${p.toString()}`;
++  };
 +  return (
-+    <aside className="flex h-full w-48 flex-col border-r border-border-subtle bg-elevated text-xs text-text-secondary">
++    <aside className="flex h-full w-48 flex-col border-r border-border-subtle bg-elevated text-xs text-text-secondary" data-testid="graph-sidebar">
 +      <div className="flex items-center justify-between px-3 py-2 font-semibold text-text-primary">
 +        <span>Graphs</span>
-+        {onNewGraph && (
++        {onNewGraph && (<button onClick={onNewGraph} className="text-xs px-2 py-1 rounded hover:bg-slate-800">+ New</button>)}
++      </div>
++      <div className="flex-1 overflow-y-auto px-2 pb-2">
++        {error && <div className="px-1 py-2 text-rose-300">{error}</div>}
++        {graphs && graphs.length === 0 && <div className="px-1 py-2 text-text-muted">No graphs yet — + New</div>}
++        {graphs?.map((g) => (
 +          <button
-+            onClick={onNewGraph}
-+            className="text-xs px-2 py-1 rounded hover:bg-slate-800"
++            key={g.name}
++            onClick={() => open(g.name)}
++            className={`mb-1 flex w-full flex-col items-start gap-0.5 rounded px-2 py-1.5 text-left transition-colors hover:bg-hover ${active === g.name ? 'bg-indigo-500/15 text-indigo-200' : 'text-text-secondary'}`}
++            data-testid="graph-sidebar-item"
 +          >
-+            + New
++            <span className="truncate font-mono" title={g.name}>{g.name}</span>
++            <span className="rounded bg-slate-800 px-1 text-[10px] text-text-muted">{g.schema_type}</span>
 +          </button>
-+        )}
++        ))}
 +      </div>
 +    </aside>
 +  );
@@ -17851,6 +17874,46 @@ index 00000000..23238326
 +    </div>
 +  );
 +};
+diff --git a/gitnexus-web/src/components/NodeInspector.tsx b/gitnexus-web/src/components/NodeInspector.tsx
+new file mode 100644
+index 00000000..a752db3f
+--- /dev/null
++++ b/gitnexus-web/src/components/NodeInspector.tsx
+@@ -0,0 +1,34 @@
++import { nodeInspectorData, type InspectorData } from '../lib/node-inspector';
++import type { ResearchGraph } from '../lib/research-graph-adapter';
++
++const METRIC_KEYS = ['degree', 'pagerank', 'betweenness', 'eigenvector', 'closeness', 'katz', 'harmonic', 'coreness', 'clustering', 'community'];
++
++interface NodeInspectorProps {
++  researchData: ResearchGraph | null;
++  metricsById?: Map<string, Record<string, number>>;
++  selectedId: string | null;
++}
++
++export function NodeInspector({ researchData, metricsById, selectedId }: NodeInspectorProps) {
++  const d: InspectorData | null = nodeInspectorData(researchData, metricsById, selectedId);
++  if (!d) return null;
++  return (
++    <div className="absolute left-4 top-16 z-20 w-64 rounded-lg border border-border-subtle bg-elevated/95 p-3 font-mono text-xs text-text-secondary shadow-lg" data-testid="node-inspector">
++      <div className="mb-2 truncate font-semibold text-text-primary" title={d.id}>{d.label || d.id}</div>
++      <div className="space-y-0.5">
++        <div><span className="text-text-muted">type</span> {d.type}</div>
++        {d.path && <div className="truncate" title={d.path}><span className="text-text-muted">path</span> {d.path}</div>}
++      </div>
++      {d.metrics && (
++        <div className="mt-2 border-t border-border-subtle pt-2">
++          {METRIC_KEYS.filter((k) => d.metrics![k] !== undefined).map((k) => (
++            <div key={k} className="flex justify-between gap-2">
++              <span className="text-text-muted">{k}</span>
++              <span className="text-indigo-300">{k === 'community' || k === 'degree' || k === 'coreness' ? d.metrics![k] : (d.metrics![k] as number).toFixed(4)}</span>
++            </div>
++          ))}
++        </div>
++      )}
++    </div>
++  );
++}
 diff --git a/gitnexus-web/src/components/OwnershipPanel.tsx b/gitnexus-web/src/components/OwnershipPanel.tsx
 new file mode 100644
 index 00000000..cf9a4669
@@ -24240,6 +24303,28 @@ index 00000000..a70ff336
 +  document.body.appendChild(a); a.click(); a.remove();
 +  URL.revokeObjectURL(url);
 +}
+diff --git a/gitnexus-web/src/lib/node-inspector.ts b/gitnexus-web/src/lib/node-inspector.ts
+new file mode 100644
+index 00000000..c6e6433c
+--- /dev/null
++++ b/gitnexus-web/src/lib/node-inspector.ts
+@@ -0,0 +1,16 @@
++import type { ResearchGraph } from './research-graph-adapter';
++
++export interface InspectorData { id: string; type: string; label: string; path: string; metrics: Record<string, number> | null }
++
++/** Look up the selected node in a ResearchGraph + attach its metrics row (if any). Pure; null when
++ *  no selection / not found / no graph. */
++export function nodeInspectorData(
++  rg: ResearchGraph | null | undefined,
++  metricsById: Map<string, Record<string, number>> | undefined,
++  selectedId: string | null | undefined,
++): InspectorData | null {
++  if (!selectedId || !rg) return null;
++  const node = (rg.nodes || []).find((n) => n.id === selectedId);
++  if (!node) return null;
++  return { id: node.id, type: node.type, label: node.label, path: node.path, metrics: metricsById?.get(selectedId) ?? null };
++}
 diff --git a/gitnexus-web/src/lib/research-colors.ts b/gitnexus-web/src/lib/research-colors.ts
 new file mode 100644
 index 00000000..2226a9f1
@@ -25135,10 +25220,10 @@ index 00000000..02e6bf4e
 +}
 diff --git a/gitnexus-web/src/services/research-client.ts b/gitnexus-web/src/services/research-client.ts
 new file mode 100644
-index 00000000..03e6944d
+index 00000000..d84e565b
 --- /dev/null
 +++ b/gitnexus-web/src/services/research-client.ts
-@@ -0,0 +1,52 @@
+@@ -0,0 +1,60 @@
 +import type { ResearchGraph } from '../lib/research-graph-adapter';
 +
 +export interface GraphTemplate {
@@ -25190,6 +25275,14 @@ index 00000000..03e6944d
 +
 +export async function applyLens(id: string, repo: string): Promise<ResearchGraph> {
 +  return jsonOrThrow(await fetch(`/graph/lens/${encodeURIComponent(id)}?repo=${encodeURIComponent(repo)}`));
++}
++
++export interface GraphInstance { name: string; template: string; schema_type: string; source: string | null; created: string }
++export async function listGraphs(): Promise<GraphInstance[]> {
++  const res = await fetch('/graph/list');
++  const body = await res.json().catch(() => ({}));
++  if (!res.ok) throw new Error((body as { error?: string }).error || `HTTP ${res.status}`);
++  return (body as { graphs?: GraphInstance[] }).graphs ?? [];
 +}
 diff --git a/gitnexus-web/src/services/semantic-labeler.ts b/gitnexus-web/src/services/semantic-labeler.ts
 new file mode 100644

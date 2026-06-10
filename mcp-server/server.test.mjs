@@ -145,6 +145,11 @@ describe('mcp-server/server.mjs — Task 11.13 smoke', () => {
     assert.ok(/approx: \{ type: 'number'/.test(src), 'inputSchema should offer an approx param');
   });
 
+  it("registers 'gitnexus_list_graphs' hitting /graph/list", () => {
+    assert.ok(src.includes("name: 'gitnexus_list_graphs'"), 'TOOLS must contain gitnexus_list_graphs');
+    assert.ok(src.includes("callWeb('/graph/list')"), 'handler must call /graph/list');
+  });
+
   it('query_meta_graph inputSchema enumerates valid layer values', () => {
     assert.ok(src.includes("'lineage'"), "layer enum must include 'lineage'");
     assert.ok(src.includes("'manifestation'"), "layer enum must include 'manifestation'");

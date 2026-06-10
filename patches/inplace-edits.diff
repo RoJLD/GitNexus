@@ -1918,7 +1918,7 @@ index 211bb65c..49a1c7ae 100644
      "@vitejs/plugin-react": "^5.1.4",
      "@vitest/coverage-v8": "^4.1.5",
 diff --git a/gitnexus-web/src/App.tsx b/gitnexus-web/src/App.tsx
-index 2ee3569a..152d0517 100644
+index 2ee3569a..301c4569 100644
 --- a/gitnexus-web/src/App.tsx
 +++ b/gitnexus-web/src/App.tsx
 @@ -1,11 +1,27 @@
@@ -2287,14 +2287,18 @@ index 2ee3569a..152d0517 100644
  
            {/* Code References Panel (overlay) - does NOT resize the graph, it overlaps on top */}
            {isCodePanelOpen && (codeReferences.length > 0 || !!selectedNode) && (
-@@ -289,12 +560,27 @@ const AppContent = () => {
+@@ -289,12 +560,31 @@ const AppContent = () => {
                <CodeReferencesPanel onFocusNode={handleFocusNode} />
              </div>
            )}
 +
-+          {/* Graph-templates sidebar — only visible when ?multigraph=1 */}
++          {/* Graph-templates sidebar — only visible when ?multigraph=1. Absolutely
++              positioned as a full-height left column (mirrors CodeReferencesPanel)
++              so it doesn't collapse to the bottom of the flex graph area. */}
 +          {new URLSearchParams(window.location.search).get('multigraph') === '1' && (
-+            <GraphSidebar onNewGraph={handleNewGraph} />
++            <div className="pointer-events-auto absolute inset-y-0 left-0 z-20">
++              <GraphSidebar onNewGraph={handleNewGraph} />
++            </div>
 +          )}
          </div>
  
@@ -2315,7 +2319,7 @@ index 2ee3569a..152d0517 100644
        <StatusBar />
  
        {serverDisconnected && (
-@@ -309,6 +595,38 @@ const AppContent = () => {
+@@ -309,6 +599,38 @@ const AppContent = () => {
          onClose={() => setSettingsPanelOpen(false)}
          onSettingsSaved={handleSettingsSaved}
        />
@@ -2498,7 +2502,7 @@ index 98c20c68..50a414e4 100644
            <div className="mt-6 border-t border-border-subtle pt-4">
              <h3 className="mb-3 text-xs font-medium tracking-wide text-text-secondary uppercase">
 diff --git a/gitnexus-web/src/components/GraphCanvas.tsx b/gitnexus-web/src/components/GraphCanvas.tsx
-index e34fd434..26927667 100644
+index e34fd434..056bf90f 100644
 --- a/gitnexus-web/src/components/GraphCanvas.tsx
 +++ b/gitnexus-web/src/components/GraphCanvas.tsx
 @@ -1,4 +1,4 @@
@@ -2515,7 +2519,7 @@ index e34fd434..26927667 100644
  } from '@/lib/lucide-icons';
  import { useSigma } from '../hooks/useSigma';
  import { useAppState } from '../hooks/useAppState';
-@@ -18,15 +19,44 @@ import {
+@@ -18,15 +19,45 @@ import {
    SigmaNodeAttributes,
    SigmaEdgeAttributes,
  } from '../lib/graph-adapter';
@@ -2550,6 +2554,7 @@ index e34fd434..26927667 100644
 +import { topNByMetric, metricsToCsv, metricsToJson, downloadText } from '../lib/metrics-view';
 +import { AdjacencyMatrix } from './AdjacencyMatrix';
 +import type { MatrixNodeMetric } from '../lib/adjacency-matrix';
++import { NodeInspector } from './NodeInspector';
  
  export interface GraphCanvasHandle {
    focusNode: (nodeId: string) => void;
@@ -2560,7 +2565,7 @@ index e34fd434..26927667 100644
    const {
      graph,
      setSelectedNode,
-@@ -46,9 +76,134 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -46,9 +77,134 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
      clearAICitationHighlights,
      clearBlastRadius,
      animatedNodes,
@@ -2696,7 +2701,7 @@ index e34fd434..26927667 100644
    const effectiveHighlightedNodeIds = useMemo(() => {
      if (!isAIHighlightsEnabled) return highlightedNodeIds;
      const next = new Set(highlightedNodeIds);
-@@ -82,6 +237,23 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -82,6 +238,23 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
  
    const handleNodeClick = useCallback(
      (nodeId: string) => {
@@ -2720,7 +2725,7 @@ index e34fd434..26927667 100644
        if (!graph) return;
        const node = nodeById.get(nodeId);
        if (node) {
-@@ -89,6 +261,7 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -89,6 +262,7 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
          openCodePanel();
        }
      },
@@ -2728,7 +2733,7 @@ index e34fd434..26927667 100644
      [graph, nodeById, setSelectedNode, openCodePanel],
    );
  
-@@ -130,6 +303,7 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -130,6 +304,7 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
      containerRef,
      sigmaRef,
      setGraph: setSigmaGraph,
@@ -2736,7 +2741,7 @@ index e34fd434..26927667 100644
      zoomIn,
      zoomOut,
      resetZoom,
-@@ -139,6 +313,12 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -139,6 +314,12 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
      stopLayout,
      selectedNode: sigmaSelectedNode,
      setSelectedNode: setSigmaSelectedNode,
@@ -2749,7 +2754,7 @@ index e34fd434..26927667 100644
    } = useSigma({
      onNodeClick: handleNodeClick,
      onNodeHover: handleNodeHover,
-@@ -147,6 +327,10 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -147,6 +328,10 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
      blastRadiusNodeIds: effectiveBlastRadiusNodeIds,
      animatedNodes: effectiveAnimatedNodes,
      visibleEdgeTypes,
@@ -2760,7 +2765,7 @@ index e34fd434..26927667 100644
    });
  
    // Expose focusNode to parent via ref
-@@ -170,6 +354,8 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -170,6 +355,8 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
  
    // Update Sigma graph when KnowledgeGraph changes
    useEffect(() => {
@@ -2769,7 +2774,7 @@ index e34fd434..26927667 100644
      if (!graph) return;
  
      // Build communityMemberships map from MEMBER_OF relationships
-@@ -189,8 +375,41 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -189,8 +376,41 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
      });
  
      const sigmaGraph = knowledgeGraphToGraphology(graph, communityMemberships);
@@ -2813,7 +2818,7 @@ index e34fd434..26927667 100644
  
    // Update node visibility when filters change
    useEffect(() => {
-@@ -205,6 +424,198 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -205,6 +425,198 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
      // eslint-disable-next-line react-hooks/exhaustive-deps -- sigmaRef identity never changes
    }, [visibleLabels, depthFilter, appSelectedNode]);
  
@@ -3012,7 +3017,7 @@ index e34fd434..26927667 100644
    // Sync app selected node with sigma
    useEffect(() => {
      if (appSelectedNode) {
-@@ -249,6 +660,141 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -249,6 +661,153 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
          className="sigma-container h-full w-full cursor-grab active:cursor-grabbing"
        />
  
@@ -3025,6 +3030,18 @@ index e34fd434..26927667 100644
 +            order={metricsOn ? 'community' : 'input'}
 +          />
 +        </div>
++      )}
++
++      {/* Node inspector (P3.4) — selected-node fields + metrics, off useSigma.selectedNode.
++          Gated on the research/lens graph + the graph (non-matrix) view. The metricsById
++          state's value type is a concrete all-numeric interface, a structural superset of
++          Record<string,number>; Map is invariant in its value, so we cast for the prop. */}
++      {(researchName || (lensId && lensRepo)) && view !== 'matrix' && (
++        <NodeInspector
++          researchData={researchData}
++          metricsById={(metricsById ?? undefined) as Map<string, Record<string, number>> | undefined}
++          selectedId={sigmaSelectedNode}
++        />
 +      )}
 +
 +      {/* Cluster halos — SVG overlay above the canvas (Sigma 3 has no
@@ -3154,7 +3171,7 @@ index e34fd434..26927667 100644
        {/* Hovered node tooltip - only show when NOT selected */}
        {hoveredNodeName && !sigmaSelectedNode && (
          <div className="pointer-events-none absolute top-4 left-1/2 z-20 -translate-x-1/2 animate-fade-in rounded-lg border border-border-subtle bg-elevated/95 px-3 py-1.5 backdrop-blur-sm">
-@@ -350,8 +896,173 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -350,8 +909,173 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
        {/* Query FAB */}
        <QueryFAB />
  
@@ -3330,7 +3347,7 @@ index e34fd434..26927667 100644
          <button
            onClick={handleToggleAIHighlights}
            className={
-@@ -369,6 +1080,20 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -369,6 +1093,20 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
            )}
          </button>
        </div>

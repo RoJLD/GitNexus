@@ -504,6 +504,12 @@ const TOOLS = [
     handler: () => callWeb('/graph/templates'),
   },
   {
+    name: 'gitnexus_list_graphs',
+    description: 'List the INSTANTIATED sidecar graphs the user has scaffolded (name, template, schema_type, source, created) — vs gitnexus_list_graph_templates which lists the available templates. Use to discover existing graphs to open/inspect.',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+    handler: () => callWeb('/graph/list'),
+  },
+  {
     name: 'gitnexus_create_graph_from_template',
     description: 'Scaffold a new graph from a template. Records the graph (name + template + source dir relative to /data/projects) so it can then be imported. Does NOT populate it — call gitnexus_import_into_graph next. Returns the index record.',
     inputSchema: {
