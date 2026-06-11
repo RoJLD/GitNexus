@@ -75,6 +75,7 @@ Pont entre les deux : `gitnexus serve` → la web UI auto-détecte le backend lo
 - Chat IA in-browser (BYO LLM)
 - Mode bridge : auto-détection backend local
 - Hébergé sur `gitnexus.vercel.app`
+- **Consolidation toolbar (2026-06-11)** : les 9 boutons-mode analytiques de `Timeline.tsx` (churn/coupling/growth/dissonance/whatif/entropyCommits + ownership/lifespan + similarity) sont regroupés **Health / Social / Cross-repo** via un sélecteur 3-segments (défaut Health) ; config pure host-testée `gitnexus-web/src/lib/panel-groups.ts` (`PANEL_GROUP_OF`/`PANEL_GROUPS`/`modesInGroup`) ; chaque bloc-bouton existant gardé verbatim, juste gated par groupe (zéro changement de comportement). Réduit l'inflation cognitive de la rangée plate. Contrôles non-analytiques (play/animate/nav/mini-map/diff) inchangés. Audit/Gantt flottants + modals + auto-select du groupe actif = déférés. [spec](docs/superpowers/specs/2026-06-11-ui-consolidation-toolbar-groups-design.md)
 
 ### A.10 Déploiement officiel
 - 2 images Docker signées (Cosign) publiées sur **GHCR** + **Docker Hub** :

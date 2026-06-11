@@ -910,7 +910,7 @@ abandonner l'acquis.
 | **Configs disjointes** | `.gitnexus-domains.yaml` existe déjà ; policy + budgets + watches arrivent | À 3+ fichiers config par repo | 2bis.4 Unified config |
 | **MCP gap sur analytics** | Le MCP-first principle des Principes de design n'est appliqué qu'au graphe upstream | Dès qu'on veut utiliser Claude comme advisor (cf 3.7) | 2bis.1 MCP exposure |
 | **Divergence upstream** | +275 commits behind main upstream ([INVENTORY C](INVENTORY.md#partie-c)) | Au prochain bump majeur (refactor LadybugDB ?) | Bumper + reapply, OU négocier plugin system upstream avec abhigyanpatwari |
-| **Croissance UI horizontale** | Chaque feature = 1 panel ; on est à ~10 panels | À 15+ panels (inflation cognitive) | Consolidation UX + regroupement par contexte (Health / Social / Cross-repo) |
+| **Croissance UI horizontale** ✅ **v1 2026-06-11** | ~~Chaque feature = 1 panel ; ~10 panels~~ → les 9 boutons-mode analytiques de la toolbar Timeline sont **regroupés** Health / Social / Cross-repo (sélecteur 3-segments + config pure `panel-groups.ts`) | — | Consolidation UX (regroupement toolbar) ✅ v1 ; reste : Audit/Gantt flottants + modals, auto-select du groupe actif [spec](docs/superpowers/specs/2026-06-11-ui-consolidation-toolbar-groups-design.md) |
 
 ---
 

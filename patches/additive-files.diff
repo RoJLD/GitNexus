@@ -20142,10 +20142,10 @@ index 00000000..3842afce
 +}
 diff --git a/gitnexus-web/src/components/Timeline.tsx b/gitnexus-web/src/components/Timeline.tsx
 new file mode 100644
-index 00000000..e103a406
+index 00000000..801a450e
 --- /dev/null
 +++ b/gitnexus-web/src/components/Timeline.tsx
-@@ -0,0 +1,1622 @@
+@@ -0,0 +1,1678 @@
 +import { useEffect, useMemo, useRef, useState } from 'react';
 +import {
 +  Play,
@@ -20167,6 +20167,7 @@ index 00000000..e103a406
 +} from '@/lib/lucide-icons';
 +import { useAppState } from '../hooks/useAppState';
 +import { EntropyBadge } from './EntropyBadge';
++import { PANEL_GROUP_OF, PANEL_GROUPS, type PanelGroup } from '../lib/panel-groups';
 +import { mapPositionToDate, snapToNearestSnapshot, applyWheelZoom } from '../lib/timeline-zoom';
 +import { WHEEL_ZOOM_MIN_SPAN_MS, WHEEL_ZOOM_SENSITIVITY, WHEEL_ZOOM_SETTLE_MS } from '../config/ui-constants';
 +
@@ -20318,6 +20319,9 @@ index 00000000..e103a406
 +  // Timeline "Commits" mode (spec 2026-05-28 §3.2). Local au composant :
 +  // 'snapshots' = comportement actuel ; 'commits' = nav par-commit.
 +  const [navMode, setNavMode] = useState<'snapshots' | 'commits'>('snapshots');
++  // Analytics toolbar grouping (spec 2026-06-11) — purely presentational.
++  // Picks which group of analytics-mode buttons is visible. Default Health.
++  const [analyticsGroup, setAnalyticsGroup] = useState<PanelGroup>('health');
 +  // The commit the user last clicked in Commits mode. Tracked locally because
 +  // loadGraphAtCommit only sets atCommitSha on SUCCESS — on a 409 (missing
 +  // diffs / needs baseline) atCommitSha stays null, so the fallback strips
@@ -21093,11 +21097,33 @@ index 00000000..e103a406
 +          so we don't show a misleading "trend" without a baseline. */}
 +      <EntropyBadge repoName={projectName} />
 +
++      {/* Analytics group selector (spec 2026-06-11) — 3 segments
++          (Health / Social / Cross-repo). Only the active group's
++          analytics-mode buttons render below; purely presentational. */}
++      <div className="flex shrink-0 items-center gap-1 border-l border-border-subtle pl-2">
++        {PANEL_GROUPS.map((g) => (
++          <button
++            key={g.id}
++            type="button"
++            onClick={() => setAnalyticsGroup(g.id)}
++            className={`flex shrink-0 cursor-pointer items-center gap-1 rounded-md border px-1.5 py-0.5 text-[10px] font-medium transition-all ${
++              analyticsGroup === g.id
++                ? 'border-amber-500/40 bg-amber-500/15 text-amber-300'
++                : 'border-border-subtle bg-elevated text-text-secondary hover:bg-hover hover:text-text-primary'
++            }`}
++          >
++            {g.label}
++          </button>
++        ))}
++      </div>
++
 +      {/* Churn heatmap toggle. Mutually exclusive with diff mode at the
 +          state level — if diff is on, this button is disabled to avoid
 +          confusing dual-color situations. The active state shows a
 +          legend instead of just an icon so the user knows what the
 +          colors mean. */}
++      {analyticsGroup === PANEL_GROUP_OF.churn && (
++      <>
 +      <button
 +        type="button"
 +        onClick={async () => {
@@ -21149,11 +21175,15 @@ index 00000000..e103a406
 +          {churnError}
 +        </div>
 +      )}
++      </>
++      )}
 +
 +      {/* Coupling toggle. Same mutual-exclusion logic as churn — diff
 +          wins, churn is auto-exited when coupling turns on, and vice
 +          versa. The actual coupling UI is a floating panel rendered
 +          inside the graph area (CouplingPanel). */}
++      {analyticsGroup === PANEL_GROUP_OF.coupling && (
++      <>
 +      <button
 +        type="button"
 +        onClick={async () => {
@@ -21195,10 +21225,14 @@ index 00000000..e103a406
 +          {couplingError}
 +        </div>
 +      )}
++      </>
++      )}
 +
 +      {/* Growth toggle. Independent from churn/coupling — the chart sits
 +          in a different corner (bottom-left) so it doesn't fight for
 +          space. Only diff is excluded (graph coloring conflict). */}
++      {analyticsGroup === PANEL_GROUP_OF.growth && (
++      <>
 +      <button
 +        type="button"
 +        onClick={async () => {
@@ -21234,9 +21268,13 @@ index 00000000..e103a406
 +          {growthError}
 +        </div>
 +      )}
++      </>
++      )}
 +
 +      {/* Lifespan toggle — independent of all others (panel sits in a
 +          different corner, no coloring conflict). Only diff is excluded. */}
++      {analyticsGroup === PANEL_GROUP_OF.lifespan && (
++      <>
 +      <button
 +        type="button"
 +        onClick={async () => {
@@ -21272,10 +21310,13 @@ index 00000000..e103a406
 +          {lifespanError}
 +        </div>
 +      )}
++      </>
++      )}
 +
 +      {/* What-if simulator — top-right slot. Mutex with the other
 +          panels in that slot. Clicking summons the panel; the panel
 +          itself drives the mutation flow. */}
++      {analyticsGroup === PANEL_GROUP_OF.whatif && (
 +      <button
 +        type="button"
 +        onClick={async () => {
@@ -21315,10 +21356,13 @@ index 00000000..e103a406
 +          </span>
 +        )}
 +      </button>
++      )}
 +
 +      {/* Ownership / bus factor — same top-right slot as Coupling, so
 +          we close one when opening the other. The data isn't snapshot-
 +          based; it always reads live git history. Hidden in diff mode. */}
++      {analyticsGroup === PANEL_GROUP_OF.ownership && (
++      <>
 +      <button
 +        type="button"
 +        onClick={async () => {
@@ -21358,10 +21402,14 @@ index 00000000..e103a406
 +          {ownershipError}
 +        </div>
 +      )}
++      </>
++      )}
 +
 +      {/* Dissonance — same top-right slot as Coupling and Ownership.
 +          Reads .gitnexus-domains.json from the live repo, so it works
 +          regardless of snapshot count. Useful even on day 1. */}
++      {analyticsGroup === PANEL_GROUP_OF.dissonance && (
++      <>
 +      <button
 +        type="button"
 +        onClick={async () => {
@@ -21404,10 +21452,14 @@ index 00000000..e103a406
 +          dissonance error (hover)
 +        </div>
 +      )}
++      </>
++      )}
 +
 +      {/* Cross-repo similarity — same top-right slot, mutex with the
 +          other panels. Only meaningful when 2+ non-snapshot repos are
 +          indexed; the panel itself surfaces the empty state otherwise. */}
++      {analyticsGroup === PANEL_GROUP_OF.similarity && (
++      <>
 +      <button
 +        type="button"
 +        onClick={async () => {
@@ -21450,10 +21502,13 @@ index 00000000..e103a406
 +          similarity error (hover)
 +        </div>
 +      )}
++      </>
++      )}
 +
 +      {/* Commit entropy sparkline (Tier 2bis.2) — non-mutex with the
 +          right-side panels (renders above the Timeline, doesn't fight
 +          for screen real estate). Auto-fetches when toggled on. */}
++      {analyticsGroup === PANEL_GROUP_OF.entropyCommits && (
 +      <button
 +        type="button"
 +        onClick={() => {
@@ -21477,6 +21532,7 @@ index 00000000..e103a406
 +        <Activity className="h-2.5 w-2.5" />
 +        Commit Δ
 +      </button>
++      )}
 +
 +      {/* Zoom to window / Zoom out toggle — Phase 1 timeline-zoom-cursors.
 +          Active when zoomWindow is set. Disabled if cursors aren't both set. */}
@@ -25210,6 +25266,42 @@ index 00000000..c6e6433c
 +  const node = (rg.nodes || []).find((n) => n.id === selectedId);
 +  if (!node) return null;
 +  return { id: node.id, type: node.type, label: node.label, path: node.path, metrics: metricsById?.get(selectedId) ?? null };
++}
+diff --git a/gitnexus-web/src/lib/panel-groups.ts b/gitnexus-web/src/lib/panel-groups.ts
+new file mode 100644
+index 00000000..2358c300
+--- /dev/null
++++ b/gitnexus-web/src/lib/panel-groups.ts
+@@ -0,0 +1,30 @@
++export type PanelGroup = 'health' | 'social' | 'cross-repo';
++export type AnalyticsMode =
++  | 'churn'
++  | 'coupling'
++  | 'growth'
++  | 'dissonance'
++  | 'whatif'
++  | 'entropyCommits'
++  | 'ownership'
++  | 'lifespan'
++  | 'similarity';
++export const PANEL_GROUP_OF: Record<AnalyticsMode, PanelGroup> = {
++  churn: 'health',
++  coupling: 'health',
++  growth: 'health',
++  dissonance: 'health',
++  whatif: 'health',
++  entropyCommits: 'health',
++  ownership: 'social',
++  lifespan: 'social',
++  similarity: 'cross-repo',
++};
++export const PANEL_GROUPS: { id: PanelGroup; label: string }[] = [
++  { id: 'health', label: 'Health' },
++  { id: 'social', label: 'Social' },
++  { id: 'cross-repo', label: 'Cross-repo' },
++];
++export function modesInGroup(g: PanelGroup): AnalyticsMode[] {
++  return (Object.keys(PANEL_GROUP_OF) as AnalyticsMode[]).filter((m) => PANEL_GROUP_OF[m] === g);
 +}
 diff --git a/gitnexus-web/src/lib/research-colors.ts b/gitnexus-web/src/lib/research-colors.ts
 new file mode 100644
