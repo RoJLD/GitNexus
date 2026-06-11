@@ -2502,7 +2502,7 @@ index 98c20c68..50a414e4 100644
            <div className="mt-6 border-t border-border-subtle pt-4">
              <h3 className="mb-3 text-xs font-medium tracking-wide text-text-secondary uppercase">
 diff --git a/gitnexus-web/src/components/GraphCanvas.tsx b/gitnexus-web/src/components/GraphCanvas.tsx
-index e34fd434..93ebff0d 100644
+index e34fd434..8106d50f 100644
 --- a/gitnexus-web/src/components/GraphCanvas.tsx
 +++ b/gitnexus-web/src/components/GraphCanvas.tsx
 @@ -1,4 +1,4 @@
@@ -2519,7 +2519,7 @@ index e34fd434..93ebff0d 100644
  } from '@/lib/lucide-icons';
  import { useSigma } from '../hooks/useSigma';
  import { useAppState } from '../hooks/useAppState';
-@@ -18,15 +19,46 @@ import {
+@@ -18,15 +19,47 @@ import {
    SigmaNodeAttributes,
    SigmaEdgeAttributes,
  } from '../lib/graph-adapter';
@@ -2548,6 +2548,7 @@ index e34fd434..93ebff0d 100644
 +} from '../lib/augmented-timeline';
 +import { prefetchSnapshotGhosts } from '../services/snapshot-ghosts-cache';
 +import { researchGraphToGraphology, type ResearchGraph } from '../lib/research-graph-adapter';
++import { pruneForRender, LOD_MAX_NODES } from '../lib/graph-lod';
 +import { getResearchGraph, applyLens, getActivations, getGraphDiff, listGraphs, type GraphActivations, type GraphInstance } from '../services/research-client';
 +import { buildDiffStatus, unionResearchGraphs, DIFF_VIEW_COLORS, type DiffStatus } from '../lib/graph-diff-view';
 +import { getGraphMetrics, getGraphLensMetrics, type CommunityMethod } from '../services/graph-theory-client';
@@ -2566,7 +2567,7 @@ index e34fd434..93ebff0d 100644
    const {
      graph,
      setSelectedNode,
-@@ -46,9 +78,205 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -46,9 +79,209 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
      clearAICitationHighlights,
      clearBlastRadius,
      animatedNodes,
@@ -2642,6 +2643,10 @@ index e34fd434..93ebff0d 100644
 +  const [compareB, setCompareB] = useState<string | null>(null);
 +  const [compareGraphs, setCompareGraphs] = useState<GraphInstance[]>([]);
 +  const [diffView, setDiffView] = useState<{ statusById: Map<string, DiffStatus>; unionRg: ResearchGraph; summary: Record<string, number> } | null>(null);
++  // Render level-of-detail (Task 2) — when the to-render graph exceeds
++  // LOD_MAX_NODES we prune to its top-N nodes by degree before mounting
++  // Sigma; this state drives the "showing N of M" banner.
++  const [lodInfo, setLodInfo] = useState<{ pruned: boolean; shown: number; total: number } | null>(null);
 +  const [isolateCommunity, setIsolateCommunity] = useState<number | null>(null);
 +  const articulationIds = useMemo(
 +    () => new Set((metricsData?.nodes ?? []).filter((n) => n.articulation).map((n) => n.id)),
@@ -2773,7 +2778,7 @@ index e34fd434..93ebff0d 100644
    const effectiveHighlightedNodeIds = useMemo(() => {
      if (!isAIHighlightsEnabled) return highlightedNodeIds;
      const next = new Set(highlightedNodeIds);
-@@ -82,6 +310,23 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -82,6 +315,23 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
  
    const handleNodeClick = useCallback(
      (nodeId: string) => {
@@ -2797,7 +2802,7 @@ index e34fd434..93ebff0d 100644
        if (!graph) return;
        const node = nodeById.get(nodeId);
        if (node) {
-@@ -89,6 +334,7 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -89,6 +339,7 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
          openCodePanel();
        }
      },
@@ -2805,7 +2810,7 @@ index e34fd434..93ebff0d 100644
      [graph, nodeById, setSelectedNode, openCodePanel],
    );
  
-@@ -130,6 +376,7 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -130,6 +381,7 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
      containerRef,
      sigmaRef,
      setGraph: setSigmaGraph,
@@ -2813,7 +2818,7 @@ index e34fd434..93ebff0d 100644
      zoomIn,
      zoomOut,
      resetZoom,
-@@ -139,6 +386,12 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -139,6 +391,12 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
      stopLayout,
      selectedNode: sigmaSelectedNode,
      setSelectedNode: setSigmaSelectedNode,
@@ -2826,7 +2831,7 @@ index e34fd434..93ebff0d 100644
    } = useSigma({
      onNodeClick: handleNodeClick,
      onNodeHover: handleNodeHover,
-@@ -147,6 +400,10 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -147,6 +405,10 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
      blastRadiusNodeIds: effectiveBlastRadiusNodeIds,
      animatedNodes: effectiveAnimatedNodes,
      visibleEdgeTypes,
@@ -2837,7 +2842,7 @@ index e34fd434..93ebff0d 100644
    });
  
    // Expose focusNode to parent via ref
-@@ -170,6 +427,8 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -170,6 +432,8 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
  
    // Update Sigma graph when KnowledgeGraph changes
    useEffect(() => {
@@ -2846,7 +2851,7 @@ index e34fd434..93ebff0d 100644
      if (!graph) return;
  
      // Build communityMemberships map from MEMBER_OF relationships
-@@ -189,8 +448,51 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -189,8 +453,59 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
      });
  
      const sigmaGraph = knowledgeGraphToGraphology(graph, communityMemberships);
@@ -2873,7 +2878,15 @@ index e34fd434..93ebff0d 100644
 +    // both graphs and recolor every node by its diff status (the diff color
 +    // wins via the adapter's ordering). Absent a pick, render normally.
 +    const renderRg = diffView ? diffView.unionRg : researchData;
-+    const g = researchGraphToGraphology(renderRg, metricsOn ? (metricsById ?? undefined) : undefined, sizeMetric, {
++    // Render LoD — cap huge graphs to their top-N nodes by degree before
++    // mounting Sigma. No-op below LOD_MAX_NODES (returns the original
++    // arrays), so the below-threshold path is byte-identical. The generic
++    // prune preserves the caller's node/edge types; the kept arrays form a
++    // ResearchGraph (its other fields are optional).
++    const lod = pruneForRender(renderRg, { maxNodes: LOD_MAX_NODES });
++    setLodInfo(renderRg ? { pruned: lod.pruned, shown: lod.shown, total: lod.total } : null);
++    const lodRg: ResearchGraph = { nodes: lod.nodes, edges: lod.edges };
++    const g = researchGraphToGraphology(lodRg, metricsOn ? (metricsById ?? undefined) : undefined, sizeMetric, {
 +      colorMode, highlightStructure, isolateCommunity, articulationIds, bridgeKeys, layoutMode,
 +      deadNodeIds: observabilityOn ? deadNodeIds : undefined,
 +      activationById: activationsOn ? activationById : undefined,
@@ -2900,7 +2913,7 @@ index e34fd434..93ebff0d 100644
  
    // Update node visibility when filters change
    useEffect(() => {
-@@ -205,6 +507,198 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -205,6 +520,198 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
      // eslint-disable-next-line react-hooks/exhaustive-deps -- sigmaRef identity never changes
    }, [visibleLabels, depthFilter, appSelectedNode]);
  
@@ -3099,7 +3112,7 @@ index e34fd434..93ebff0d 100644
    // Sync app selected node with sigma
    useEffect(() => {
      if (appSelectedNode) {
-@@ -249,6 +743,153 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -249,6 +756,153 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
          className="sigma-container h-full w-full cursor-grab active:cursor-grabbing"
        />
  
@@ -3253,7 +3266,7 @@ index e34fd434..93ebff0d 100644
        {/* Hovered node tooltip - only show when NOT selected */}
        {hoveredNodeName && !sigmaSelectedNode && (
          <div className="pointer-events-none absolute top-4 left-1/2 z-20 -translate-x-1/2 animate-fade-in rounded-lg border border-border-subtle bg-elevated/95 px-3 py-1.5 backdrop-blur-sm">
-@@ -350,8 +991,227 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -350,8 +1004,227 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
        {/* Query FAB */}
        <QueryFAB />
  
@@ -3483,7 +3496,7 @@ index e34fd434..93ebff0d 100644
          <button
            onClick={handleToggleAIHighlights}
            className={
-@@ -369,6 +1229,50 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -369,6 +1242,64 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
            )}
          </button>
        </div>
@@ -3499,6 +3512,20 @@ index e34fd434..93ebff0d 100644
 +              </li>
 +            ))}
 +          </ol>
++        </div>
++      )}
++
++      {/* Render LoD banner (Task 2) — shown only when the graph was pruned
++          to its top-N nodes by degree. Matches the diff-legend pill idiom
++          (absolute small pill, bg-elevated/95, mono). Sits above the diff
++          legend's bottom-left slot so the two don't overlap. */}
++      {lodInfo?.pruned && (
++        <div
++          className="absolute left-3 bottom-3 z-20 rounded-lg border border-amber-400/40 bg-elevated/95 px-3 py-1.5 font-mono text-xs text-amber-200 shadow-lg"
++          data-testid="lod-banner"
++          style={diffView ? { bottom: '12.5rem' } : undefined}
++        >
++          LoD · showing {lodInfo.shown} of {lodInfo.total} nodes (top by degree)
 +        </div>
 +      )}
 +

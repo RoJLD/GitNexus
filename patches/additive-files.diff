@@ -24550,6 +24550,56 @@ index 00000000..d01d2f87
 + * See docs/superpowers/specs/2026-05-27-timeline-zoom-cursors-design.md
 + */
 +export const diffBetweenSnapshots = computeGraphDiff;
+diff --git a/gitnexus-web/src/lib/graph-lod.ts b/gitnexus-web/src/lib/graph-lod.ts
+new file mode 100644
+index 00000000..fe2bcd7a
+--- /dev/null
++++ b/gitnexus-web/src/lib/graph-lod.ts
+@@ -0,0 +1,44 @@
++// Pure, graphology-free render level-of-detail: cap a graph to its top-N most-connected
++// nodes so huge graphs stay renderable. Host-testable (no graphology import), like graph-diff-view.ts.
++export const LOD_MAX_NODES = 1500;
++
++export interface LodResult<N, E> {
++  nodes: N[];
++  edges: E[];
++  pruned: boolean;
++  shown: number;
++  total: number;
++  by: string;
++}
++
++/**
++ * If `graph` has more than `maxNodes` nodes, keep the top-`maxNodes` by degree (in+out,
++ * deterministic tie-break by id asc) plus the edges among the kept nodes; otherwise a no-op.
++ * Generic + pure — returns the caller's node/edge types.
++ */
++export function pruneForRender<N extends { id: string }, E extends { source: string; target: string }>(
++  graph: { nodes: N[]; edges: E[] } | undefined,
++  { maxNodes = LOD_MAX_NODES, by = 'degree' }: { maxNodes?: number; by?: string } = {},
++): LodResult<N, E> {
++  const nodes = graph?.nodes ?? [];
++  const edges = graph?.edges ?? [];
++  const total = nodes.length;
++  if (total <= maxNodes) {
++    return { nodes, edges, pruned: false, shown: total, total, by };
++  }
++  const deg = new Map<string, number>();
++  for (const n of nodes) deg.set(n.id, 0);
++  for (const e of edges) {
++    if (deg.has(e.source)) deg.set(e.source, (deg.get(e.source) ?? 0) + 1);
++    if (deg.has(e.target)) deg.set(e.target, (deg.get(e.target) ?? 0) + 1);
++  }
++  const keepIds = new Set(
++    nodes
++      .map((n) => n.id)
++      .sort((a, b) => (deg.get(b)! - deg.get(a)!) || (a < b ? -1 : a > b ? 1 : 0))
++      .slice(0, maxNodes),
++  );
++  const keptNodes = nodes.filter((n) => keepIds.has(n.id));
++  const keptEdges = edges.filter((e) => keepIds.has(e.source) && keepIds.has(e.target));
++  return { nodes: keptNodes, edges: keptEdges, pruned: true, shown: keptNodes.length, total, by };
++}
 diff --git a/gitnexus-web/src/lib/group-graph-adapter.ts b/gitnexus-web/src/lib/group-graph-adapter.ts
 new file mode 100644
 index 00000000..4100064e
