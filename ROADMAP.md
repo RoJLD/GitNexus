@@ -866,8 +866,8 @@ plumbing. Pré-requis tacite à toute évolution Tier 3 ultérieure.
 | **Export/Import** | Round-trip integrity check + versioning du format export | 2-3j | Avant le premier "import a échoué silencieusement" en prod |
 | **HTTP cache** | ETag sur analytics figées — les snapshots passés sont immuables, cachables ∞ | 3-5j | Quand le dashboard charge >5 endpoints en parallèle au démarrage |
 | **Repo registry** | Index inversé sur `repoId` (cf 2bis.5) pour lookup multi-base | 1-2j | Quand on a 3+ clones du même repo sur des chemins différents |
-| **Smoke tests** | Harness `curl + assert` qui tourne après `docker compose build` (CLAUDE.md note "no test suite") | 1 semaine | Avant la prochaine fois où un patch upstream casse un endpoint silencieusement |
-| **Perf instrumentation** | Endpoint `/metrics` exposant latences p50/p95/p99 par endpoint + count de cache hits | 3-5j | Quand on n'arrive plus à diagnostiquer un slowdown |
+| **Smoke tests** ✅ **Livré 2026-06-11** | Harness `scripts/smoke.mjs` (curl+assert zéro-dép, runnable local + CI) ; le job CI `boot-smoke` curl désormais aussi `/metrics`. | 1 semaine | ~~Avant qu'un patch upstream casse un endpoint silencieusement~~ |
+| **Perf instrumentation** ✅ **Livré 2026-06-11** | Endpoint `GET /metrics` : latences p50/p95/p99 par famille de route (recorder pur `docker-server-metrics.mjs`, instrumentation du dispatch dans `docker-server.mjs`) + stats cache graph-metrics (hits/misses/hitRate via `metricsCacheStats`). 9 unit verts. [spec](docs/superpowers/specs/2026-06-11-observability-metrics-smoke-design.md) | 3-5j | ~~Quand on n'arrive plus à diagnostiquer un slowdown~~ |
 
 ---
 
@@ -905,7 +905,7 @@ abandonner l'acquis.
 | Issue | Symptôme actuel | Quand devient critique | Fix |
 |---|---|---|---|
 | **Pas de méta-architecture analytics** | Chaque nouvelle métrique = 5 fichiers à toucher (endpoint, CSV, panel, types, MCP) | À 25+ analytics (on est à 18) | 3.10 Plugin architecture |
-| **Pas d'observabilité produit** | Aucune perf metric, aucun SLO, "no test suite, manual curl" (CLAUDE.md) | Quand un endpoint régresse silencieusement | Smoke harness + `/metrics` endpoint (cf Optimisations) |
+| **Pas d'observabilité produit** ✅ **adressé 2026-06-11** | ~~Aucune perf metric, aucun SLO, "no test suite, manual curl"~~ → `/metrics` (latences p50/p95/p99 + cache stats) + `scripts/smoke.mjs` (curl+assert) + boot-smoke CI étendu | — | Smoke harness + `/metrics` endpoint ✅ |
 | **Repo ID instable** | `<base>` = chemin disque, re-clone casse les liens cross-repo | Dès qu'on a 2 clones du même repo | 2bis.5 |
 | **Configs disjointes** | `.gitnexus-domains.yaml` existe déjà ; policy + budgets + watches arrivent | À 3+ fichiers config par repo | 2bis.4 Unified config |
 | **MCP gap sur analytics** | Le MCP-first principle des Principes de design n'est appliqué qu'au graphe upstream | Dès qu'on veut utiliser Claude comme advisor (cf 3.7) | 2bis.1 MCP exposure |

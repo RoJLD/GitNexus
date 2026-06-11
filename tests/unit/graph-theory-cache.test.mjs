@@ -10,6 +10,15 @@ describe('metrics cache (TTL + LRU, injected clock)', () => {
     now = 2000; c.set('b', {}); c.set('d', {}); c.set('e', {});    // max 2 → 'b' evicted
     expect(c.get('b')).toBe(undefined); expect(c.get('e')).toBeTruthy();
   });
+  it('stats() tracks hits/misses/hitRate', () => {
+    let now = 1000;
+    const c = makeMetricsCache({ ttlMs: 100, max: 8, clock: () => now });
+    c.set('a', { v: 1 });
+    expect(c.get('a')).toEqual({ v: 1 });   // hit
+    expect(c.get('zzz')).toBe(undefined);    // miss
+    const s = c.stats();
+    expect(s.hits).toBe(1); expect(s.misses).toBe(1); expect(s.hitRate).toBeCloseTo(0.5, 9);
+  });
 });
 
 describe('metricsCacheKey — P2.3 params', () => {

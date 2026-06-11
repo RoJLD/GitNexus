@@ -6549,10 +6549,10 @@ index 00000000..337d34f3
 +}
 diff --git a/docker-server-graph-theory.mjs b/docker-server-graph-theory.mjs
 new file mode 100644
-index 00000000..052fb2e5
+index 00000000..88c4d79d
 --- /dev/null
 +++ b/docker-server-graph-theory.mjs
-@@ -0,0 +1,145 @@
+@@ -0,0 +1,149 @@
 +/**
 + * Graph-theory metrics routes (web container).
 + *   GET /graph/metrics/:name            → sidecar graph metrics
@@ -6587,11 +6587,13 @@ index 00000000..052fb2e5
 +/** Tiny TTL + insertion-order(LRU-ish) cache. Clock injected for testability. */
 +export function makeMetricsCache({ ttlMs = METRICS_CACHE_TTL_MS, max = METRICS_CACHE_MAX, clock = Date.now } = {}) {
 +  const m = new Map();   // key → { val, at }
++  let hits = 0, misses = 0;
 +  return {
 +    get(key) {
 +      const e = m.get(key);
-+      if (!e) return undefined;
-+      if (clock() - e.at > ttlMs) { m.delete(key); return undefined; }
++      if (!e) { misses++; return undefined; }
++      if (clock() - e.at > ttlMs) { m.delete(key); misses++; return undefined; }
++      hits++;
 +      return e.val;
 +    },
 +    set(key, val) {
@@ -6599,10 +6601,12 @@ index 00000000..052fb2e5
 +      m.set(key, { val, at: clock() });
 +      while (m.size > max) m.delete(m.keys().next().value);   // evict oldest
 +    },
++    stats() { return { hits, misses, hitRate: hits + misses ? hits / (hits + misses) : 0 }; },
 +  };
 +}
 +
 +const metricsCache = makeMetricsCache();
++export function metricsCacheStats() { return metricsCache.stats(); }
 +export function metricsCacheKey(kind, idOrName, lensId, params) {
 +  return `${kind}|${idOrName}|${lensId || ''}|${params.community}|${params.resolution}|${params.cap}|${params.approx ?? ''}|${params.directed ? 1 : 0}|${params.hierarchy ? 1 : 0}|${params.embed ?? ''}|${params.dims}|${params.observability ? 1 : 0}`;
 +}
@@ -7821,6 +7825,66 @@ index 00000000..c998bf94
 +    return true;
 +  }
 +  return false;
++}
+diff --git a/docker-server-metrics.mjs b/docker-server-metrics.mjs
+new file mode 100644
+index 00000000..4b18f36e
+--- /dev/null
++++ b/docker-server-metrics.mjs
+@@ -0,0 +1,54 @@
++/**
++ * /metrics observability — per-route latency percentiles + cache stats.
++ * Pure recorder (no IO) + the GET /metrics route handler. The dispatch in
++ * docker-server.mjs calls `recorder.record(normalizePath(path), elapsedMs)`.
++ */
++export function percentile(sortedAsc, p) {
++  if (!sortedAsc.length) return 0;
++  const q = Math.max(0, Math.min(1, p));
++  const idx = Math.min(sortedAsc.length - 1, Math.ceil(q * sortedAsc.length) - 1);
++  return sortedAsc[Math.max(0, idx)];
++}
++export function normalizePath(pathname) {
++  if (!pathname || pathname === '/') return '/';
++  const segs = pathname.split('/').filter(Boolean);
++  return '/' + segs.slice(0, 2).join('/');
++}
++export function makeLatencyRecorder({ maxSamplesPerRoute = 500 } = {}) {
++  const buf = new Map();
++  let total = 0;
++  return {
++    record(routeKey, ms) {
++      let a = buf.get(routeKey);
++      if (!a) { a = []; buf.set(routeKey, a); }
++      a.push(ms);
++      if (a.length > maxSamplesPerRoute) a.shift();
++      total++;
++    },
++    snapshot() {
++      const routes = {};
++      const all = [];
++      for (const [k, a] of buf) {
++        const s = [...a].sort((x, y) => x - y);
++        for (const v of s) all.push(v);
++        routes[k] = { count: a.length, p50: percentile(s, 0.5), p95: percentile(s, 0.95), p99: percentile(s, 0.99), max: s.length ? s[s.length - 1] : 0 };
++      }
++      const sa = all.sort((x, y) => x - y);
++      return { routes, overall: { count: total, p50: percentile(sa, 0.5), p95: percentile(sa, 0.95), p99: percentile(sa, 0.99) } };
++    },
++  };
++}
++export const recorder = makeLatencyRecorder();
++
++function sendJson(res, code, body) { res.writeHead(code, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(body)); }
++
++export async function handleMetricsRoute(req, url, res) {
++  if (url.pathname !== '/metrics' || req.method !== 'GET') return false;
++  let caches = {};
++  try {
++    const { metricsCacheStats } = await import('./docker-server-graph-theory.mjs');
++    caches = { graphMetrics: metricsCacheStats() };
++  } catch { /* cache stats best-effort */ }
++  sendJson(res, 200, { latency: recorder.snapshot(), caches });
++  return true;
 +}
 diff --git a/docker-server-model-graph-importer.mjs b/docker-server-model-graph-importer.mjs
 new file mode 100644
@@ -9174,10 +9238,10 @@ index 00000000..ea950ca6
 +}
 diff --git a/docker-server-routes.mjs b/docker-server-routes.mjs
 new file mode 100644
-index 00000000..e3fd78b2
+index 00000000..9ba2f152
 --- /dev/null
 +++ b/docker-server-routes.mjs
-@@ -0,0 +1,88 @@
+@@ -0,0 +1,90 @@
 +import { handleSnapshotRoute } from './docker-server-snapshots.mjs';
 +import { handleSnapshotBulkRoute } from './docker-server-snapshots-bulk.mjs';
 +import { handleChurnRoute } from './docker-server-churn.mjs';
@@ -9216,9 +9280,11 @@ index 00000000..e3fd78b2
 +import { handleGraphTemplatesRoute } from './docker-server-graph-templates.mjs';
 +import { handleGraphLensRoute } from './docker-server-graph-lens.mjs';
 +import { handleGraphMetricsRoute, handleGraphLensMetricsRoute } from './docker-server-graph-theory.mjs';
++import { handleMetricsRoute } from './docker-server-metrics.mjs';
 +
 +// Returns true once a handler claims (responds to) the request; false if no route matched.
 +export async function registerGitnexusRoutes(req, reqUrl, res, ctx) {
++  if (await handleMetricsRoute(req, reqUrl, res)) return true; // GET /metrics — no ctx (takes req, url, res)
 +  if (await handleSnapshotRoute(req, reqUrl, res, ctx)) return true;
 +  if (await handleSnapshotBulkRoute(req, reqUrl, res, ctx)) return true;
 +  if (await handleChurnRoute(req, reqUrl, res, ctx)) return true;

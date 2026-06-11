@@ -1,5 +1,5 @@
 diff --git a/Dockerfile.web b/Dockerfile.web
-index b102a700..1681d178 100644
+index b102a700..06d5ee82 100644
 --- a/Dockerfile.web
 +++ b/Dockerfile.web
 @@ -21,7 +21,10 @@ RUN npm run build --prefix gitnexus-shared
@@ -14,7 +14,7 @@ index b102a700..1681d178 100644
  
  COPY gitnexus-web ./gitnexus-web
  RUN npm run build --prefix gitnexus-web
-@@ -29,15 +32,111 @@ RUN npm run build --prefix gitnexus-web
+@@ -29,15 +32,115 @@ RUN npm run build --prefix gitnexus-web
  # node:22-bookworm-slim
  FROM node:22-bookworm-slim@sha256:9f6d5975c7dca860947d3915877f85607946403fc55349f39b4bc3688448bb6e AS runtime
  
@@ -124,14 +124,18 @@ index b102a700..1681d178 100644
 +COPY docker-server-research-graph-importer.mjs ./docker-server-research-graph-importer.mjs
 +COPY docker-server-graph-theory-core.mjs ./docker-server-graph-theory-core.mjs
 +COPY docker-server-graph-theory.mjs ./docker-server-graph-theory.mjs
++# /metrics observability — imported by docker-server.mjs (recorder/normalizePath)
++# and docker-server-routes.mjs (handleMetricsRoute). Crash-loops with
++# ERR_MODULE_NOT_FOUND without this COPY (same pattern as the blocks above).
++COPY docker-server-metrics.mjs ./docker-server-metrics.mjs
  
  RUN chown -R node:node /app
  
 diff --git a/docker-server.mjs b/docker-server.mjs
-index 8143eb4b..9585a340 100644
+index 8143eb4b..430428bb 100644
 --- a/docker-server.mjs
 +++ b/docker-server.mjs
-@@ -1,12 +1,38 @@
+@@ -1,12 +1,39 @@
 -import { createReadStream } from 'node:fs';
 -import { stat } from 'node:fs/promises';
 +import { createReadStream, createWriteStream } from 'node:fs';
@@ -142,6 +146,7 @@ index 8143eb4b..9585a340 100644
 +import { basename, dirname, extname, isAbsolute, join, normalize, relative, resolve, sep } from 'node:path';
 +import { spawn } from 'node:child_process';
 +import { registerGitnexusRoutes, startGitnexusCron } from './docker-server-routes.mjs';
++import { recorder, normalizePath } from './docker-server-metrics.mjs';
  
  const host = '0.0.0.0';
  const port = Number(process.env.PORT || '4173');
@@ -173,7 +178,7 @@ index 8143eb4b..9585a340 100644
  const contentTypes = {
    '.css': 'text/css; charset=utf-8',
    '.html': 'text/html; charset=utf-8',
-@@ -20,6 +46,416 @@ const contentTypes = {
+@@ -20,6 +47,416 @@ const contentTypes = {
    '.woff2': 'font/woff2',
  };
  
@@ -590,7 +595,7 @@ index 8143eb4b..9585a340 100644
  // Static asset server for the gitnexus-web Docker image.
  //
  // Path-injection containment: the request handler is intentionally a single
-@@ -39,8 +475,29 @@ const contentTypes = {
+@@ -39,8 +476,34 @@ const contentTypes = {
  // the request handler's reassignment paths in vanilla JS. The inline-at-sink
  // shape below is the documented analyzer-friendly idiom.
  const server = createServer(async (req, res) => {
@@ -615,13 +620,18 @@ index 8143eb4b..9585a340 100644
 +  }
 +
 +  // GitNexus analytics + time-travel routes — voir docker-server-routes.mjs
-+  if (await registerGitnexusRoutes(req, reqUrl, res, { api: GITNEXUS_API })) return;
++  const _t0 = performance.now();
++  const _claimed = await registerGitnexusRoutes(req, reqUrl, res, { api: GITNEXUS_API });
++  if (_claimed) {
++    try { recorder.record(normalizePath(reqUrl.pathname), performance.now() - _t0); } catch { /* never break a request */ }
++    return;
++  }
  
 +  // ── Static asset serving (v1.6.5 CodeQL-compliant pipeline) ───────────
    let decoded;
    try {
      decoded = decodeURIComponent(urlPath);
-@@ -117,4 +574,7 @@ const server = createServer(async (req, res) => {
+@@ -117,4 +580,7 @@ const server = createServer(async (req, res) => {
  
  server.listen(port, host, () => {
    console.log(`gitnexus-web listening on http://${host}:${port}`);

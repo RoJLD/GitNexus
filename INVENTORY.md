@@ -167,6 +167,7 @@ Spec Phase 3 :
 | `POST /snapshot` + `GET /snapshots` | Snapshots manuels d'un repo à un commit donné |
 | `POST /snapshot/bulk` + `GET /snapshot/bulk/:jobId` | Bulk N commits sur Y jours, SSE progress |
 | `GET /api/graph` (étendu) | Diff visuel rouge/vert/gris entre 2 repos |
+| `GET /metrics` | **Observabilité (2026-06-11)** : latences p50/p95/p99 par famille de route + stats cache graph-metrics (hits/misses/hitRate). Recorder pur `docker-server-metrics.mjs` (ring-buffer borné par route, `normalizePath` collapse à 2 segments) ; dispatch instrumenté dans `docker-server.mjs` (timing sur route claimed, try/catch). Harness `scripts/smoke.mjs` (curl+assert zéro-dép, runnable local+CI) ; job CI `boot-smoke` étendu à `/metrics`. |
 | `GET /churn` | Heatmap de volatilité des nodes sur la timeline |
 | `GET /coupling` | Paires de fichiers qui changent ensemble (couplage temporel) |
 | `GET /growth` | Counts par catégorie dans le temps |

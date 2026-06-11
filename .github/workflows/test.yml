@@ -75,6 +75,8 @@ jobs:
           body="$(curl -fsS http://localhost:4173/graph/templates)"
           echo "$body" | grep -q 'imports-deps' || { echo "::error::imports-deps lens absent — a route module failed to load"; exit 1; }
           echo "$body" | grep -q 'academic-literature' || { echo "::error::academic-literature absent — a route module failed to load"; exit 1; }
+          curl -fsS http://localhost:4173/metrics | grep -q '"latency"' || { echo "::error::/metrics route absent — docker-server-metrics.mjs failed to load (missing Dockerfile.web COPY?)"; exit 1; }
+          echo "metrics smoke OK"
           echo "boot smoke OK"
       - name: Dump logs on failure
         if: failure()
