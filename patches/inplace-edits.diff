@@ -2502,7 +2502,7 @@ index 98c20c68..50a414e4 100644
            <div className="mt-6 border-t border-border-subtle pt-4">
              <h3 className="mb-3 text-xs font-medium tracking-wide text-text-secondary uppercase">
 diff --git a/gitnexus-web/src/components/GraphCanvas.tsx b/gitnexus-web/src/components/GraphCanvas.tsx
-index e34fd434..8106d50f 100644
+index e34fd434..cd903ee1 100644
 --- a/gitnexus-web/src/components/GraphCanvas.tsx
 +++ b/gitnexus-web/src/components/GraphCanvas.tsx
 @@ -1,4 +1,4 @@
@@ -2519,7 +2519,7 @@ index e34fd434..8106d50f 100644
  } from '@/lib/lucide-icons';
  import { useSigma } from '../hooks/useSigma';
  import { useAppState } from '../hooks/useAppState';
-@@ -18,15 +19,47 @@ import {
+@@ -18,15 +19,48 @@ import {
    SigmaNodeAttributes,
    SigmaEdgeAttributes,
  } from '../lib/graph-adapter';
@@ -2551,8 +2551,9 @@ index e34fd434..8106d50f 100644
 +import { pruneForRender, LOD_MAX_NODES } from '../lib/graph-lod';
 +import { getResearchGraph, applyLens, getActivations, getGraphDiff, listGraphs, type GraphActivations, type GraphInstance } from '../services/research-client';
 +import { buildDiffStatus, unionResearchGraphs, DIFF_VIEW_COLORS, type DiffStatus } from '../lib/graph-diff-view';
-+import { getGraphMetrics, getGraphLensMetrics, type CommunityMethod } from '../services/graph-theory-client';
-+import type { GraphMetrics } from '../services/graph-theory-client';
++import { getGraphMetrics, getGraphLensMetrics, type CommunityMethod, type SizeMetricAny } from '../services/graph-theory-client';
++import type { GraphMetrics, GraphMetricNode } from '../services/graph-theory-client';
++import { nearestNeighbors, spectralLayout } from '../lib/embedding-tools';
 +import { topNByMetric, metricsToCsv, metricsToJson, downloadText } from '../lib/metrics-view';
 +import { AdjacencyMatrix } from './AdjacencyMatrix';
 +import type { MatrixNodeMetric } from '../lib/adjacency-matrix';
@@ -2567,7 +2568,7 @@ index e34fd434..8106d50f 100644
    const {
      graph,
      setSelectedNode,
-@@ -46,9 +79,209 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -46,9 +80,260 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
      clearAICitationHighlights,
      clearBlastRadius,
      animatedNodes,
@@ -2624,9 +2625,17 @@ index e34fd434..8106d50f 100644
 +
 +  // Metrics overlay state — toggle + cached metrics payload for the sidecar graph
 +  const [metricsOn, setMetricsOn] = useState(false);
-+  const [metricsById, setMetricsById] = useState<Map<string, { degree: number; pagerank: number; betweenness: number; eigenvector: number; closeness: number; katz: number; harmonic: number; coreness: number; clustering: number; community: number }> | null>(null);
-+  const [sizeMetric, setSizeMetric] = useState<'degree' | 'pagerank' | 'betweenness' | 'eigenvector' | 'closeness' | 'katz' | 'harmonic' | 'coreness' | 'clustering'>('pagerank');
-+  const [layoutMode, setLayoutMode] = useState<'force' | 'hierarchical' | 'circular'>('force');
++  const [metricsById, setMetricsById] = useState<Map<string, { degree: number; pagerank: number; betweenness: number; eigenvector: number; closeness: number; katz: number; harmonic: number; coreness: number; clustering: number; community: number; inDegree?: number; outDegree?: number; hubs?: number; authorities?: number }> | null>(null);
++  const [sizeMetric, setSizeMetric] = useState<SizeMetricAny>('pagerank');
++  const [layoutMode, setLayoutMode] = useState<'force' | 'hierarchical' | 'circular' | 'spectral'>('force');
++  // P2.3-backlog surfacing (milestone A.1) — directed metrics, hierarchical
++  // community levels, spectral layout (a layoutMode value), and kNN "similar"
++  // panel/highlight. All additive: below all toggles the fetch + render are
++  // byte-identical to before.
++  const [directedOn, setDirectedOn] = useState(false);
++  const [hierarchyOn, setHierarchyOn] = useState(false);
++  const [communityLevel, setCommunityLevel] = useState(0);
++  const [knnOn, setKnnOn] = useState(false);
 +  const [view, setView] = useState<'graph' | 'matrix'>('graph');
 +  const [communityMethod, setCommunityMethod] = useState<CommunityMethod>('louvain');
 +  const [metricsData, setMetricsData] = useState<GraphMetrics | null>(null);
@@ -2673,6 +2682,43 @@ index e34fd434..8106d50f 100644
 +    [metricsData],
 +  );
 +
++  // Spectral embedding lookup — only populated when metrics were fetched with
++  // &embed=spectral (layout=spectral or kNN on). Feeds both the spectral layout
++  // positions and the kNN "similar" panel. Empty map below those toggles. The
++  // kNN/spectral memos that depend on the useSigma `sigmaSelectedNode` live just
++  // below the useSigma block (TDZ).
++  const embeddingById = useMemo(
++    () => new Map((metricsData?.nodes ?? []).filter((n) => n.embedding).map((n) => [n.id, n.embedding!])),
++    [metricsData],
++  );
++  // Hierarchical community override — when hierarchy is on, remap each node to
++  // its community at the selected level (falling back to the flat community when
++  // the path is shorter). undefined below the toggle → adapter uses flat community.
++  const communityOverrideById = useMemo(
++    () => hierarchyOn && metricsData ? new Map(metricsData.nodes.map((n) => [n.id, n.communityPath?.[communityLevel] ?? n.community])) : undefined,
++    [hierarchyOn, communityLevel, metricsData],
++  );
++  // Spectral layout positions — precomputed (x,y) from the 2D embedding when the
++  // layout mode is spectral. undefined otherwise → adapter keeps its own layout.
++  const precomputedPositions = useMemo(
++    () => layoutMode === 'spectral' ? spectralLayout(embeddingById, (metricsData?.nodes ?? []).map((n) => n.id)) : undefined,
++    [layoutMode, embeddingById, metricsData],
++  );
++  // Top-10 nodes by the selected size metric. For the nine undirected metrics we
++  // reuse the shared topNByMetric helper (byte-identical to before). The four
++  // directed metrics are optional (`number | undefined`) and outside that helper's
++  // type, so we sort them inline with a 0 coalesce (same tie-break: id ascending).
++  const topNForSizeMetric = useMemo<GraphMetricNode[]>(() => {
++    const nodes = metricsData?.nodes ?? [];
++    if (sizeMetric === 'inDegree' || sizeMetric === 'outDegree' || sizeMetric === 'hubs' || sizeMetric === 'authorities') {
++      const key = sizeMetric;
++      return [...nodes]
++        .sort((a, b) => ((b[key] ?? 0) - (a[key] ?? 0)) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
++        .slice(0, 10);
++    }
++    return topNByMetric(nodes, sizeMetric, 10);
++  }, [metricsData, sizeMetric]);
++
 +  // Lens — URL-driven projection for ?lens=<id>&repo=<repo>. Reuses researchData +
 +  // the research render path (the lens result is shaped like a research graph).
 +  const lensId = new URLSearchParams(window.location.search).get('lens');
@@ -2691,17 +2737,23 @@ index e34fd434..8106d50f 100644
 +      return;
 +    }
 +    let cancelled = false;
-+    const opts = { community: communityMethod, observability: observabilityOn };
++    const opts = {
++      community: communityMethod,
++      observability: observabilityOn,
++      directed: directedOn,
++      hierarchy: hierarchyOn,
++      embed: (layoutMode === 'spectral' || knnOn) ? 'spectral' as const : undefined,
++    };
 +    const p = researchName ? getGraphMetrics(researchName, opts) : getGraphLensMetrics(lensId!, lensRepo!, opts);
 +    p
 +      .then((m) => {
 +        if (cancelled) return;
 +        setMetricsData(m);
-+        setMetricsById(new Map(m.nodes.map((n) => [n.id, { degree: n.degree, pagerank: n.pagerank, betweenness: n.betweenness, eigenvector: n.eigenvector, closeness: n.closeness, katz: n.katz, harmonic: n.harmonic, coreness: n.coreness, clustering: n.clustering, community: n.community }])));
++        setMetricsById(new Map(m.nodes.map((n) => [n.id, { degree: n.degree, pagerank: n.pagerank, betweenness: n.betweenness, eigenvector: n.eigenvector, closeness: n.closeness, katz: n.katz, harmonic: n.harmonic, coreness: n.coreness, clustering: n.clustering, community: n.community, inDegree: n.inDegree, outDegree: n.outDegree, hubs: n.hubs, authorities: n.authorities }])));
 +      })
 +      .catch((e) => { if (!cancelled) console.error('graph metrics load failed', e); });
 +    return () => { cancelled = true; };
-+  }, [metricsOn, researchName, lensId, lensRepo, communityMethod, observabilityOn]);
++  }, [metricsOn, researchName, lensId, lensRepo, communityMethod, observabilityOn, directedOn, hierarchyOn, layoutMode, knnOn]);
 +
 +  // Activations overlay — when the toggle is on for a sidecar MODEL graph (?research=),
 +  // load /graph/activations/:name (a captured inference-run heat overlay). Activations are
@@ -2778,7 +2830,7 @@ index e34fd434..8106d50f 100644
    const effectiveHighlightedNodeIds = useMemo(() => {
      if (!isAIHighlightsEnabled) return highlightedNodeIds;
      const next = new Set(highlightedNodeIds);
-@@ -82,6 +315,23 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -82,6 +367,23 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
  
    const handleNodeClick = useCallback(
      (nodeId: string) => {
@@ -2802,7 +2854,7 @@ index e34fd434..8106d50f 100644
        if (!graph) return;
        const node = nodeById.get(nodeId);
        if (node) {
-@@ -89,6 +339,7 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -89,6 +391,7 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
          openCodePanel();
        }
      },
@@ -2810,7 +2862,7 @@ index e34fd434..8106d50f 100644
      [graph, nodeById, setSelectedNode, openCodePanel],
    );
  
-@@ -130,6 +381,7 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -130,6 +433,7 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
      containerRef,
      sigmaRef,
      setGraph: setSigmaGraph,
@@ -2818,7 +2870,7 @@ index e34fd434..8106d50f 100644
      zoomIn,
      zoomOut,
      resetZoom,
-@@ -139,6 +391,12 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -139,6 +443,12 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
      stopLayout,
      selectedNode: sigmaSelectedNode,
      setSelectedNode: setSigmaSelectedNode,
@@ -2831,7 +2883,7 @@ index e34fd434..8106d50f 100644
    } = useSigma({
      onNodeClick: handleNodeClick,
      onNodeHover: handleNodeHover,
-@@ -147,6 +405,10 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -147,8 +457,22 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
      blastRadiusNodeIds: effectiveBlastRadiusNodeIds,
      animatedNodes: effectiveAnimatedNodes,
      visibleEdgeTypes,
@@ -2841,8 +2893,20 @@ index e34fd434..8106d50f 100644
 +    temporalFilteredNodeIds,
    });
  
++  // kNN highlight set — the 8 nearest neighbours (by embedding cosine sim) of the
++  // selected node. Declared here (not with the other metrics memos) because it
++  // depends on the useSigma `sigmaSelectedNode`, which is in the temporal dead
++  // zone above this block. undefined when kNN off or nothing is selected → the
++  // adapter highlight is byte-identical to before.
++  const knnIds = useMemo(
++    () => knnOn && sigmaSelectedNode ? new Set(nearestNeighbors(embeddingById, sigmaSelectedNode, 8).map((x) => x.id)) : undefined,
++    [knnOn, sigmaSelectedNode, embeddingById],
++  );
++
    // Expose focusNode to parent via ref
-@@ -170,6 +432,8 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+   useImperativeHandle(
+     ref,
+@@ -170,6 +494,8 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
  
    // Update Sigma graph when KnowledgeGraph changes
    useEffect(() => {
@@ -2851,7 +2915,7 @@ index e34fd434..8106d50f 100644
      if (!graph) return;
  
      // Build communityMemberships map from MEMBER_OF relationships
-@@ -189,8 +453,59 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -189,8 +515,63 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
      });
  
      const sigmaGraph = knowledgeGraphToGraphology(graph, communityMemberships);
@@ -2892,14 +2956,18 @@ index e34fd434..8106d50f 100644
 +      activationById: activationsOn ? activationById : undefined,
 +      activationMax,
 +      diffStatusById: diffView ? diffView.statusById : undefined,
++      communityOverrideById,
++      precomputedPositions,
++      knnIds,
 +    });
 +    const cacheKey = (researchName ? `research:${researchName}` : `lens:${lensId}:${lensRepo}`)
 +      + (metricsOn ? `:metrics:${sizeMetric}:${colorMode}:${highlightStructure}:${isolateCommunity}:${observabilityOn ? 'obs' : ''}` : '')
 +      + (activationsOn ? ':act' : '')
 +      + `:diff:${compareB ?? ''}`
-+      + `:layout:${layoutMode}`;
++      + `:layout:${layoutMode}`
++      + `:dir${directedOn ? 1 : 0}:hl${hierarchyOn ? communityLevel : ''}:sp${layoutMode === 'spectral' ? 1 : 0}`;
 +    setSigmaGraph(g, { cacheKey, skipLayout: layoutMode !== 'force' });
-+  }, [researchName, lensId, lensRepo, researchData, setSigmaGraph, metricsOn, metricsById, sizeMetric, colorMode, highlightStructure, isolateCommunity, articulationIds, bridgeKeys, layoutMode, observabilityOn, deadNodeIds, activationsOn, activationData, activationById, activationMax, compareB, diffView]);
++  }, [researchName, lensId, lensRepo, researchData, setSigmaGraph, metricsOn, metricsById, sizeMetric, colorMode, highlightStructure, isolateCommunity, articulationIds, bridgeKeys, layoutMode, observabilityOn, deadNodeIds, activationsOn, activationData, activationById, activationMax, compareB, diffView, directedOn, hierarchyOn, communityLevel, knnOn, communityOverrideById, precomputedPositions, knnIds]);
 +
 +  // Expose useSigma.recomputeLayout up to useAppState so the Header
 +  // "Recompute layout" button can fire it. The action lives on
@@ -2913,7 +2981,7 @@ index e34fd434..8106d50f 100644
  
    // Update node visibility when filters change
    useEffect(() => {
-@@ -205,6 +520,198 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -205,6 +586,198 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
      // eslint-disable-next-line react-hooks/exhaustive-deps -- sigmaRef identity never changes
    }, [visibleLabels, depthFilter, appSelectedNode]);
  
@@ -3112,7 +3180,7 @@ index e34fd434..8106d50f 100644
    // Sync app selected node with sigma
    useEffect(() => {
      if (appSelectedNode) {
-@@ -249,6 +756,153 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -249,6 +822,174 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
          className="sigma-container h-full w-full cursor-grab active:cursor-grabbing"
        />
  
@@ -3137,6 +3205,27 @@ index e34fd434..8106d50f 100644
 +          metricsById={(metricsById ?? undefined) as Map<string, Record<string, number>> | undefined}
 +          selectedId={sigmaSelectedNode}
 +        />
++      )}
++
++      {/* kNN "Similar" panel (milestone A.1) — the embedding-nearest neighbours of
++          the selected node, by cosine similarity. Gated like the metric controls
++          plus an active selection + a populated embedding map. The matching
++          canvas highlight rides via knnIds → adapter. */}
++      {metricsOn && (researchName || (lensId && lensRepo)) && view !== 'matrix' && knnOn && sigmaSelectedNode && embeddingById.size > 0 && (
++        <div
++          className="absolute right-4 top-44 z-20 w-64 rounded-lg border border-teal-400/40 bg-elevated/95 p-3 font-mono text-xs text-text-secondary shadow-lg"
++          data-testid="knn-panel"
++        >
++          <div className="mb-2 font-semibold text-text-primary">Similar to {sigmaSelectedNode.split('/').pop() || sigmaSelectedNode}</div>
++          <ol className="space-y-1">
++            {nearestNeighbors(embeddingById, sigmaSelectedNode, 8).map((x) => (
++              <li key={x.id} className="flex justify-between gap-2">
++                <span className="truncate" title={x.id}>{x.id.split('/').pop() || x.id}</span>
++                <span className="shrink-0 text-teal-300">{Math.round(x.sim * 100)}%</span>
++              </li>
++            ))}
++          </ol>
++        </div>
 +      )}
 +
 +      {/* Cluster halos — SVG overlay above the canvas (Sigma 3 has no
@@ -3266,7 +3355,7 @@ index e34fd434..8106d50f 100644
        {/* Hovered node tooltip - only show when NOT selected */}
        {hoveredNodeName && !sigmaSelectedNode && (
          <div className="pointer-events-none absolute top-4 left-1/2 z-20 -translate-x-1/2 animate-fade-in rounded-lg border border-border-subtle bg-elevated/95 px-3 py-1.5 backdrop-blur-sm">
-@@ -350,8 +1004,227 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -350,8 +1091,292 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
        {/* Query FAB */}
        <QueryFAB />
  
@@ -3325,13 +3414,14 @@ index e34fd434..8106d50f 100644
 +        {(researchName || (lensId && lensRepo)) && view !== 'matrix' && (
 +          <select
 +            value={layoutMode}
-+            onChange={(e) => setLayoutMode(e.target.value as 'force' | 'hierarchical' | 'circular')}
++            onChange={(e) => setLayoutMode(e.target.value as 'force' | 'hierarchical' | 'circular' | 'spectral')}
 +            className="flex h-10 items-center rounded-lg border border-border-subtle bg-elevated px-3 font-mono text-xs font-semibold text-text-secondary transition-colors hover:bg-hover hover:text-text-primary"
 +            data-testid="layout-select" title="Graph layout"
 +          >
 +            <option value="force">Layout: force</option>
 +            <option value="hierarchical">Layout: hierarchical</option>
 +            <option value="circular">Layout: circular</option>
++            <option value="spectral">Spectral</option>
 +          </select>
 +        )}
 +        {(researchName || (lensId && lensRepo)) && (
@@ -3348,7 +3438,7 @@ index e34fd434..8106d50f 100644
 +        {metricsOn && (researchName || (lensId && lensRepo)) && view !== 'matrix' && (
 +          <select
 +            value={sizeMetric}
-+            onChange={(e) => setSizeMetric(e.target.value as 'degree' | 'pagerank' | 'betweenness' | 'eigenvector' | 'closeness' | 'katz' | 'harmonic' | 'coreness' | 'clustering')}
++            onChange={(e) => setSizeMetric(e.target.value as SizeMetricAny)}
 +            className="flex h-10 items-center rounded-lg border border-indigo-400/40 bg-indigo-500/15 px-3 font-mono text-xs font-semibold text-indigo-200 transition-colors hover:border-indigo-300/60 hover:bg-indigo-500/20"
 +            data-testid="metric-select"
 +          >
@@ -3361,6 +3451,14 @@ index e34fd434..8106d50f 100644
 +            <option value="harmonic">Harmonic</option>
 +            <option value="coreness">k-core</option>
 +            <option value="clustering">Clustering</option>
++            {directedOn && (
++              <optgroup label="Directed">
++                <option value="inDegree">In-degree</option>
++                <option value="outDegree">Out-degree</option>
++                <option value="hubs">Hubs</option>
++                <option value="authorities">Authorities</option>
++              </optgroup>
++            )}
 +          </select>
 +        )}
 +        {metricsOn && (researchName || (lensId && lensRepo)) && (
@@ -3411,6 +3509,62 @@ index e34fd434..8106d50f 100644
 +                <span>dead-weight{metricsData?.summary?.deadWeightCount != null ? ` (${metricsData.summary.deadWeightCount})` : ''}</span>
 +              </span>
 +            )}
++          </button>
++        )}
++        {metricsOn && (researchName || (lensId && lensRepo)) && view !== 'matrix' && (
++          <button
++            onClick={() => setDirectedOn((v) => !v)}
++            className={directedOn
++              ? 'flex h-10 items-center gap-1.5 rounded-lg border border-sky-400/50 bg-sky-500/15 px-3 font-mono text-xs font-semibold text-sky-200'
++              : 'flex h-10 items-center rounded-lg border border-border-subtle bg-elevated px-3 font-mono text-xs font-semibold text-text-secondary transition-colors hover:bg-hover hover:text-text-primary'}
++            data-testid="directed-toggle" title="Directed metrics (in/out-degree, HITS hubs/authorities, SCC)"
++          >
++            <span>Directed</span>
++            {directedOn && metricsData?.summary?.stronglyConnectedComponentCount != null && (
++              <span className="text-sky-100">{metricsData.summary.stronglyConnectedComponentCount} SCC</span>
++            )}
++          </button>
++        )}
++        {metricsOn && (researchName || (lensId && lensRepo)) && view !== 'matrix' && (
++          <button
++            onClick={() => setHierarchyOn((v) => !v)}
++            className={hierarchyOn
++              ? 'flex h-10 items-center gap-1.5 rounded-lg border border-violet-400/50 bg-violet-500/15 px-3 font-mono text-xs font-semibold text-violet-200'
++              : 'flex h-10 items-center rounded-lg border border-border-subtle bg-elevated px-3 font-mono text-xs font-semibold text-text-secondary transition-colors hover:bg-hover hover:text-text-primary'}
++            data-testid="hierarchy-toggle" title="Hierarchical communities (multi-level Louvain)"
++          >
++            <span>Hierarchy</span>
++            {hierarchyOn && (metricsData?.hierarchy?.levelCount ?? 0) > 0 && (
++              <span className="text-violet-100">{metricsData!.hierarchy!.levelCount} lvl</span>
++            )}
++          </button>
++        )}
++        {metricsOn && (researchName || (lensId && lensRepo)) && view !== 'matrix' && hierarchyOn && (metricsData?.hierarchy?.levelCount ?? 0) > 1 && (
++          <div
++            className="flex h-10 items-center gap-2 rounded-lg border border-violet-400/40 bg-violet-500/15 px-3 font-mono text-xs font-semibold text-violet-200"
++            data-testid="hierarchy-level"
++          >
++            <input
++              type="range"
++              min={0}
++              max={metricsData!.hierarchy!.levelCount - 1}
++              value={communityLevel}
++              onChange={(e) => setCommunityLevel(Number(e.target.value))}
++              className="h-1 w-20 accent-violet-400"
++              data-testid="hierarchy-slider"
++            />
++            <span>level {communityLevel}/{metricsData!.hierarchy!.levelCount - 1}</span>
++          </div>
++        )}
++        {metricsOn && (researchName || (lensId && lensRepo)) && view !== 'matrix' && (
++          <button
++            onClick={() => setKnnOn((v) => !v)}
++            className={knnOn
++              ? 'flex h-10 items-center gap-1.5 rounded-lg border border-teal-400/50 bg-teal-500/15 px-3 font-mono text-xs font-semibold text-teal-200'
++              : 'flex h-10 items-center rounded-lg border border-border-subtle bg-elevated px-3 font-mono text-xs font-semibold text-text-secondary transition-colors hover:bg-hover hover:text-text-primary'}
++            data-testid="knn-toggle" title="Highlight the embedding-nearest neighbours of the selected node"
++          >
++            <span>Similar</span>
 +          </button>
 +        )}
 +        {metricsOn && researchName && view !== 'matrix' && (
@@ -3496,7 +3650,7 @@ index e34fd434..8106d50f 100644
          <button
            onClick={handleToggleAIHighlights}
            className={
-@@ -369,6 +1242,64 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -369,6 +1394,67 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
            )}
          </button>
        </div>
@@ -3505,10 +3659,13 @@ index e34fd434..8106d50f 100644
 +        <div className="absolute right-4 top-16 z-20 w-64 rounded-lg border border-border-subtle bg-elevated/95 p-3 font-mono text-xs text-text-secondary shadow-lg" data-testid="topn-panel">
 +          <div className="mb-2 font-semibold text-text-primary">Top 10 by {sizeMetric}</div>
 +          <ol className="space-y-1">
-+            {topNByMetric(metricsData.nodes, sizeMetric, 10).map((n) => (
++            {/* topNByMetric is typed to the undirected SizeMetric; for the four
++                directed metrics (optional `number | undefined` fields) we sort
++                inline with a 0 coalesce so the panel honours the selection. */}
++            {topNForSizeMetric.map((n) => (
 +              <li key={n.id} className="flex justify-between gap-2">
 +                <span className="truncate" title={n.id}>{n.id.split('/').pop() || n.id}</span>
-+                <span className="shrink-0 text-indigo-300">{(n[sizeMetric] as number).toFixed(4)}</span>
++                <span className="shrink-0 text-indigo-300">{((n[sizeMetric] as number | undefined) ?? 0).toFixed(4)}</span>
 +              </li>
 +            ))}
 +          </ol>

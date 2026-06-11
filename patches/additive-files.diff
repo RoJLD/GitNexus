@@ -23856,6 +23856,40 @@ index 00000000..9a7bffb3
 +  }
 +  return inside;
 +}
+diff --git a/gitnexus-web/src/lib/embedding-tools.ts b/gitnexus-web/src/lib/embedding-tools.ts
+new file mode 100644
+index 00000000..bc49ee3d
+--- /dev/null
++++ b/gitnexus-web/src/lib/embedding-tools.ts
+@@ -0,0 +1,28 @@
++// Pure, graphology-free embedding helpers (host-testable, like graph-diff-view.ts).
++export function nearestNeighbors(embeddingById: Map<string, number[]>, id: string, k = 8): { id: string; sim: number }[] {
++  const v = embeddingById.get(id);
++  if (!v) return [];
++  const norm = (a: number[]) => Math.sqrt(a.reduce((s, x) => s + x * x, 0));
++  const nv = norm(v);
++  const out: { id: string; sim: number }[] = [];
++  for (const [oid, w] of embeddingById) {
++    if (oid === id) continue;
++    const nw = norm(w);
++    let dot = 0; const n = Math.min(v.length, w.length);
++    for (let i = 0; i < n; i++) dot += v[i] * w[i];
++    out.push({ id: oid, sim: nv > 0 && nw > 0 ? dot / (nv * nw) : 0 });
++  }
++  out.sort((a, b) => (b.sim - a.sim) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
++  return out.slice(0, k);
++}
++export function spectralLayout(embeddingById: Map<string, number[]>, ids: string[], { scale = 300 }: { scale?: number } = {}): Map<string, { x: number; y: number }> {
++  const pts = ids.map((id) => { const e = embeddingById.get(id) ?? []; return { id, x: e[0] ?? 0, y: e[1] ?? 0 }; });
++  const n = Math.max(1, pts.length);
++  const mx = pts.reduce((s, p) => s + p.x, 0) / n;
++  const my = pts.reduce((s, p) => s + p.y, 0) / n;
++  let maxAbs = 1e-9;
++  for (const p of pts) maxAbs = Math.max(maxAbs, Math.abs(p.x - mx), Math.abs(p.y - my));
++  const out = new Map<string, { x: number; y: number }>();
++  for (const p of pts) out.set(p.id, { x: ((p.x - mx) / maxAbs) * scale, y: ((p.y - my) / maxAbs) * scale });
++  return out;
++}
 diff --git a/gitnexus-web/src/lib/gantt-layout.ts b/gitnexus-web/src/lib/gantt-layout.ts
 new file mode 100644
 index 00000000..325a5c48
@@ -25144,16 +25178,17 @@ index 00000000..29d9f355
 +export const COMMUNITY_PALETTE = ['#60a5fa', '#f59e0b', '#34d399', '#f472b6', '#a78bfa', '#fb7185', '#22d3ee', '#facc15', '#4ade80', '#c084fc'];
 diff --git a/gitnexus-web/src/lib/research-graph-adapter.ts b/gitnexus-web/src/lib/research-graph-adapter.ts
 new file mode 100644
-index 00000000..7769a017
+index 00000000..e23f675c
 --- /dev/null
 +++ b/gitnexus-web/src/lib/research-graph-adapter.ts
-@@ -0,0 +1,137 @@
+@@ -0,0 +1,145 @@
 +import Graph from 'graphology';
 +import type { SigmaNodeAttributes, SigmaEdgeAttributes } from './graph-adapter';
 +import { RESEARCH_COLORS, RESEARCH_FALLBACK_COLOR, COMMUNITY_PALETTE } from './research-colors';
 +import { heatColor } from './metrics-view';
 +import { layeredLayout } from './layered-layout';
 +import { DIFF_VIEW_COLORS } from './graph-diff-view';
++import type { SizeMetricAny } from '../services/graph-theory-client';
 +
 +// Re-exported so existing consumers (e.g. AdjacencyMatrix) keep importing it from here;
 +// the single source of truth now lives in research-colors.ts (dep-free).
@@ -25192,29 +25227,32 @@ index 00000000..7769a017
 + */
 +export function researchGraphToGraphology(
 +  rg: ResearchGraph,
-+  metricsById?: Map<string, { degree: number; pagerank: number; betweenness: number; eigenvector: number; closeness: number; katz: number; harmonic: number; coreness: number; clustering: number; community: number }>,
-+  sizeBy: 'degree' | 'pagerank' | 'betweenness' | 'eigenvector' | 'closeness' | 'katz' | 'harmonic' | 'coreness' | 'clustering' = 'pagerank',
++  metricsById?: Map<string, { degree: number; pagerank: number; betweenness: number; eigenvector: number; closeness: number; katz: number; harmonic: number; coreness: number; clustering: number; community: number; inDegree?: number; outDegree?: number; hubs?: number; authorities?: number }>,
++  sizeBy: SizeMetricAny = 'pagerank',
 +  opts: {
 +    colorMode?: 'community' | 'heatmap';
 +    highlightStructure?: boolean;
 +    isolateCommunity?: number | null;
 +    articulationIds?: Set<string>;
 +    bridgeKeys?: Set<string>;
-+    layoutMode?: 'force' | 'hierarchical' | 'circular';
++    layoutMode?: 'force' | 'hierarchical' | 'circular' | 'spectral';
 +    deadNodeIds?: Set<string>;
 +    activationById?: Map<string, number>;
 +    activationMax?: number;
 +    diffStatusById?: Map<string, 'added' | 'removed' | 'changed' | 'common'>;
++    communityOverrideById?: Map<string, number>;
++    precomputedPositions?: Map<string, { x: number; y: number }>;
++    knnIds?: Set<string>;
 +  } = {},
 +): Graph<SigmaNodeAttributes, SigmaEdgeAttributes> {
-+  const { colorMode = 'community', highlightStructure = false, isolateCommunity = null, articulationIds, bridgeKeys, layoutMode = 'force', deadNodeIds = undefined, activationById = undefined, activationMax = 0, diffStatusById = undefined } = opts;
++  const { colorMode = 'community', highlightStructure = false, isolateCommunity = null, articulationIds, bridgeKeys, layoutMode = 'force', deadNodeIds = undefined, activationById = undefined, activationMax = 0, diffStatusById = undefined, communityOverrideById = undefined, precomputedPositions = undefined, knnIds = undefined } = opts;
 +  const graph = new Graph<SigmaNodeAttributes, SigmaEdgeAttributes>();
 +  const nodes = rg.nodes || [];
 +  const total = Math.max(1, nodes.length);
 +  const radius = Math.sqrt(total) * 30;
 +
 +  const maxV = metricsById
-+    ? Math.max(...[...metricsById.values()].map((v) => v[sizeBy]), 1e-9)
++    ? Math.max(...[...metricsById.values()].map((v) => (v as Record<string, number>)[sizeBy] ?? 0), 1e-9)
 +    : 1;
 +
 +  const layered = layoutMode === 'hierarchical'
@@ -25228,10 +25266,11 @@ index 00000000..7769a017
 +    const r = radius * (0.5 + ((i % 50) / 50) * 0.5);
 +    const m = metricsById?.get(node.id);
 +    const dimmed = isolateCommunity != null && m != null && m.community !== isolateCommunity;
++    const comm = communityOverrideById?.get(node.id) ?? m?.community ?? 0;
 +    let color = m
-+      ? (colorMode === 'heatmap' ? heatColor((m[sizeBy] ?? 0) / maxV) : COMMUNITY_PALETTE[m.community % COMMUNITY_PALETTE.length])
++      ? (colorMode === 'heatmap' ? heatColor(((m as Record<string, number>)[sizeBy] ?? 0) / maxV) : COMMUNITY_PALETTE[comm % COMMUNITY_PALETTE.length])
 +      : (RESEARCH_COLORS[node.type] || RESEARCH_FALLBACK_COLOR);
-+    let size = m ? 4 + 16 * Math.sqrt((m[sizeBy] ?? 0) / maxV) : 5;
++    let size = m ? 4 + 16 * Math.sqrt(((m as Record<string, number>)[sizeBy] ?? 0) / maxV) : 5;
 +    const isArticulation = !!(highlightStructure && articulationIds?.has(node.id));
 +    if (dimmed) { color = '#374151'; size = 2; }   // dim non-isolated (no opacity attr → gray+small)
 +    // Observability — a dead-weight node (no directed path to any output) pops in red,
@@ -25253,16 +25292,19 @@ index 00000000..7769a017
 +    // byte-identical. Unmapped nodes default to 'common'.
 +    const diffSt = diffStatusById?.get(node.id);
 +    if (diffStatusById && !dimmed) { color = DIFF_VIEW_COLORS[diffSt ?? 'common']; }
++    const placed = layoutMode === 'spectral'
++      ? precomputedPositions?.get(node.id)
++      : layered?.get(node.id);
 +    graph.addNode(node.id, {
-+      x: layered?.get(node.id)?.x ?? Math.cos(angle) * r,
-+      y: layered?.get(node.id)?.y ?? Math.sin(angle) * r,
++      x: placed?.x ?? Math.cos(angle) * r,
++      y: placed?.y ?? Math.sin(angle) * r,
 +      size,
 +      color,
 +      label: node.label,
 +      nodeType: 'CodeElement',
 +      filePath: node.path,
 +      mass: 3,
-+      ...((isArticulation && !dimmed) || isDead || (diffStatusById && diffSt && diffSt !== 'common' && !dimmed) ? { highlighted: true, zIndex: 2 } : {}),
++      ...((isArticulation && !dimmed) || isDead || (diffStatusById && diffSt && diffSt !== 'common' && !dimmed) || (!!knnIds?.has(node.id) && !dimmed) ? { highlighted: true, zIndex: 2 } : {}),
 +    });
 +    i++;
 +  }
@@ -25788,10 +25830,10 @@ index 00000000..607b24cf
 +}
 diff --git a/gitnexus-web/src/services/graph-theory-client.ts b/gitnexus-web/src/services/graph-theory-client.ts
 new file mode 100644
-index 00000000..087b6c2c
+index 00000000..3c188736
 --- /dev/null
 +++ b/gitnexus-web/src/services/graph-theory-client.ts
-@@ -0,0 +1,54 @@
+@@ -0,0 +1,71 @@
 +export interface GraphMetricNode {
 +  id: string;
 +  degree: number;
@@ -25810,23 +25852,40 @@ index 00000000..087b6c2c
 +  deadWeight?: boolean;
 +  reachesOutput?: boolean;
 +  reachableFromInput?: boolean;
++  // Directed metrics (only present when fetched with &directed=1).
++  inDegree?: number;
++  outDegree?: number;
++  hubs?: number;
++  authorities?: number;
++  sccId?: number;
++  // Hierarchical community path (only present when fetched with &hierarchy=1).
++  communityPath?: number[];
++  // Spectral embedding coordinates (only present when fetched with &embed=spectral).
++  embedding?: number[];
 +}
 +export interface GraphMetrics {
 +  nodes: GraphMetricNode[];
 +  bridges: { source: string; target: string }[];
-+  summary: { nodeCount: number; edgeCount: number; communityCount: number; modularity: number; density: number; componentCount: number; transitivity: number; capped?: boolean; omittedMetrics?: string[]; approximate?: boolean; sampleSize?: number | null; deadWeightCount?: number; outputCount?: number; inputCount?: number };
++  summary: { nodeCount: number; edgeCount: number; communityCount: number; modularity: number; density: number; componentCount: number; transitivity: number; capped?: boolean; omittedMetrics?: string[]; approximate?: boolean; sampleSize?: number | null; deadWeightCount?: number; outputCount?: number; inputCount?: number; directed?: boolean; stronglyConnectedComponentCount?: number; embedding?: { method: string; dims: number } };
++  hierarchy?: { levelCount: number; levels: { modularity: number; communityCount: number }[]; method: string };
 +}
 +
 +export type SizeMetric = 'degree' | 'pagerank' | 'betweenness' | 'eigenvector' | 'closeness' | 'katz' | 'harmonic' | 'coreness' | 'clustering';
++export type DirectedSizeMetric = 'inDegree' | 'outDegree' | 'hubs' | 'authorities';
++export type SizeMetricAny = SizeMetric | DirectedSizeMetric;
 +
 +export type CommunityMethod = 'louvain' | 'leiden' | 'labelprop';
-+export interface MetricsOpts { community?: CommunityMethod; resolution?: number; observability?: boolean }
++export interface MetricsOpts { community?: CommunityMethod; resolution?: number; observability?: boolean; directed?: boolean; hierarchy?: boolean; embed?: 'spectral'; dims?: number }
 +
 +function metricsQuery(opts?: MetricsOpts, base?: URLSearchParams): string {
 +  const q = base ?? new URLSearchParams();
 +  if (opts?.community) q.set('community', opts.community);
 +  if (opts?.resolution !== undefined) q.set('resolution', String(opts.resolution));
 +  if (opts?.observability) q.set('observability', '1');
++  if (opts?.directed) q.set('directed', '1');
++  if (opts?.hierarchy) q.set('hierarchy', '1');
++  if (opts?.embed) q.set('embed', opts.embed);
++  if (opts?.dims !== undefined) q.set('dims', String(opts.dims));
 +  const s = q.toString();
 +  return s ? `?${s}` : '';
 +}
