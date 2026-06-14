@@ -66,6 +66,7 @@
 
 import { createInterface } from 'node:readline';
 import process from 'node:process';
+import { inventoryMCPTools } from '../upstream/docker-server-copilot-core.mjs';
 
 const API_URL = (process.env.GITNEXUS_API || 'http://localhost:4747').replace(/\/+$/, '');
 const WEB_URL = (process.env.GITNEXUS_WEB || 'http://localhost:4173').replace(/\/+$/, '');
@@ -651,6 +652,12 @@ const TOOLS = [
       if (observability) params.observability = 1;
       return callWeb(`/graph/metrics/lens/${encodeURIComponent(lensId)}`, params);
     },
+  },
+  {
+    name: 'gitnexus_copilot_inventory',
+    description: 'Tier 3.7 Architect\'s Copilot — inventory gate. Returns the list of MCP analytics tools available + mapping to the 9 endpoints the Copilot requires (entropy, churn, coupling, growth, lifespan, ownership, dissonance, semantic_labels, similarity) + gate verdict (GREEN = unblock Phase A, RED = block). Pure synthesis tool (Iron Rule COPILOT-1) ; introduces zero new analytics.',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+    handler: async () => inventoryMCPTools(),
   },
 ];
 

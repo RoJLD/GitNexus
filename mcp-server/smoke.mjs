@@ -83,11 +83,11 @@ try {
 
   notify('notifications/initialized');
 
-  // 2. tools/list — should list 21 tools (20 + regression)
+  // 2. tools/list — should list 31 tools (30 + gitnexus_copilot_inventory Tier 3.7 A1)
   const list = await send('tools/list');
   if (list.error) fail(`tools/list: ${list.error.message}`);
   const tools = list.result?.tools || [];
-  if (tools.length !== 25) fail(`tools/list: expected 25 tools, got ${tools.length}`);
+  if (tools.length !== 31) fail(`tools/list: expected 31 tools, got ${tools.length}`);
   for (const expected of [
     'gitnexus_list_repos', 'gitnexus_entropy', 'gitnexus_churn', 'gitnexus_coupling',
     'gitnexus_growth', 'gitnexus_lifespan', 'gitnexus_ownership', 'gitnexus_dissonance',
@@ -98,6 +98,7 @@ try {
     'gitnexus_regression',
     'query_meta_graph',
     'gitnexus_list_graph_templates', 'gitnexus_create_graph_from_template', 'gitnexus_import_into_graph',
+    'gitnexus_copilot_inventory',
   ]) {
     if (!tools.find((t) => t.name === expected)) fail(`tools/list: missing ${expected}`);
   }
@@ -176,6 +177,25 @@ try {
   } else {
     fail(`gitnexus_list_repos: unexpected response shape`);
   }
+
+  // 4e. tools/call gitnexus_copilot_inventory — Tier 3.7 A1 gate (no stack dep)
+  // Pure local helper : asserts the inventory shape + GREEN gate verdict.
+  const inv = await send('tools/call', { name: 'gitnexus_copilot_inventory', arguments: {} });
+  if (inv.result?.isError) fail(`gitnexus_copilot_inventory: ${inv.result.content[0]?.text}`);
+  if (!Array.isArray(inv.result?.content) || inv.result.content[0]?.type !== 'text') {
+    fail('gitnexus_copilot_inventory: unexpected response shape');
+  }
+  const invPayload = JSON.parse(inv.result.content[0].text);
+  if (!Array.isArray(invPayload.tools) || invPayload.tools.length === 0) {
+    fail(`gitnexus_copilot_inventory: tools array empty (got ${invPayload.tools?.length})`);
+  }
+  if (invPayload.gateVerdict !== 'GREEN') {
+    fail(`gitnexus_copilot_inventory: expected GREEN gate verdict, got ${invPayload.gateVerdict} (missing: ${(invPayload.missing || []).join(',')})`);
+  }
+  if (!Array.isArray(invPayload.mapping) || invPayload.mapping.length !== 9) {
+    fail(`gitnexus_copilot_inventory: expected 9 endpoint mappings, got ${invPayload.mapping?.length}`);
+  }
+  pass(`gitnexus_copilot_inventory → ${invPayload.count} tools, gate=${invPayload.gateVerdict}, 9/9 endpoints mapped`);
 
   // 5. Unknown tool → isError content
   const bad = await send('tools/call', { name: 'gitnexus_does_not_exist', arguments: {} });
