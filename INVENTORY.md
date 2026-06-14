@@ -1,7 +1,7 @@
 # GitNexus — État des lieux
 
-**Snapshot daté : 2026-05-26 (post-bump v1.6.5)**
-**Base upstream : `v1.6.5`** (commit `42d4fcaf`, 2026-05-16)
+**Snapshot daté : 2026-06-14 (post-bump v1.6.7)**
+**Base upstream : `v1.6.7`** (latest stable, bumped from v1.6.5 — v1.6.6 mega-release ~190 PRs + v1.6.7 patch fixes)
 **Fork interne : [github.com/RoJLD/GitNexus](https://github.com/RoJLD/GitNexus) → branche `deployment`**
 
 Document figé dans le temps, vocation : servir de base de brainstorming

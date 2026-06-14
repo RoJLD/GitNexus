@@ -1,8 +1,17 @@
 # Derived image that fixes two upstream bugs in
-# ghcr.io/abhigyanpatwari/gitnexus:1.6.5 without re-vendoring the full source
+# ghcr.io/abhigyanpatwari/gitnexus:1.6.7 without re-vendoring the full source
 # tree. See notes/decisions.md (2026-05-07 REVERSAL entry) for the rationale.
 #
-# The two remaining upstream bugs (as of v1.6.5):
+# Bumped 2026-06-14: v1.6.5 → v1.6.7. v1.6.6 was a mega-release (~190 PRs:
+# Scope-resolution RFC #909, Linux-kernel-scale parallel indexing, cross-
+# service API graphs, legacy resolution engine deleted). v1.6.7 added
+# vendored tree-sitter prebuilds (no toolchain in CI), MCP list_repos
+# pagination, C++ inheritance-lattice fixes, and taint/PDG substrate M0
+# (inert/additive). Bump is justified despite cohabitation-contract §3.1
+# 'v1.7.x+' rule because v1.6.6 is functionally a major and v1.7 is not yet
+# tagged. Patches re-applied: lbug-staleness + incremental-dump.
+#
+# The two remaining upstream bugs (as of v1.6.7):
 #   1. /data/hf-cache is never created with the right ownership, so USER node
 #      can't write the HuggingFace embedding cache (EACCES at first analyze
 #      run with --embeddings).
@@ -22,7 +31,7 @@
 # Both remaining fixes are minimal layers on top of the upstream image — no
 # rebuild of gitnexus from source.
 
-FROM ghcr.io/abhigyanpatwari/gitnexus:1.6.5
+FROM ghcr.io/abhigyanpatwari/gitnexus:1.6.7
 
 USER root
 

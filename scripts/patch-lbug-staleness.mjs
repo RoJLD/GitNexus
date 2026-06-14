@@ -62,7 +62,12 @@ if (src.includes(marker)) {
 
 // Match the exact original function. If gitnexus changes it, this fails
 // loudly rather than silently producing a broken image.
-const original = /const ensureLbugInitialized = async \(dbPath\) => \{\s*if \(conn && currentDbPath === dbPath\) \{\s*return \{ db, conn \};\s*\}\s*await doInitLbug\(dbPath\);\s*return \{ db, conn \};\s*\};/;
+//
+// Shape evolution:
+//   - v1.6.5 (and earlier): `async (dbPath) => { if (conn && currentDbPath === dbPath) ... }`
+//   - v1.6.7 (post-readonly fast-path, ~v1.6.6 RFC #909 era): `async (dbPath, readOnly = false) => { if (conn && currentDbPath === dbPath && currentDbReadOnly === readOnly) ... }`
+// Both shapes need the same staleness check; the regex below tolerates both.
+const original = /const ensureLbugInitialized = async \(dbPath(?:, readOnly = false)?\) => \{\s*if \(conn && currentDbPath === dbPath(?: && currentDbReadOnly === readOnly)?\) \{\s*return \{ db, conn \};\s*\}\s*await doInitLbug\(dbPath(?:, readOnly)?\);\s*return \{ db, conn \};\s*\};/;
 
 if (!original.test(src)) {
   console.error(
@@ -72,7 +77,49 @@ if (!original.test(src)) {
   process.exit(1);
 }
 
-const replacement = `${marker}
+// Detect v1.6.7+ shape so the replacement preserves the readOnly signature.
+const hasReadOnly = /const ensureLbugInitialized = async \(dbPath, readOnly = false\)/.test(src);
+
+const replacement = hasReadOnly ? `${marker}
+let __patchedLastSeenIndexedAt = null;
+const ensureLbugInitialized = async (dbPath, readOnly = false) => {
+    if (conn && currentDbPath === dbPath && currentDbReadOnly === readOnly) {
+        // STALENESS CHECK (mirrors mcp/local/local-backend.ts:439): compare
+        // meta.json's indexedAt against the value we recorded when this
+        // connection was opened. If the analyze worker rebuilt the index,
+        // close the stale handle so the next request opens a fresh one.
+        try {
+            const metaPath = path.join(path.dirname(dbPath), 'meta.json');
+            const metaRaw = await fs.readFile(metaPath, 'utf-8');
+            const meta = JSON.parse(metaRaw);
+            if (meta.indexedAt && __patchedLastSeenIndexedAt && __patchedLastSeenIndexedAt !== meta.indexedAt) {
+                try { if (conn) await conn.close(); } catch {}
+                try { if (db) await db.close(); } catch {}
+                conn = null;
+                db = null;
+                currentDbPath = null;
+                ftsLoaded = false;
+                vectorExtensionLoaded = false;
+                ensuredFTSIndexes.clear();
+                await doInitLbug(dbPath, readOnly);
+                __patchedLastSeenIndexedAt = meta.indexedAt;
+            }
+        } catch {
+            // meta.json missing or unreadable — keep using the cached conn.
+        }
+        return { db, conn };
+    }
+    await doInitLbug(dbPath, readOnly);
+    try {
+        const metaPath = path.join(path.dirname(dbPath), 'meta.json');
+        const metaRaw = await fs.readFile(metaPath, 'utf-8');
+        const meta = JSON.parse(metaRaw);
+        __patchedLastSeenIndexedAt = meta.indexedAt || null;
+    } catch {
+        __patchedLastSeenIndexedAt = null;
+    }
+    return { db, conn };
+};` : `${marker}
 let __patchedLastSeenIndexedAt = null;
 const ensureLbugInitialized = async (dbPath) => {
     if (conn && currentDbPath === dbPath) {

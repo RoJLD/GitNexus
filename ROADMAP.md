@@ -1,7 +1,7 @@
 # GitNexus — Roadmap
 
 État vivant des fonctionnalités déjà livrées et des prochaines pistes.
-Dernière mise à jour : 2026-05-29 (Multi-repo unified graph livré (#65) — `GET /graph/merged?group=` fusionne les graphes per-repo au niveau fichier + arêtes cross-repo des contrats ; groupe synchronisé via `gitnexus group` (endpoints worker + `docker-server-group.mjs`) ; mode "Group graph" dans le canvas (`GroupGraphPanel` + `group-graph-adapter.ts`). **4/8 items enterprise couverts** (Code Wiki, Auto-reindexing, Regression forensics, Multi-repo support ✅). Avant : Regression forensics polish (#62) — coupling 6e métrique watchable/auto-forensiquable + "Locate regression" dans EntropyCommitTimeline. Aussi : Commit-level time-travel A+B+C COMPLET — mode Commits timeline (#60) + baseline auto-seed caché/promote (#61) + pré-chauffage des diffs (#63). Avant : "Auto" regression forensics (#59), Regression Phase 2 (#58), MVP (#57), Auto-reindexing (#56), Code Wiki UI (#55).).
+Dernière mise à jour : 2026-06-14 (bump upstream v1.6.5 → v1.6.7 + cohabitation diff resync — v1.6.6 mega-release ~190 PRs (Scope-resolution RFC #909, Linux-kernel-scale parallel indexing, cross-service API graphs, legacy resolution engine deleted, web Tree/Circles views, .gitnexusrc), v1.6.7 patch (vendored tree-sitter prebuilds, MCP list_repos pagination, C++ inheritance-lattice fixes, taint/PDG substrate M0). Patches lbug-staleness + incremental-dump réappliqués. Avant : Multi-repo unified graph livré (#65) — `GET /graph/merged?group=` fusionne les graphes per-repo au niveau fichier + arêtes cross-repo des contrats ; groupe synchronisé via `gitnexus group` (endpoints worker + `docker-server-group.mjs`) ; mode "Group graph" dans le canvas (`GroupGraphPanel` + `group-graph-adapter.ts`). **4/8 items enterprise couverts** (Code Wiki, Auto-reindexing, Regression forensics, Multi-repo support ✅). Avant : Regression forensics polish (#62) — coupling 6e métrique watchable/auto-forensiquable + "Locate regression" dans EntropyCommitTimeline. Aussi : Commit-level time-travel A+B+C COMPLET — mode Commits timeline (#60) + baseline auto-seed caché/promote (#61) + pré-chauffage des diffs (#63). Avant : "Auto" regression forensics (#59), Regression Phase 2 (#58), MVP (#57), Auto-reindexing (#56), Code Wiki UI (#55).).
 
 > 📋 **Voir aussi** [INVENTORY.md](INVENTORY.md) — état des lieux complet :
 > features upstream + nos ajouts + distance avec upstream. À utiliser
@@ -721,7 +721,12 @@ automatique" en commercial ([INVENTORY A.11](INVENTORY.md#partie-a)).
 **Effort** : 3-4 semaines (endpoint + GitHub Action + tests sur 2-3 PRs
 réelles).
 
-### 3.7 — AI-guided tour (Architect's Copilot)
+### 3.7 — AI-guided tour (Architect's Copilot) 🔵 Plan brainstormé 2026-06-14
+
+**Status** : 🔵 **Plan brainstormé 2026-06-14** — verdict judge 26/30 vs Tier 3.6 = 20.5/30, retenu comme winner.
+**Spec** : [`docs/superpowers/specs/2026-06-14-Tier-3.7-Architect-Copilot-AI.md`](docs/superpowers/specs/2026-06-14-Tier-3.7-Architect-Copilot-AI.md)
+**Plan** : [`docs/superpowers/plans/2026-06-14-Tier-3.7-Architect-Copilot-AI-plan.md`](docs/superpowers/plans/2026-06-14-Tier-3.7-Architect-Copilot-AI-plan.md)
+
 **Promesse** : un agent LLM consomme tous les endpoints MCP (cf 2bis.1)
 et produit une **interprétation narrative** du repo. Pas de nouvelle
 analytique, juste une couche de synthèse — le moins coûteux pour le
@@ -1086,6 +1091,7 @@ fin. Tout ce qui suit s'appuie sur Tier 1 + Tier 2.1-2.4 ✅ déjà livrés.
 <!-- specs:start -->
 | Spec | Tier | Title | Endpoint(s) / Composant(s) |
 |---|---|---|---|
+| [2026-06-14-Tier-3.7-Architect-Copilot-AI](docs/superpowers/specs/2026-06-14-Tier-3.7-Architect-Copilot-AI.md) | 3.7 | Tier 3.7 — Architect's Copilot AI — |  |
 <!-- specs:end -->
 
 ---
