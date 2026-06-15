@@ -83,11 +83,11 @@ try {
 
   notify('notifications/initialized');
 
-  // 2. tools/list — should list 31 tools (30 + gitnexus_copilot_inventory Tier 3.7 A1)
+  // 2. tools/list — should list 34 tools (31 + 3 Mycelium synergy consumers Tier 3.7 Phase A Tasks A2/A3/A4)
   const list = await send('tools/list');
   if (list.error) fail(`tools/list: ${list.error.message}`);
   const tools = list.result?.tools || [];
-  if (tools.length !== 31) fail(`tools/list: expected 31 tools, got ${tools.length}`);
+  if (tools.length !== 34) fail(`tools/list: expected 34 tools, got ${tools.length}`);
   for (const expected of [
     'gitnexus_list_repos', 'gitnexus_entropy', 'gitnexus_churn', 'gitnexus_coupling',
     'gitnexus_growth', 'gitnexus_lifespan', 'gitnexus_ownership', 'gitnexus_dissonance',
@@ -99,6 +99,10 @@ try {
     'query_meta_graph',
     'gitnexus_list_graph_templates', 'gitnexus_create_graph_from_template', 'gitnexus_import_into_graph',
     'gitnexus_copilot_inventory',
+    // Tier 3.7 Phase A Tasks A2/A3/A4 — Mycelium synergy consumers.
+    'gitnexus_copilot_blt_context',
+    'gitnexus_copilot_cluster_context',
+    'gitnexus_copilot_forge_context',
   ]) {
     if (!tools.find((t) => t.name === expected)) fail(`tools/list: missing ${expected}`);
   }
@@ -196,6 +200,52 @@ try {
     fail(`gitnexus_copilot_inventory: expected 9 endpoint mappings, got ${invPayload.mapping?.length}`);
   }
   pass(`gitnexus_copilot_inventory → ${invPayload.count} tools, gate=${invPayload.gateVerdict}, 9/9 endpoints mapped`);
+
+  // 4f. tools/call gitnexus_copilot_blt_context — Tier 3.7 Phase A Task A2 (no stack dep)
+  // Pure local read of the BLT ledger ; tolerant when the file is absent
+  // (mode=absent is a valid live response, not an error).
+  const blt = await send('tools/call', { name: 'gitnexus_copilot_blt_context', arguments: { limit: 10 } });
+  if (blt.result?.isError) fail(`gitnexus_copilot_blt_context: ${blt.result.content[0]?.text}`);
+  if (!Array.isArray(blt.result?.content) || blt.result.content[0]?.type !== 'text') {
+    fail('gitnexus_copilot_blt_context: unexpected response shape');
+  }
+  const bltPayload = JSON.parse(blt.result.content[0].text);
+  if (typeof bltPayload.tx_count !== 'number') fail(`gitnexus_copilot_blt_context: missing 'tx_count' field`);
+  if (!['live', 'absent', 'error'].includes(bltPayload.mode)) {
+    fail(`gitnexus_copilot_blt_context: unexpected mode='${bltPayload.mode}'`);
+  }
+  pass(`gitnexus_copilot_blt_context → mode=${bltPayload.mode}, tx_count=${bltPayload.tx_count}`);
+
+  // 4g. tools/call gitnexus_copilot_cluster_context — Tier 3.7 Phase A Task A3 (no stack dep)
+  // Pure local hash-chain verification ; chain_valid=null when ledger absent
+  // (valid live response).
+  const cluster = await send('tools/call', { name: 'gitnexus_copilot_cluster_context', arguments: { limit: 10 } });
+  if (cluster.result?.isError) fail(`gitnexus_copilot_cluster_context: ${cluster.result.content[0]?.text}`);
+  if (!Array.isArray(cluster.result?.content) || cluster.result.content[0]?.type !== 'text') {
+    fail('gitnexus_copilot_cluster_context: unexpected response shape');
+  }
+  const clusterPayload = JSON.parse(cluster.result.content[0].text);
+  if (typeof clusterPayload.total_entries !== 'number') fail(`gitnexus_copilot_cluster_context: missing 'total_entries' field`);
+  if (!['live', 'absent', 'error'].includes(clusterPayload.mode)) {
+    fail(`gitnexus_copilot_cluster_context: unexpected mode='${clusterPayload.mode}'`);
+  }
+  pass(`gitnexus_copilot_cluster_context → mode=${clusterPayload.mode}, total=${clusterPayload.total_entries}, chain_valid=${clusterPayload.chain_valid}`);
+
+  // 4h. tools/call gitnexus_copilot_forge_context — Tier 3.7 Phase A Task A4 (no stack dep)
+  // Pure local read of Forge concepts ; mode=stub when no backend is reachable
+  // (valid live response). Tolerant : nodes array can be empty.
+  const forge = await send('tools/call', { name: 'gitnexus_copilot_forge_context', arguments: { depth: 1 } });
+  if (forge.result?.isError) fail(`gitnexus_copilot_forge_context: ${forge.result.content[0]?.text}`);
+  if (!Array.isArray(forge.result?.content) || forge.result.content[0]?.type !== 'text') {
+    fail('gitnexus_copilot_forge_context: unexpected response shape');
+  }
+  const forgePayload = JSON.parse(forge.result.content[0].text);
+  if (!Array.isArray(forgePayload.nodes)) fail(`gitnexus_copilot_forge_context: 'nodes' is not an array`);
+  if (!Array.isArray(forgePayload.edges)) fail(`gitnexus_copilot_forge_context: 'edges' is not an array`);
+  if (!['bridge', 'jsonl', 'stub'].includes(forgePayload.mode)) {
+    fail(`gitnexus_copilot_forge_context: unexpected mode='${forgePayload.mode}'`);
+  }
+  pass(`gitnexus_copilot_forge_context → mode=${forgePayload.mode}, nodes=${forgePayload.nodes.length}, edges=${forgePayload.edges.length}`);
 
   // 5. Unknown tool → isError content
   const bad = await send('tools/call', { name: 'gitnexus_does_not_exist', arguments: {} });

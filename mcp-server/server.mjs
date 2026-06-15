@@ -67,6 +67,9 @@
 import { createInterface } from 'node:readline';
 import process from 'node:process';
 import { inventoryMCPTools } from '../upstream/docker-server-copilot-core.mjs';
+import { readBLTLedger, _internals as _bltInternals } from '../upstream/docker-server-copilot-blt.mjs';
+import { readClusterOpsLedger, _internals as _clusterInternals } from '../upstream/docker-server-copilot-cluster.mjs';
+import { readForgeContext } from '../upstream/docker-server-copilot-forge.mjs';
 
 const API_URL = (process.env.GITNEXUS_API || 'http://localhost:4747').replace(/\/+$/, '');
 const WEB_URL = (process.env.GITNEXUS_WEB || 'http://localhost:4173').replace(/\/+$/, '');
@@ -658,6 +661,54 @@ const TOOLS = [
     description: 'Tier 3.7 Architect\'s Copilot — inventory gate. Returns the list of MCP analytics tools available + mapping to the 9 endpoints the Copilot requires (entropy, churn, coupling, growth, lifespan, ownership, dissonance, semantic_labels, similarity) + gate verdict (GREEN = unblock Phase A, RED = block). Pure synthesis tool (Iron Rule COPILOT-1) ; introduces zero new analytics.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
     handler: async () => inventoryMCPTools(),
+  },
+  {
+    name: 'gitnexus_copilot_blt_context',
+    description: 'Tier 3.7 Architect\'s Copilot — Belt Market BLT supply-chain consumer (Task A2). Reads the append-only ELYSIUM ledger (data/governance/blt_supply_chain.jsonl) and returns the last N transactions touching a repoId, with tier-breakdown + total BLT. Used by the Copilot LLM to annotate refactoring recommendations with an economic cost. Read-only (Iron Rule BLT-PE-7) ; mode=\'absent\' when the ledger is missing (never crashes).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        repo: { type: 'string', description: 'RepoId / repo name to filter on. Optional — omit for global aggregation.' },
+        limit: { type: 'number', minimum: 1, maximum: 1000, default: 50, description: 'Max number of recent transactions to return.' },
+      },
+      additionalProperties: false,
+    },
+    handler: async ({ repo, limit }) => {
+      const ledgerPath = _bltInternals.resolveLedgerPath();
+      return await readBLTLedger(ledgerPath, { repoId: repo || null, limit: limit || 50 });
+    },
+  },
+  {
+    name: 'gitnexus_copilot_cluster_context',
+    description: 'Tier 3.7 Architect\'s Copilot — cluster ops hash-chain consumer (Task A3). Reads the append-only ELYSIUM ledger (data/governance/cluster_ops.jsonl), verifies the SHA-256[:16] hash chain (mirrors sigma_cluster_ops_audit.py), and returns the last N entries filtered by action type. Surfaces chain_valid + corrupted_seqs so the Copilot LLM can downgrade its confidence on a broken chain.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        actions: { type: 'string', description: 'Comma-separated list of action types to filter (kubectl_apply, helm_install, argocd_sync, …). Omit for all actions.' },
+        limit: { type: 'number', minimum: 1, maximum: 1000, default: 50, description: 'Max number of recent entries to return.' },
+      },
+      additionalProperties: false,
+    },
+    handler: async ({ actions, limit }) => {
+      const ledgerPath = _clusterInternals.resolveLedgerPath();
+      const list = actions ? actions.split(',').map((a) => a.trim()).filter(Boolean) : null;
+      return await readClusterOpsLedger(ledgerPath, { actions: list, limit: limit || 50 });
+    },
+  },
+  {
+    name: 'gitnexus_copilot_forge_context',
+    description: 'Tier 3.7 Architect\'s Copilot — ASTKG / Forge concept feed (Task A4). Returns a concept neighborhood from the ELYSIUM Forge graph (inter_graph.kuzu meta-layer). Backend strategy : (1) INTER_GRAPH_URL HTTP bridge, (2) forge_concepts.jsonl fallback, (3) stub mode if neither reachable. Mode=\'stub\' carries an explicit concern message so the Copilot LLM never silently mis-interprets missing data.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        concept: { type: 'string', description: 'Concept slug / id / name to root the neighborhood. Omit for global concept list.' },
+        depth: { type: 'number', minimum: 0, maximum: 5, default: 1, description: 'Neighborhood depth (depends_on edges).' },
+      },
+      additionalProperties: false,
+    },
+    handler: async ({ concept, depth }) => {
+      return await readForgeContext({ concept: concept || null, depth: depth || 1 });
+    },
   },
 ];
 
