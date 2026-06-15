@@ -1,6 +1,6 @@
 # GitNexus — État des lieux
 
-**Snapshot daté : 2026-06-14 (post-bump v1.6.7)**
+**Snapshot daté : 2026-06-15 (post-Tier-3.7 Phase D Hardening scaffold)**
 **Base upstream : `v1.6.7`** (latest stable, bumped from v1.6.5 — v1.6.6 mega-release ~190 PRs + v1.6.7 patch fixes)
 **Fork interne : [github.com/RoJLD/GitNexus](https://github.com/RoJLD/GitNexus) → branche `deployment`**
 
@@ -124,7 +124,7 @@ Le diff monolithique unique a été supprimé et remplacé par deux artefacts di
 
 | Fichier | Contenu | Risque de conflit au bump |
 |---|---|---|
-| [`patches/additive-files.diff`](patches/additive-files.diff) | 135 fichiers neufs que nous possédons entièrement (tous les `docker-server-*.mjs` dont les 5 `docker-server-copilot*.mjs` Tier 3.7 Phase A, les composants React additifs, les pure-function libs, les scripts, etc.) | **Nul** — ce sont des fichiers créés par nous, upstream ne les touche pas |
+| [`patches/additive-files.diff`](patches/additive-files.diff) | ~138 fichiers neufs que nous possédons entièrement (tous les `docker-server-*.mjs`, les composants React additifs, les pure-function libs, les scripts, etc.) | **Nul** — ce sont des fichiers créés par nous, upstream ne les touche pas |
 | [`patches/inplace-edits.diff`](patches/inplace-edits.diff) | 17 fichiers upstream modifiés en place (`docker-server.mjs`, `Dockerfile.web`, `App.tsx`, `useAppState.tsx`, `useSigma.ts`, `GraphCanvas.tsx`, `package.json`, `package-lock.json`, etc.) | **Toute la surface** — ces fichiers peuvent diverger à chaque bump |
 
 **Shim `docker-server-routes.mjs` (additif)** : le câblage de routes (chaîne de dispatch + imports + lancement du cron) qui résidait en place dans `docker-server.mjs` a été extrait dans un fichier neuf `upstream/docker-server-routes.mjs` (exports `registerGitnexusRoutes` + `startGitnexusCron`). `docker-server.mjs` reste un fichier in-place mais son footprint est réduit — seuls les handlers utilitaires inline (`handleExport`/`handleImport`/`/listdir`) y demeurent par design.
@@ -395,7 +395,7 @@ Pure frontend extension de la Timeline existante — aucune route serveur, réut
 **Pending — Tier 3 étendu (R&D + stratégique)** :
 - ⏳ 3.1 à 3.5 : voir [ROADMAP.md](ROADMAP.md) (inchangé)
 - ⏳ 3.6 Architectural CI (concurrence Akon Labs commercial)
-- ⏳ 3.7 AI-guided tour / Architect's Copilot (requiert 2bis.1)
+- 🟢 3.7 AI-guided tour / Architect's Copilot — Phase A+B+C livré, Phase D Hardening **scaffolded 2026-06-15** (metrics + E2E + INVENTORY +7 → ~138). Consumers : `docker-server-copilot.mjs` (REST gate) + `docker-server-copilot-core.mjs` (inventory) + `docker-server-copilot-blt.mjs` (BLT) + `docker-server-copilot-cluster.mjs` (hash-chain) + `docker-server-copilot-forge.mjs` (ASTKG) + `docker-server-copilot-metrics.mjs` (Prometheus) + `CopilotPanel.tsx` (4 sub-panels UI) + `tests/e2e/specs/copilot-panel.spec.ts` (Playwright). Iron Rules : COPILOT-1..5 (spec) + COPILOT-UI-1..3 (Phase C) + COPILOT-HARDENING-1..3 (Phase D).
 - ⏳ 3.8 Domain-specific AST extractors (requiert 3.10)
 - ⏳ 3.9 Public reference dataset / industry baselines (Chemin C)
 - ⏳ 3.10 Plugin architecture pour analytics (lève le goulot horizontal)
