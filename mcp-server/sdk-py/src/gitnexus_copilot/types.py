@@ -136,8 +136,18 @@ class ForgeContextResponse(TypedDict, total=False):
 
 @dataclass(frozen=True)
 class CopilotClientOptions:
-    """Construction options for `CopilotClient`."""
+    """
+    Construction options for ``CopilotClient``.
+
+    ``auth_token`` (Iron Rule Sigma-COPILOT-SDK-AUTH-1, Sigma-BEARER-AUTH-MANDATORY):
+        when set, the client attaches ``Authorization: Bearer <auth_token>`` to
+        every request. Only the Bearer scheme is supported; Basic, Digest, and
+        cookies are explicitly out of scope. Server-side enforcement is
+        scheduled for Tier 3.7.1+; until then the token is forwarded
+        transparently and 401/403 responses surface as ``CopilotAuthError``.
+    """
 
     base_url: str = "http://localhost:4747"
     timeout_s: float = 30.0
     headers: Dict[str, str] = field(default_factory=dict)
+    auth_token: Optional[str] = None

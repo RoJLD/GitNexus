@@ -169,8 +169,23 @@ export interface CopilotClientOptions {
    */
   timeoutMs?: number;
   /**
-   * Optional headers merged into every request (e.g. for auth tokens).
-   * NOTE: auth is not implemented in Tier 3.7 Phase B MVP (Task B6 future).
+   * Optional headers merged into every request. Useful for custom routing
+   * or trace propagation. If `authToken` is also provided, the SDK appends
+   * an `Authorization: Bearer <authToken>` header AFTER applying these
+   * custom headers (so the bearer token wins on collision).
    */
   headers?: Record<string, string>;
+  /**
+   * Bearer token attached to every request as
+   * `Authorization: Bearer <authToken>`.
+   *
+   * Iron Rule Sigma-COPILOT-SDK-AUTH-1 (Σ-BEARER-AUTH-MANDATORY) :
+   * the SDK supports ONLY the Bearer scheme. Basic, Digest, and cookie
+   * auth are explicitly out of scope (audit trail + secret hygiene).
+   *
+   * Server-side enforcement lands in Tier 3.7.1+ ; until then the token
+   * is forwarded transparently and any 401/403 surfaces as a
+   * `CopilotAuthError` (subclass of `CopilotHTTPError`).
+   */
+  authToken?: string;
 }
