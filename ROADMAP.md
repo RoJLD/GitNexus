@@ -721,10 +721,14 @@ automatique" en commercial ([INVENTORY A.11](INVENTORY.md#partie-a)).
 **Effort** : 3-4 semaines (endpoint + GitHub Action + tests sur 2-3 PRs
 réelles).
 
-### 3.7 — AI-guided tour (Architect's Copilot) 🔵 Plan brainstormé 2026-06-14
+### 3.7 — AI-guided tour (Architect's Copilot) 🟢 Phase A MVP livré + 🔵 Phase B SDK scaffolded
 
-**Status** : 🔵 **Plan brainstormé 2026-06-14** — verdict judge 26/30 vs Tier 3.6 = 20.5/30, retenu comme winner.
-**Spec** : [`docs/superpowers/specs/2026-06-14-Tier-3.7-Architect-Copilot-AI.md`](docs/superpowers/specs/2026-06-14-Tier-3.7-Architect-Copilot-AI.md)
+**Status** :
+- 🟢 **Phase A MVP livré 2026-06-14** — Tasks A1+A2+A3+A4+A5 (HEAD `c79574a6` puis `03abf80d`) : 4 endpoints `/copilot/{mcp-inventory,blt-context,cluster-context,forge-context}` exposés via `upstream/docker-server-copilot-*.mjs` + MCP tool `gitnexus_copilot_inventory`.
+- 🔵 **Phase B SDK scaffolded 2026-06-15** — Tasks B'1+B'2+B'3+B'4 (livraison parallèle Phase B Polish LLM B1..B7 toujours ouverte) : `mcp-server/sdk-ts/` (TypeScript `@gitnexus/copilot-sdk` v0.1.0) + `mcp-server/sdk-py/` (Python `gitnexus-copilot-sdk` v0.1.0). Tasks B'5 auth + B'6 publish = REMAINING.
+- 🔵 **Phase B Polish LLM** — B1..B7 (3 profondeurs, cache, MCP tool `gitnexus_tour`, skill Claude, confidence, mode dégradé, audit Mycelium) = REMAINING.
+
+**Spec** : [`docs/superpowers/specs/2026-06-14-Tier-3.7-Architect-Copilot-AI.md`](docs/superpowers/specs/2026-06-14-Tier-3.7-Architect-Copilot-AI.md) (verdict judge 26/30 vs Tier 3.6 = 20.5/30, retenu comme winner)
 **Plan** : [`docs/superpowers/plans/2026-06-14-Tier-3.7-Architect-Copilot-AI-plan.md`](docs/superpowers/plans/2026-06-14-Tier-3.7-Architect-Copilot-AI-plan.md)
 
 **Promesse** : un agent LLM consomme tous les endpoints MCP (cf 2bis.1)

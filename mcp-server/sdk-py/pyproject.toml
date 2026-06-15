@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "gitnexus-copilot-sdk"
+version = "0.1.0"
+description = "Python client SDK for the GitNexus Architect's Copilot AI REST surface (Tier 3.7 Phase B)."
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.10"
+authors = [{ name = "Robin DENIS", email = "roblastar@live.fr" }]
+keywords = ["gitnexus", "architect-copilot", "mcp", "sdk", "tier-3.7"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+dependencies = ["requests>=2.31"]
+
+[project.optional-dependencies]
+dev = ["pytest>=7.4", "pytest-cov>=4.1"]
+
+[project.urls]
+Homepage = "https://github.com/abhigyanpatwari/gitnexus"
+Spec = "https://github.com/abhigyanpatwari/gitnexus/blob/main/docs/superpowers/specs/2026-06-14-Tier-3.7-Architect-Copilot-AI.md"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+gitnexus_copilot = ["py.typed"]
