@@ -721,9 +721,9 @@ automatique" en commercial ([INVENTORY A.11](INVENTORY.md#partie-a)).
 **Effort** : 3-4 semaines (endpoint + GitHub Action + tests sur 2-3 PRs
 réelles).
 
-### 3.7 — AI-guided tour (Architect's Copilot) 🔵 Plan brainstormé 2026-06-14
+### 3.7 — AI-guided tour (Architect's Copilot) 🟢 Phase A+B+C livré, 🟢 Phase D Hardening scaffolded 2026-06-15
 
-**Status** : 🔵 **Plan brainstormé 2026-06-14** — verdict judge 26/30 vs Tier 3.6 = 20.5/30, retenu comme winner.
+**Status** : 🟢 **Phase A+B+C LIVRÉ** (Task A1 inventory gate `fd2ce8e9` + Tasks A2..A5 BLT/cluster/forge/UI panel MVP `c79574a6` + Phase B SDK extraction `fa8c1c26` + Phase C UI polish `c835ad25`) + 🟢 **Phase D Hardening SCAFFOLDED 2026-06-15** sur branche `feat/tier37-phase-d-hardening` (metrics endpoint `/copilot/metrics` Prometheus + E2E Playwright 8 scenarios + INVENTORY count update ~131 → ~138 + Iron Rules COPILOT-HARDENING-1..3 gravées). Verdict judge initial 26/30 vs Tier 3.6 = 20.5/30, retenu comme winner.
 **Spec** : [`docs/superpowers/specs/2026-06-14-Tier-3.7-Architect-Copilot-AI.md`](docs/superpowers/specs/2026-06-14-Tier-3.7-Architect-Copilot-AI.md)
 **Plan** : [`docs/superpowers/plans/2026-06-14-Tier-3.7-Architect-Copilot-AI-plan.md`](docs/superpowers/plans/2026-06-14-Tier-3.7-Architect-Copilot-AI-plan.md)
 

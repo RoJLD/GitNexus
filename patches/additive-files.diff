@@ -32471,3 +32471,249 @@ index 00000000..abfc0f16
 +    expect(snaps).toEqual(ordered);
 +  });
 +});
+diff --git a/docker-server-copilot-metrics.mjs b/docker-server-copilot-metrics.mjs
+new file mode 100644
+index 00000000..d34cb8e5
+--- /dev/null
++++ b/docker-server-copilot-metrics.mjs
+@@ -0,0 +1,240 @@
++/**
++ * Architect's Copilot AI — Prometheus metrics endpoint (Tier 3.7 Phase D — Hardening).
++ *
++ * Exposes a single read-only HTTP endpoint :
++ *
++ *   GET /copilot/metrics       -> Prometheus 0.0.4 text exposition format
++ *
++ * Instrumentation surface :
++ *   - copilot_endpoint_calls_total{endpoint,status}  (counter)
++ *   - copilot_endpoint_duration_seconds_bucket{endpoint,le}  (histogram, fixed buckets)
++ *   - copilot_endpoint_duration_seconds_count{endpoint}      (histogram count)
++ *   - copilot_endpoint_duration_seconds_sum{endpoint}        (histogram sum)
++ *   - copilot_chain_verify_count_total{result}               (counter, valid|invalid)
++ *   - copilot_cache_hit_total{type}                          (counter, aggregate|miss)
++ *
++ * Iron Rule COPILOT-HARDENING-1 (Sigma-METRICS-PROMETHEUS-MANDATORY) — every
++ * Tier 3.x endpoint MUST expose Prometheus counter+histogram so that the
++ * sigma_kuzu_master observability pipeline can ingest empirical latency/error
++ * distributions instead of synthetic estimates. Consumes the standard
++ * Prometheus text exposition (no client lib dependency, zero-dep additive).
++ *
++ * Iron Rule COPILOT-HARDENING-2 wiring (Sigma-E2E-PLAYWRIGHT-COVERAGE) — the
++ * exported registry is the source of truth for the Playwright spec
++ * `copilot-panel.spec.ts` which scrapes /copilot/metrics after each panel
++ * interaction to assert counter increments.
++ *
++ * Pattern source : `docker-server-copilot.mjs` (single-handler module that
++ * returns true once it owns the request, false otherwise). Zero coupling to
++ * the rest of the copilot surface beyond the instrumentation hooks below.
++ *
++ * --- API ---
++ *
++ *   instrumentEndpoint(name) -> { end(statusCode) }
++ *     Wrap a request handler :
++ *       const t = instrumentEndpoint('mcp-inventory');
++ *       try { ...handle... ; t.end(200); } catch (e) { t.end(500); throw e; }
++ *
++ *   incrementChainVerify(result)
++ *     result in {'valid','invalid'}. Bumped from copilot-cluster / copilot-blt
++ *     hash-chain verifiers when they finish a chain walk.
++ *
++ *   incrementCacheHit(type = 'aggregate')
++ *     Bumped from any cache-fronted copilot sub-handler on hit. The 'miss'
++ *     label is also exported (default zero) so dashboards have a stable schema.
++ *
++ *   handleCopilotMetricsRoute(req, url, res) -> boolean
++ *     Owns GET /copilot/metrics. Returns text/plain Prometheus 0.0.4.
++ *     Returns false for any other path or method so the route loop continues.
++ *
++ *   resetRegistryForTests()
++ *     Test-only helper. Throws unless NODE_ENV === 'test'.
++ */
++
++// Fixed-bucket histogram: matches sigma_kuzu_master observability convention
++// (10ms / 50ms / 100ms / 250ms / 500ms / 1s / 2.5s / 5s / 10s / +Inf).
++const DURATION_BUCKETS_S = Object.freeze([
++  0.01, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10,
++]);
++
++// In-process registry. Process-bound (Prometheus scrape interval ~15s is fine
++// for the docker-compose stack ; no need for inter-process aggregation in MVP).
++const registry = {
++  endpointCalls: new Map(), // key: `${endpoint}|${status}` -> count
++  endpointDurations: new Map(), // key: endpoint -> { buckets: number[], count: number, sum: number }
++  chainVerify: new Map(), // key: result -> count
++  cacheHits: new Map(), // key: type -> count
++};
++
++function bumpMap(map, key, by = 1) {
++  map.set(key, (map.get(key) || 0) + by);
++}
++
++function ensureHistogram(endpoint) {
++  let h = registry.endpointDurations.get(endpoint);
++  if (!h) {
++    h = {
++      buckets: new Array(DURATION_BUCKETS_S.length).fill(0),
++      count: 0,
++      sum: 0,
++    };
++    registry.endpointDurations.set(endpoint, h);
++  }
++  return h;
++}
++
++function observeDuration(endpoint, seconds) {
++  const h = ensureHistogram(endpoint);
++  h.count += 1;
++  h.sum += seconds;
++  for (let i = 0; i < DURATION_BUCKETS_S.length; i++) {
++    if (seconds <= DURATION_BUCKETS_S[i]) {
++      h.buckets[i] += 1;
++    }
++  }
++}
++
++export function instrumentEndpoint(endpoint) {
++  const startedAt = process.hrtime.bigint();
++  let closed = false;
++  return {
++    end(statusCode) {
++      if (closed) return;
++      closed = true;
++      const status = String(statusCode || 0);
++      bumpMap(registry.endpointCalls, `${endpoint}|${status}`);
++      const elapsedNs = Number(process.hrtime.bigint() - startedAt);
++      observeDuration(endpoint, elapsedNs / 1e9);
++    },
++  };
++}
++
++export function incrementChainVerify(result) {
++  const label = result === 'valid' ? 'valid' : 'invalid';
++  bumpMap(registry.chainVerify, label);
++}
++
++export function incrementCacheHit(type = 'aggregate') {
++  bumpMap(registry.cacheHits, type);
++}
++
++export function resetRegistryForTests() {
++  if (process.env.NODE_ENV !== 'test') {
++    throw new Error('resetRegistryForTests is test-only (NODE_ENV must be "test")');
++  }
++  registry.endpointCalls.clear();
++  registry.endpointDurations.clear();
++  registry.chainVerify.clear();
++  registry.cacheHits.clear();
++}
++
++// ----- Prometheus text exposition (format 0.0.4) -----
++
++function escapeLabel(value) {
++  // Per Prometheus exposition format: backslash, double-quote, and newline must be escaped.
++  return String(value)
++    .replace(/\\/g, '\\\\')
++    .replace(/"/g, '\\"')
++    .replace(/\n/g, '\\n');
++}
++
++function renderEndpointCalls(lines) {
++  lines.push('# HELP copilot_endpoint_calls_total Total calls to a copilot endpoint by status code.');
++  lines.push('# TYPE copilot_endpoint_calls_total counter');
++  for (const [key, count] of registry.endpointCalls.entries()) {
++    const [endpoint, status] = key.split('|');
++    lines.push(
++      `copilot_endpoint_calls_total{endpoint="${escapeLabel(endpoint)}",status="${escapeLabel(status)}"} ${count}`,
++    );
++  }
++}
++
++function renderEndpointDurations(lines) {
++  lines.push('# HELP copilot_endpoint_duration_seconds Wall-clock duration of copilot endpoint handlers.');
++  lines.push('# TYPE copilot_endpoint_duration_seconds histogram');
++  for (const [endpoint, h] of registry.endpointDurations.entries()) {
++    let cumulative = 0;
++    for (let i = 0; i < DURATION_BUCKETS_S.length; i++) {
++      cumulative = h.buckets[i];
++      lines.push(
++        `copilot_endpoint_duration_seconds_bucket{endpoint="${escapeLabel(endpoint)}",le="${DURATION_BUCKETS_S[i]}"} ${cumulative}`,
++      );
++    }
++    lines.push(
++      `copilot_endpoint_duration_seconds_bucket{endpoint="${escapeLabel(endpoint)}",le="+Inf"} ${h.count}`,
++    );
++    lines.push(
++      `copilot_endpoint_duration_seconds_count{endpoint="${escapeLabel(endpoint)}"} ${h.count}`,
++    );
++    lines.push(
++      `copilot_endpoint_duration_seconds_sum{endpoint="${escapeLabel(endpoint)}"} ${h.sum.toFixed(6)}`,
++    );
++  }
++}
++
++function renderChainVerify(lines) {
++  lines.push('# HELP copilot_chain_verify_count_total Hash-chain verification outcomes (cluster/blt copilot sub-handlers).');
++  lines.push('# TYPE copilot_chain_verify_count_total counter');
++  // Ensure both labels are exposed even at zero so dashboards stay stable.
++  for (const label of ['valid', 'invalid']) {
++    const count = registry.chainVerify.get(label) || 0;
++    lines.push(`copilot_chain_verify_count_total{result="${label}"} ${count}`);
++  }
++}
++
++function renderCacheHits(lines) {
++  lines.push('# HELP copilot_cache_hit_total Cache hits / misses across copilot sub-handlers.');
++  lines.push('# TYPE copilot_cache_hit_total counter');
++  // Always expose the canonical types (default zero).
++  const seen = new Set(['aggregate', 'miss']);
++  for (const t of registry.cacheHits.keys()) seen.add(t);
++  for (const type of seen) {
++    const count = registry.cacheHits.get(type) || 0;
++    lines.push(`copilot_cache_hit_total{type="${escapeLabel(type)}"} ${count}`);
++  }
++}
++
++export function renderPrometheusText() {
++  const lines = [];
++  renderEndpointCalls(lines);
++  renderEndpointDurations(lines);
++  renderChainVerify(lines);
++  renderCacheHits(lines);
++  // Prometheus exposition requires a trailing newline.
++  return lines.join('\n') + '\n';
++}
++
++// ----- Route handler -----
++
++export async function handleCopilotMetricsRoute(req, url, res) {
++  if (url.pathname !== '/copilot/metrics') return false;
++  if (req.method !== 'GET') {
++    console.warn(`[copilot-metrics] method-mismatch: ${req.method} ${url.pathname} (expected GET)`);
++    return false;
++  }
++  const t = instrumentEndpoint('metrics');
++  try {
++    const body = renderPrometheusText();
++    res.writeHead(200, {
++      'Content-Type': 'text/plain; version=0.0.4; charset=utf-8',
++      'Cache-Control': 'no-store',
++    });
++    res.end(body);
++    t.end(200);
++  } catch (err) {
++    t.end(500);
++    res.writeHead(500, { 'Content-Type': 'application/json' });
++    res.end(JSON.stringify({ error: err.message || String(err) }));
++  }
++  return true;
++}
++
++// Default export bundle to keep imports tidy for the routes shim.
++export default {
++  instrumentEndpoint,
++  incrementChainVerify,
++  incrementCacheHit,
++  renderPrometheusText,
++  handleCopilotMetricsRoute,
++  resetRegistryForTests,
++};
