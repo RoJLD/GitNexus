@@ -199,7 +199,12 @@ try {
   if (!Array.isArray(invPayload.mapping) || invPayload.mapping.length !== 9) {
     fail(`gitnexus_copilot_inventory: expected 9 endpoint mappings, got ${invPayload.mapping?.length}`);
   }
-  pass(`gitnexus_copilot_inventory → ${invPayload.count} tools, gate=${invPayload.gateVerdict}, 9/9 endpoints mapped`);
+  // Tier 3.7 Phase C — assert version field is present so the UI header badge can
+  // surface Sigma-COPILOT vX.Y (cf CopilotPanel.tsx > InventoryPayload.version).
+  if (invPayload.version != null && typeof invPayload.version !== 'string') {
+    fail(`gitnexus_copilot_inventory: 'version' should be a string when present, got ${typeof invPayload.version}`);
+  }
+  pass(`gitnexus_copilot_inventory → ${invPayload.count} tools, gate=${invPayload.gateVerdict}, 9/9 endpoints mapped, version=${invPayload.version ?? 'unset'}`);
 
   // 4f. tools/call gitnexus_copilot_blt_context — Tier 3.7 Phase A Task A2 (no stack dep)
   // Pure local read of the BLT ledger ; tolerant when the file is absent

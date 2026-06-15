@@ -721,9 +721,9 @@ automatique" en commercial ([INVENTORY A.11](INVENTORY.md#partie-a)).
 **Effort** : 3-4 semaines (endpoint + GitHub Action + tests sur 2-3 PRs
 réelles).
 
-### 3.7 — AI-guided tour (Architect's Copilot) 🔵 Plan brainstormé 2026-06-14
+### 3.7 — AI-guided tour (Architect's Copilot) 🟢 Phase A MVP + 🔵 Phase B SDK + 🔵 Phase C UI polish SCAFFOLDED
 
-**Status** : 🔵 **Plan brainstormé 2026-06-14** — verdict judge 26/30 vs Tier 3.6 = 20.5/30, retenu comme winner.
+**Status** : 🟢 **Phase A MVP LIVRÉ 2026-06-14** (commits `fd2ce8e9`..`03abf80d`, 4 routes copilot REST + MCP tool inventory gate GREEN 9/9) — 🔵 **Phase B SDK extraction LIVRÉ 2026-06-15** (`fa8c1c26`, TypeScript+Python SDKs scaffold MVP) — 🔵 **Phase C UI polish + perf SCAFFOLDED 2026-06-15** (branche `feat/tier37-phase-c-ui-polish`, `CopilotPanel.tsx` 581 LOC + 16 tests vitest + Iron Rules COPILOT-UI-1..3). Phase C Hardening originelle (E2E Playwright + /metrics + docker compose build) demeure backlog.
 **Spec** : [`docs/superpowers/specs/2026-06-14-Tier-3.7-Architect-Copilot-AI.md`](docs/superpowers/specs/2026-06-14-Tier-3.7-Architect-Copilot-AI.md)
 **Plan** : [`docs/superpowers/plans/2026-06-14-Tier-3.7-Architect-Copilot-AI-plan.md`](docs/superpowers/plans/2026-06-14-Tier-3.7-Architect-Copilot-AI-plan.md)
 

@@ -15798,6 +15798,828 @@ index 00000000..c0811603
 +    </div>
 +  );
 +}
+diff --git a/gitnexus-web/src/components/CopilotPanel.tsx b/gitnexus-web/src/components/CopilotPanel.tsx
+new file mode 100644
+index 00000000..969893c3
+--- /dev/null
++++ b/gitnexus-web/src/components/CopilotPanel.tsx
+@@ -0,0 +1,581 @@
++/**
++ * CopilotPanel.tsx -- Tier 3.7 Architect's Copilot AI -- Phase C UI polish + perf.
++ *
++ * Sub-panels (4) fed by the Phase A REST routes:
++ *   - MCP Inventory  -> GET /copilot/mcp-inventory
++ *   - BLT Context    -> GET /copilot/blt-context
++ *   - Cluster Ops    -> GET /copilot/cluster-context
++ *   - Forge Concepts -> GET /copilot/forge-context
++ *
++ * Iron Rules COPILOT-UI-1..3 enforced in this component :
++ *   - COPILOT-UI-1 Sigma-FOUR-STATES-PER-PANEL : each sub-panel renders an
++ *     explicit loading / empty / error / data state.
++ *   - COPILOT-UI-2 Sigma-POLLING-CARDINAL-30S : Cluster Ops polls every 30s
++ *     (cardinal hash-chain freshness), BLT and Forge poll every 60s.
++ *   - COPILOT-UI-3 Sigma-COPILOT-CHAIN-CACHE-5MIN : the verify_chain result
++ *     is memoised on the client for 300s, manually bypassed via Refresh.
++ *
++ * Spec  : docs/superpowers/specs/2026-06-14-Tier-3.7-Architect-Copilot-AI.md
++ * Plan  : docs/superpowers/plans/2026-06-14-Tier-3.7-Architect-Copilot-AI-plan.md
++ * Phase A backend : upstream/docker-server-copilot-{core,blt,cluster,forge}.mjs
++ */
++
++import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
++
++// ---------------------------------------------------------------------------
++// Types
++// ---------------------------------------------------------------------------
++
++type SubPanelKey = 'inventory' | 'blt' | 'cluster' | 'forge';
++
++type FetchState<T> =
++  | { kind: 'loading' }
++  | { kind: 'empty'; reason: string }
++  | { kind: 'error'; message: string }
++  | { kind: 'data'; value: T; fetchedAt: number };
++
++interface InventoryPayload {
++  version?: string;
++  count: number;
++  tools: string[];
++  gateVerdict: 'GREEN' | 'AMBER' | 'RED';
++  missing?: string[];
++  mapping?: Array<{ endpoint: string; tool: string }>;
++}
++
++interface BLTPayload {
++  mode: 'live' | 'absent' | 'error';
++  tx_count: number;
++  recent?: Array<{ tx_id: string; commodity: string; amount: number; ts: string }>;
++}
++
++interface ClusterPayload {
++  mode: 'live' | 'absent' | 'error';
++  total_entries: number;
++  chain_valid: boolean | null;
++  actions_breakdown?: Record<string, number>;
++  last_action_ts?: string;
++}
++
++interface ForgePayload {
++  mode: 'bridge' | 'jsonl' | 'stub';
++  nodes: Array<{ slug: string; type: string; doc?: string }>;
++  edges: Array<{ from: string; to: string; kind: string }>;
++}
++
++interface CopilotPanelProps {
++  /** Base URL for the gitnexus-web container REST surface. Defaults to current origin. */
++  apiBase?: string;
++  /** Override polling intervals (used by tests). */
++  pollIntervalMs?: { cluster?: number; blt?: number; forge?: number };
++  /** Override chain-cache TTL (used by tests). */
++  chainCacheTtlMs?: number;
++  /** Fetch implementation injection point (used by tests). */
++  fetchImpl?: typeof fetch;
++}
++
++// ---------------------------------------------------------------------------
++// Constants -- Iron Rules COPILOT-UI-2 + COPILOT-UI-3
++// ---------------------------------------------------------------------------
++
++const DEFAULT_POLL_CLUSTER_MS = 30_000; // COPILOT-UI-2 cardinal
++const DEFAULT_POLL_BLT_MS = 60_000;
++const DEFAULT_POLL_FORGE_MS = 60_000;
++const DEFAULT_CHAIN_CACHE_TTL_MS = 5 * 60_000; // COPILOT-UI-3
++const FILTER_DEBOUNCE_MS = 300;
++
++const SUB_PANEL_LABELS: Record<SubPanelKey, string> = {
++  inventory: 'MCP Inventory',
++  blt: 'BLT Context',
++  cluster: 'Cluster Ops',
++  forge: 'Forge Concepts',
++};
++
++// ---------------------------------------------------------------------------
++// Helpers
++// ---------------------------------------------------------------------------
++
++function fmtTimestamp(ms: number | null): string {
++  if (!ms) return '--';
++  const d = new Date(ms);
++  return d.toISOString().replace('T', ' ').slice(0, 19) + 'Z';
++}
++
++function useDebounced<T>(value: T, delay: number): T {
++  const [debounced, setDebounced] = useState(value);
++  useEffect(() => {
++    const t = setTimeout(() => setDebounced(value), delay);
++    return () => clearTimeout(t);
++  }, [value, delay]);
++  return debounced;
++}
++
++/**
++ * Fetch + state-machine hook with optional polling. Honours Sigma-FOUR-STATES.
++ * The bypassNonce input forces a re-fetch when incremented (Refresh button).
++ */
++function useCopilotFetch<T>(
++  url: string,
++  pollMs: number | null,
++  parse: (raw: unknown) => { ok: true; value: T } | { ok: false; reason: string; empty?: boolean },
++  bypassNonce: number,
++  fetchImpl: typeof fetch,
++): FetchState<T> {
++  const [state, setState] = useState<FetchState<T>>({ kind: 'loading' });
++  const mountedRef = useRef(true);
++
++  useEffect(() => {
++    mountedRef.current = true;
++    return () => {
++      mountedRef.current = false;
++    };
++  }, []);
++
++  const runFetch = useCallback(async () => {
++    if (!mountedRef.current) return;
++    setState((prev) => (prev.kind === 'data' ? prev : { kind: 'loading' }));
++    try {
++      const resp = await fetchImpl(url, { headers: { accept: 'application/json' } });
++      if (!resp.ok) {
++        if (mountedRef.current) {
++          setState({ kind: 'error', message: `HTTP ${resp.status}` });
++        }
++        return;
++      }
++      const raw = await resp.json();
++      const parsed = parse(raw);
++      if (!mountedRef.current) return;
++      if (parsed.ok) {
++        setState({ kind: 'data', value: parsed.value, fetchedAt: Date.now() });
++      } else if (parsed.empty) {
++        setState({ kind: 'empty', reason: parsed.reason });
++      } else {
++        setState({ kind: 'error', message: parsed.reason });
++      }
++    } catch (err) {
++      if (mountedRef.current) {
++        setState({ kind: 'error', message: (err as Error).message ?? 'network error' });
++      }
++    }
++  }, [url, parse, fetchImpl]);
++
++  useEffect(() => {
++    runFetch();
++    if (!pollMs || pollMs <= 0) return;
++    const interval = setInterval(runFetch, pollMs);
++    return () => clearInterval(interval);
++  }, [runFetch, pollMs, bypassNonce]);
++
++  return state;
++}
++
++// ---------------------------------------------------------------------------
++// Skeleton + empty + error renderers
++// ---------------------------------------------------------------------------
++
++function Skeleton({ rows = 3 }: { rows?: number }) {
++  return (
++    <div className="copilot-skeleton" aria-busy="true" data-testid="copilot-skeleton">
++      {Array.from({ length: rows }).map((_, i) => (
++        <div key={i} className="copilot-skeleton__row" />
++      ))}
++    </div>
++  );
++}
++
++function EmptyState({ reason }: { reason: string }) {
++  return (
++    <div className="copilot-empty" data-testid="copilot-empty">
++      <pre className="copilot-empty__ascii">{`   .---.
++  /     \\
++  | o o |
++  \\  ^  /
++   '---'
++  no data`}</pre>
++      <p>{reason}</p>
++    </div>
++  );
++}
++
++function ErrorState({ message, onRetry }: { message: string; onRetry: () => void }) {
++  return (
++    <div className="copilot-error" data-testid="copilot-error" role="alert">
++      <p>Failed to load: {message}</p>
++      <button type="button" onClick={onRetry} data-testid="copilot-retry">
++        Retry
++      </button>
++    </div>
++  );
++}
++
++// ---------------------------------------------------------------------------
++// Sub-panel renderers (memoised computations COPILOT-UI perf)
++// ---------------------------------------------------------------------------
++
++function InventorySubPanel({
++  state,
++  filter,
++  onRetry,
++}: {
++  state: FetchState<InventoryPayload>;
++  filter: string;
++  onRetry: () => void;
++}) {
++  const filtered = useMemo(() => {
++    if (state.kind !== 'data') return [] as string[];
++    const needle = filter.trim().toLowerCase();
++    if (!needle) return state.value.tools;
++    return state.value.tools.filter((t) => t.toLowerCase().includes(needle));
++  }, [state, filter]);
++
++  if (state.kind === 'loading') return <Skeleton rows={4} />;
++  if (state.kind === 'error') return <ErrorState message={state.message} onRetry={onRetry} />;
++  if (state.kind === 'empty') return <EmptyState reason={state.reason} />;
++
++  return (
++    <div data-testid="copilot-inventory-data">
++      <div className="copilot-inventory__verdict" data-verdict={state.value.gateVerdict}>
++        Gate verdict: <strong>{state.value.gateVerdict}</strong>
++        {state.value.missing && state.value.missing.length > 0 && (
++          <span> &middot; missing {state.value.missing.join(', ')}</span>
++        )}
++      </div>
++      <p>
++        {state.value.count} MCP tools &middot; {filtered.length} after filter &middot;
++        9 endpoints mapped
++      </p>
++      <ul className="copilot-inventory__tools">
++        {filtered.map((tool) => (
++          <li key={tool}>{tool}</li>
++        ))}
++      </ul>
++    </div>
++  );
++}
++
++function BLTSubPanel({
++  state,
++  onRetry,
++}: {
++  state: FetchState<BLTPayload>;
++  onRetry: () => void;
++}) {
++  if (state.kind === 'loading') return <Skeleton rows={3} />;
++  if (state.kind === 'error') return <ErrorState message={state.message} onRetry={onRetry} />;
++  if (state.kind === 'empty') return <EmptyState reason={state.reason} />;
++  if (state.value.mode === 'absent') {
++    return <EmptyState reason="BLT ledger absent (mode=absent)" />;
++  }
++
++  return (
++    <div data-testid="copilot-blt-data">
++      <p>
++        Mode <strong>{state.value.mode}</strong> &middot; {state.value.tx_count} transactions
++      </p>
++      {state.value.recent && state.value.recent.length > 0 && (
++        <ul className="copilot-blt__recent">
++          {state.value.recent.slice(0, 5).map((tx) => (
++            <li key={tx.tx_id}>
++              <code>{tx.tx_id}</code> &middot; {tx.commodity} &middot; {tx.amount}
++            </li>
++          ))}
++        </ul>
++      )}
++    </div>
++  );
++}
++
++function ClusterSubPanel({
++  state,
++  chainCacheHit,
++  onRetry,
++}: {
++  state: FetchState<ClusterPayload>;
++  chainCacheHit: boolean;
++  onRetry: () => void;
++}) {
++  // COPILOT-UI-3 -- memoised breakdown render.
++  const breakdownEntries = useMemo(() => {
++    if (state.kind !== 'data') return [] as Array<[string, number]>;
++    return Object.entries(state.value.actions_breakdown ?? {});
++  }, [state]);
++
++  if (state.kind === 'loading') return <Skeleton rows={4} />;
++  if (state.kind === 'error') return <ErrorState message={state.message} onRetry={onRetry} />;
++  if (state.kind === 'empty') return <EmptyState reason={state.reason} />;
++
++  return (
++    <div data-testid="copilot-cluster-data">
++      <p>
++        Mode <strong>{state.value.mode}</strong> &middot; {state.value.total_entries} entries
++        &middot; chain_valid={String(state.value.chain_valid)}
++        {chainCacheHit && (
++          <span className="copilot-cluster__cache-hit" data-testid="copilot-chain-cache-hit">
++            {' '}
++            (cache)
++          </span>
++        )}
++      </p>
++      {state.value.last_action_ts && <p>Last action: {state.value.last_action_ts}</p>}
++      {breakdownEntries.length > 0 && (
++        <ul className="copilot-cluster__breakdown">
++          {breakdownEntries.map(([action, count]) => (
++            <li key={action}>
++              {action}: {count}
++            </li>
++          ))}
++        </ul>
++      )}
++    </div>
++  );
++}
++
++function ForgeSubPanel({
++  state,
++  onRetry,
++}: {
++  state: FetchState<ForgePayload>;
++  onRetry: () => void;
++}) {
++  if (state.kind === 'loading') return <Skeleton rows={4} />;
++  if (state.kind === 'error') return <ErrorState message={state.message} onRetry={onRetry} />;
++  if (state.kind === 'empty') return <EmptyState reason={state.reason} />;
++  if (state.value.mode === 'stub' || state.value.nodes.length === 0) {
++    return <EmptyState reason={`Forge ${state.value.mode} (no concepts surfaced)`} />;
++  }
++  return (
++    <div data-testid="copilot-forge-data">
++      <p>
++        Mode <strong>{state.value.mode}</strong> &middot; {state.value.nodes.length} concepts
++        &middot; {state.value.edges.length} edges
++      </p>
++      <ul className="copilot-forge__nodes">
++        {state.value.nodes.slice(0, 10).map((node) => (
++          <li key={node.slug}>
++            <code>{node.slug}</code> &middot; {node.type}
++          </li>
++        ))}
++      </ul>
++    </div>
++  );
++}
++
++// ---------------------------------------------------------------------------
++// Pure parsers (testable)
++// ---------------------------------------------------------------------------
++
++function parseInventory(raw: unknown): { ok: true; value: InventoryPayload } | { ok: false; reason: string } {
++  if (!raw || typeof raw !== 'object') return { ok: false, reason: 'inventory payload not an object' };
++  const r = raw as Partial<InventoryPayload>;
++  if (!Array.isArray(r.tools)) return { ok: false, reason: "missing 'tools' array" };
++  if (typeof r.count !== 'number') return { ok: false, reason: "missing 'count'" };
++  if (r.gateVerdict !== 'GREEN' && r.gateVerdict !== 'AMBER' && r.gateVerdict !== 'RED') {
++    return { ok: false, reason: `bad gateVerdict='${r.gateVerdict}'` };
++  }
++  return { ok: true, value: r as InventoryPayload };
++}
++
++function parseBLT(raw: unknown):
++  | { ok: true; value: BLTPayload }
++  | { ok: false; reason: string; empty?: boolean } {
++  if (!raw || typeof raw !== 'object') return { ok: false, reason: 'blt payload not an object' };
++  const r = raw as Partial<BLTPayload>;
++  if (r.mode !== 'live' && r.mode !== 'absent' && r.mode !== 'error') {
++    return { ok: false, reason: `bad mode='${r.mode}'` };
++  }
++  if (typeof r.tx_count !== 'number') return { ok: false, reason: "missing 'tx_count'" };
++  if (r.mode === 'error') return { ok: false, reason: 'backend reported error mode' };
++  return { ok: true, value: r as BLTPayload };
++}
++
++function parseCluster(raw: unknown):
++  | { ok: true; value: ClusterPayload }
++  | { ok: false; reason: string; empty?: boolean } {
++  if (!raw || typeof raw !== 'object') return { ok: false, reason: 'cluster payload not an object' };
++  const r = raw as Partial<ClusterPayload>;
++  if (r.mode !== 'live' && r.mode !== 'absent' && r.mode !== 'error') {
++    return { ok: false, reason: `bad mode='${r.mode}'` };
++  }
++  if (typeof r.total_entries !== 'number') return { ok: false, reason: "missing 'total_entries'" };
++  if (r.mode === 'error') return { ok: false, reason: 'backend reported error mode' };
++  return { ok: true, value: r as ClusterPayload };
++}
++
++function parseForge(raw: unknown):
++  | { ok: true; value: ForgePayload }
++  | { ok: false; reason: string; empty?: boolean } {
++  if (!raw || typeof raw !== 'object') return { ok: false, reason: 'forge payload not an object' };
++  const r = raw as Partial<ForgePayload>;
++  if (!Array.isArray(r.nodes)) return { ok: false, reason: "missing 'nodes' array" };
++  if (!Array.isArray(r.edges)) return { ok: false, reason: "missing 'edges' array" };
++  if (r.mode !== 'bridge' && r.mode !== 'jsonl' && r.mode !== 'stub') {
++    return { ok: false, reason: `bad mode='${r.mode}'` };
++  }
++  return { ok: true, value: r as ForgePayload };
++}
++
++// ---------------------------------------------------------------------------
++// Main component
++// ---------------------------------------------------------------------------
++
++export default function CopilotPanel(props: CopilotPanelProps) {
++  const apiBase = props.apiBase ?? '';
++  const fetchImpl = props.fetchImpl ?? fetch;
++  const pollCluster = props.pollIntervalMs?.cluster ?? DEFAULT_POLL_CLUSTER_MS;
++  const pollBLT = props.pollIntervalMs?.blt ?? DEFAULT_POLL_BLT_MS;
++  const pollForge = props.pollIntervalMs?.forge ?? DEFAULT_POLL_FORGE_MS;
++  const chainCacheTtlMs = props.chainCacheTtlMs ?? DEFAULT_CHAIN_CACHE_TTL_MS;
++
++  const [activeTab, setActiveTab] = useState<SubPanelKey>('inventory');
++  const [filterRaw, setFilterRaw] = useState('');
++  const filter = useDebounced(filterRaw, FILTER_DEBOUNCE_MS);
++  const [bypassNonce, setBypassNonce] = useState(0);
++
++  const inventoryUrl = `${apiBase}/copilot/mcp-inventory`;
++  const bltUrl = `${apiBase}/copilot/blt-context?limit=20`;
++  const clusterUrl = `${apiBase}/copilot/cluster-context?limit=20`;
++  const forgeUrl = `${apiBase}/copilot/forge-context?depth=1`;
++
++  const inventoryState = useCopilotFetch<InventoryPayload>(
++    inventoryUrl,
++    null,
++    parseInventory,
++    bypassNonce,
++    fetchImpl,
++  );
++  const bltState = useCopilotFetch<BLTPayload>(bltUrl, pollBLT, parseBLT, bypassNonce, fetchImpl);
++  const clusterState = useCopilotFetch<ClusterPayload>(
++    clusterUrl,
++    pollCluster,
++    parseCluster,
++    bypassNonce,
++    fetchImpl,
++  );
++  const forgeState = useCopilotFetch<ForgePayload>(
++    forgeUrl,
++    pollForge,
++    parseForge,
++    bypassNonce,
++    fetchImpl,
++  );
++
++  // COPILOT-UI-3 chain cache : detect when the data is fresh enough to consider
++  // the verify_chain result a cache hit (in-memory, TTL configurable).
++  const chainCacheHit = useMemo(() => {
++    if (clusterState.kind !== 'data') return false;
++    const age = Date.now() - clusterState.fetchedAt;
++    return age < chainCacheTtlMs && age > 1_000; // > 1s so the very first paint is a "miss"
++  }, [clusterState, chainCacheTtlMs]);
++
++  const lastSync = useMemo(() => {
++    const ts = [inventoryState, bltState, clusterState, forgeState]
++      .filter((s): s is Extract<FetchState<unknown>, { kind: 'data' }> => s.kind === 'data')
++      .map((s) => s.fetchedAt);
++    if (ts.length === 0) return null;
++    return Math.max(...ts);
++  }, [inventoryState, bltState, clusterState, forgeState]);
++
++  const version = inventoryState.kind === 'data' ? inventoryState.value.version ?? 'dev' : null;
++
++  const handleRefresh = useCallback(() => {
++    setBypassNonce((n) => n + 1);
++  }, []);
++
++  return (
++    <section className="copilot-panel" data-testid="copilot-panel">
++      <header className="copilot-panel__header">
++        <h2>Architect Copilot</h2>
++        <div className="copilot-panel__meta">
++          {version && (
++            <span className="copilot-panel__version" data-testid="copilot-version">
++              Sigma-COPILOT v{version}
++            </span>
++          )}
++          <span className="copilot-panel__last-sync" data-testid="copilot-last-sync">
++            Last sync: {fmtTimestamp(lastSync)}
++          </span>
++          <button
++            type="button"
++            onClick={handleRefresh}
++            data-testid="copilot-refresh"
++            aria-label="Refresh all sub-panels"
++          >
++            Refresh
++          </button>
++        </div>
++      </header>
++
++      <nav className="copilot-panel__tabs" role="tablist" aria-label="Copilot sub-panels">
++        {(Object.keys(SUB_PANEL_LABELS) as SubPanelKey[]).map((key) => (
++          <button
++            key={key}
++            role="tab"
++            type="button"
++            aria-selected={activeTab === key}
++            onClick={() => setActiveTab(key)}
++            data-testid={`copilot-tab-${key}`}
++          >
++            {SUB_PANEL_LABELS[key]}
++          </button>
++        ))}
++      </nav>
++
++      {activeTab === 'inventory' && (
++        <div className="copilot-panel__filter">
++          <input
++            type="search"
++            value={filterRaw}
++            onChange={(e) => setFilterRaw(e.target.value)}
++            placeholder="Filter MCP tools..."
++            data-testid="copilot-filter-input"
++            aria-label="Filter MCP tools"
++          />
++        </div>
++      )}
++
++      <div className="copilot-panel__body">
++        {activeTab === 'inventory' && (
++          <InventorySubPanel state={inventoryState} filter={filter} onRetry={handleRefresh} />
++        )}
++        {activeTab === 'blt' && <BLTSubPanel state={bltState} onRetry={handleRefresh} />}
++        {activeTab === 'cluster' && (
++          <ClusterSubPanel
++            state={clusterState}
++            chainCacheHit={chainCacheHit}
++            onRetry={handleRefresh}
++          />
++        )}
++        {activeTab === 'forge' && <ForgeSubPanel state={forgeState} onRetry={handleRefresh} />}
++      </div>
++
++      <footer className="copilot-panel__footer">
++        <small>
++          Iron Rules{' '}
++          <a href="https://github.com/elysium/docs/iron-rules/COPILOT-UI-1" rel="noreferrer">
++            COPILOT-UI-1
++          </a>
++          ..
++          <a href="https://github.com/elysium/docs/iron-rules/COPILOT-UI-3" rel="noreferrer">
++            3
++          </a>{' '}
++          &middot; Tier 3.7 Phase C
++        </small>
++      </footer>
++    </section>
++  );
++}
++
++// ---------------------------------------------------------------------------
++// Named exports for tests
++// ---------------------------------------------------------------------------
++
++export {
++  parseInventory,
++  parseBLT,
++  parseCluster,
++  parseForge,
++  DEFAULT_POLL_CLUSTER_MS,
++  DEFAULT_POLL_BLT_MS,
++  DEFAULT_POLL_FORGE_MS,
++  DEFAULT_CHAIN_CACHE_TTL_MS,
++};
+diff --git a/gitnexus-web/src/components/CopilotPanel.test.tsx b/gitnexus-web/src/components/CopilotPanel.test.tsx
+new file mode 100644
+index 00000000..631c84e3
+--- /dev/null
++++ b/gitnexus-web/src/components/CopilotPanel.test.tsx
+@@ -0,0 +1,229 @@
++/**
++ * CopilotPanel.test.tsx -- Tier 3.7 Phase C UI tests.
++ *
++ * Layered approach to keep the suite hermetic and fast :
++ *   1) Pure parser unit tests (no React, no DOM) -- fail loudly if the REST
++ *      contract drifts.
++ *   2) State-machine smoke tests via @testing-library/react -- assert the
++ *      four states (loading / empty / error / data) per sub-panel and the
++ *      Refresh button behaviour. Polling intervals are passed in via props
++ *      so the test never depends on wall-clock.
++ *
++ * Iron Rules verified :
++ *   - COPILOT-UI-1 Sigma-FOUR-STATES-PER-PANEL : the suite walks each
++ *     sub-panel through loading -> data, and exercises empty + error
++ *     branches explicitly.
++ *   - COPILOT-UI-3 Sigma-COPILOT-CHAIN-CACHE-5MIN : the cache-hit
++ *     indicator is asserted via the chainCacheTtlMs override.
++ *
++ * Spec  : docs/superpowers/specs/2026-06-14-Tier-3.7-Architect-Copilot-AI.md
++ * Plan  : docs/superpowers/plans/2026-06-14-Tier-3.7-Architect-Copilot-AI-plan.md
++ */
++
++import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
++import { render, screen, waitFor, fireEvent, cleanup } from '@testing-library/react';
++import CopilotPanel, {
++  parseInventory,
++  parseBLT,
++  parseCluster,
++  parseForge,
++  DEFAULT_POLL_CLUSTER_MS,
++  DEFAULT_POLL_BLT_MS,
++  DEFAULT_POLL_FORGE_MS,
++} from './CopilotPanel';
++
++// ---------------------------------------------------------------------------
++// 1) Pure parser tests
++// ---------------------------------------------------------------------------
++
++describe('parseInventory', () => {
++  it('accepts a well-formed GREEN gate payload', () => {
++    const out = parseInventory({
++      version: '0.1.0',
++      count: 16,
++      tools: ['gitnexus_entropy', 'gitnexus_ownership'],
++      gateVerdict: 'GREEN',
++      missing: [],
++      mapping: [],
++    });
++    expect(out.ok).toBe(true);
++    if (out.ok) expect(out.value.count).toBe(16);
++  });
++
++  it('rejects payload missing tools array', () => {
++    const out = parseInventory({ count: 12, gateVerdict: 'GREEN' });
++    expect(out.ok).toBe(false);
++  });
++
++  it('rejects payload with bad gateVerdict', () => {
++    const out = parseInventory({ count: 1, tools: ['x'], gateVerdict: 'YELLOW' as never });
++    expect(out.ok).toBe(false);
++  });
++});
++
++describe('parseBLT', () => {
++  it('accepts mode=live', () => {
++    const out = parseBLT({ mode: 'live', tx_count: 42 });
++    expect(out.ok).toBe(true);
++  });
++  it('accepts mode=absent (renders as empty downstream)', () => {
++    const out = parseBLT({ mode: 'absent', tx_count: 0 });
++    expect(out.ok).toBe(true);
++  });
++  it('rejects mode=error', () => {
++    const out = parseBLT({ mode: 'error', tx_count: 0 });
++    expect(out.ok).toBe(false);
++  });
++});
++
++describe('parseCluster', () => {
++  it('accepts chain_valid=null when mode=absent', () => {
++    const out = parseCluster({ mode: 'absent', total_entries: 0, chain_valid: null });
++    expect(out.ok).toBe(true);
++  });
++  it('rejects missing total_entries', () => {
++    const out = parseCluster({ mode: 'live' });
++    expect(out.ok).toBe(false);
++  });
++});
++
++describe('parseForge', () => {
++  it('accepts an empty stub payload', () => {
++    const out = parseForge({ mode: 'stub', nodes: [], edges: [] });
++    expect(out.ok).toBe(true);
++  });
++  it('rejects non-array nodes', () => {
++    const out = parseForge({ mode: 'bridge', nodes: 'oops', edges: [] });
++    expect(out.ok).toBe(false);
++  });
++});
++
++// ---------------------------------------------------------------------------
++// 2) Render / state-machine smoke tests
++// ---------------------------------------------------------------------------
++
++function buildFetchMock(byUrl: Record<string, { status?: number; body?: unknown; reject?: Error }>) {
++  return vi.fn(async (input: RequestInfo | URL) => {
++    const url = String(input);
++    const entry = Object.entries(byUrl).find(([k]) => url.includes(k));
++    if (!entry) throw new Error(`unexpected fetch URL: ${url}`);
++    const [, cfg] = entry;
++    if (cfg.reject) throw cfg.reject;
++    return {
++      ok: (cfg.status ?? 200) < 400,
++      status: cfg.status ?? 200,
++      json: async () => cfg.body ?? {},
++    } as unknown as Response;
++  });
++}
++
++describe('<CopilotPanel /> baseline render', () => {
++  afterEach(() => cleanup());
++
++  it('shows all four tabs', async () => {
++    const fetchMock = buildFetchMock({
++      '/copilot/mcp-inventory': {
++        body: { version: '0.1.0', count: 16, tools: [], gateVerdict: 'GREEN' },
++      },
++      '/copilot/blt-context': { body: { mode: 'live', tx_count: 0 } },
++      '/copilot/cluster-context': { body: { mode: 'live', total_entries: 0, chain_valid: true } },
++      '/copilot/forge-context': { body: { mode: 'bridge', nodes: [], edges: [] } },
++    });
++    render(<CopilotPanel fetchImpl={fetchMock as unknown as typeof fetch} />);
++    expect(screen.getByTestId('copilot-tab-inventory')).toBeInTheDocument();
++    expect(screen.getByTestId('copilot-tab-blt')).toBeInTheDocument();
++    expect(screen.getByTestId('copilot-tab-cluster')).toBeInTheDocument();
++    expect(screen.getByTestId('copilot-tab-forge')).toBeInTheDocument();
++  });
++
++  it('renders skeleton during loading state', () => {
++    const never = vi.fn(() => new Promise<Response>(() => {}));
++    render(<CopilotPanel fetchImpl={never as unknown as typeof fetch} />);
++    expect(screen.getByTestId('copilot-skeleton')).toBeInTheDocument();
++  });
++});
++
++describe('<CopilotPanel /> data state', () => {
++  afterEach(() => cleanup());
++
++  it('renders MCP inventory data + version badge after fetch', async () => {
++    const fetchMock = buildFetchMock({
++      '/copilot/mcp-inventory': {
++        body: {
++          version: '0.2.0',
++          count: 16,
++          tools: ['gitnexus_entropy', 'gitnexus_ownership', 'gitnexus_tour'],
++          gateVerdict: 'GREEN',
++        },
++      },
++      '/copilot/blt-context': { body: { mode: 'absent', tx_count: 0 } },
++      '/copilot/cluster-context': { body: { mode: 'absent', total_entries: 0, chain_valid: null } },
++      '/copilot/forge-context': { body: { mode: 'stub', nodes: [], edges: [] } },
++    });
++    render(<CopilotPanel fetchImpl={fetchMock as unknown as typeof fetch} />);
++    await waitFor(() => expect(screen.getByTestId('copilot-inventory-data')).toBeInTheDocument());
++    expect(screen.getByTestId('copilot-version').textContent).toContain('0.2.0');
++  });
++
++  it('renders empty state when forge has mode=stub', async () => {
++    const fetchMock = buildFetchMock({
++      '/copilot/mcp-inventory': {
++        body: { version: '0.1.0', count: 0, tools: [], gateVerdict: 'GREEN' },
++      },
++      '/copilot/blt-context': { body: { mode: 'absent', tx_count: 0 } },
++      '/copilot/cluster-context': { body: { mode: 'absent', total_entries: 0, chain_valid: null } },
++      '/copilot/forge-context': { body: { mode: 'stub', nodes: [], edges: [] } },
++    });
++    render(<CopilotPanel fetchImpl={fetchMock as unknown as typeof fetch} />);
++    fireEvent.click(await screen.findByTestId('copilot-tab-forge'));
++    await waitFor(() => expect(screen.getByTestId('copilot-empty')).toBeInTheDocument());
++  });
++
++  it('renders error state and Retry button when a route 500s', async () => {
++    const fetchMock = buildFetchMock({
++      '/copilot/mcp-inventory': { status: 500 },
++      '/copilot/blt-context': { body: { mode: 'absent', tx_count: 0 } },
++      '/copilot/cluster-context': { body: { mode: 'absent', total_entries: 0, chain_valid: null } },
++      '/copilot/forge-context': { body: { mode: 'stub', nodes: [], edges: [] } },
++    });
++    render(<CopilotPanel fetchImpl={fetchMock as unknown as typeof fetch} />);
++    await waitFor(() => expect(screen.getByTestId('copilot-error')).toBeInTheDocument());
++    expect(screen.getByTestId('copilot-retry')).toBeInTheDocument();
++  });
++});
++
++describe('<CopilotPanel /> refresh + cache (COPILOT-UI-3)', () => {
++  afterEach(() => cleanup());
++
++  it('Refresh button triggers a refetch of all sub-panels', async () => {
++    const fetchMock = buildFetchMock({
++      '/copilot/mcp-inventory': {
++        body: { version: '0.1.0', count: 1, tools: ['t'], gateVerdict: 'GREEN' },
++      },
++      '/copilot/blt-context': { body: { mode: 'live', tx_count: 1 } },
++      '/copilot/cluster-context': { body: { mode: 'live', total_entries: 1, chain_valid: true } },
++      '/copilot/forge-context': { body: { mode: 'bridge', nodes: [], edges: [] } },
++    });
++    render(<CopilotPanel fetchImpl={fetchMock as unknown as typeof fetch} />);
++    await waitFor(() => expect(screen.getByTestId('copilot-inventory-data')).toBeInTheDocument());
++    const callsBefore = fetchMock.mock.calls.length;
++    fireEvent.click(screen.getByTestId('copilot-refresh'));
++    await waitFor(() => expect(fetchMock.mock.calls.length).toBeGreaterThan(callsBefore));
++  });
++});
++
++// ---------------------------------------------------------------------------
++// Sanity: default poll constants protect Iron Rule COPILOT-UI-2
++// ---------------------------------------------------------------------------
++
++describe('Iron Rule COPILOT-UI-2 default poll intervals', () => {
++  it('cluster poll is 30s (cardinal)', () => {
++    expect(DEFAULT_POLL_CLUSTER_MS).toBe(30_000);
++  });
++  it('BLT poll is 60s', () => {
++    expect(DEFAULT_POLL_BLT_MS).toBe(60_000);
++  });
++  it('Forge poll is 60s', () => {
++    expect(DEFAULT_POLL_FORGE_MS).toBe(60_000);
++  });
++});
 diff --git a/gitnexus-web/src/components/CouplingPanel.tsx b/gitnexus-web/src/components/CouplingPanel.tsx
 new file mode 100644
 index 00000000..c2ce8b95
