@@ -35,6 +35,7 @@ __all__ = [
     "CopilotClient",
     "CopilotClientOptions",
     "CopilotHTTPError",
+    "CopilotAuthError",
     "mcp_inventory",
     "blt_context",
     "cluster_context",
@@ -57,6 +58,20 @@ class CopilotHTTPError(Exception):
         self.body = body
 
 
+class CopilotAuthError(CopilotHTTPError):
+    """
+    Raised on HTTP 401 / 403 responses.
+
+    Subclass of ``CopilotHTTPError`` so existing
+    ``except CopilotHTTPError`` blocks keep working; callers wanting to
+    refresh a bearer token can branch on ``except CopilotAuthError``.
+
+    Iron Rule Sigma-COPILOT-SDK-AUTH-1 (Sigma-BEARER-AUTH-MANDATORY):
+        401 = missing / expired bearer ; 403 = bearer valid but lacks scope.
+        The SDK does NOT retry - token refresh is a caller-side concern.
+    """
+
+
 class CopilotClient:
     """
     Thin synchronous client over the GitNexus /copilot/* REST surface.
@@ -74,11 +89,18 @@ class CopilotClient:
         timeout_s: float = 30.0,
         headers: Optional[Dict[str, str]] = None,
         session: Optional[requests.Session] = None,
+        auth_token: Optional[str] = None,
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.timeout_s = timeout_s
         self.headers = {"Accept": "application/json", **(headers or {})}
+        # Iron Rule Sigma-COPILOT-SDK-AUTH-1 (Sigma-BEARER-AUTH-MANDATORY) :
+        # append the Bearer header LAST so it wins over any caller-supplied
+        # `Authorization` value in `headers`.
+        if isinstance(auth_token, str) and auth_token:
+            self.headers["Authorization"] = f"Bearer {auth_token}"
         self.session = session or requests.Session()
+        self.auth_token = auth_token
 
     # ------------------------------------------------------------------ API
 
@@ -143,11 +165,16 @@ class CopilotClient:
             timeout=self.timeout_s,
         )
         if not res.ok:
-            raise CopilotHTTPError(
-                f"GitnexusCopilotClient: GET {path} -> HTTP {res.status_code}",
-                status=res.status_code,
-                body=res.text[:2000],
+            message = (
+                f"GitnexusCopilotClient: GET {path} -> HTTP {res.status_code}"
             )
+            body = res.text[:2000]
+            # Iron Rule Sigma-COPILOT-SDK-AUTH-1 : surface 401/403 as a
+            # distinct subclass so callers can refresh tokens without
+            # parsing status codes by hand.
+            if res.status_code in (401, 403):
+                raise CopilotAuthError(message, status=res.status_code, body=body)
+            raise CopilotHTTPError(message, status=res.status_code, body=body)
         return res.json()
 
 
@@ -161,6 +188,7 @@ def _build_client(options: Optional[CopilotClientOptions]) -> CopilotClient:
         base_url=options.base_url,
         timeout_s=options.timeout_s,
         headers=dict(options.headers),
+        auth_token=options.auth_token,
     )
 
 

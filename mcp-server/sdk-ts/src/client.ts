@@ -72,6 +72,13 @@ export class GitnexusCopilotClient {
     this.timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
     this.headers = { Accept: "application/json", ...(options.headers ?? {}) };
 
+    // Iron Rule Sigma-COPILOT-SDK-AUTH-1 (Sigma-BEARER-AUTH-MANDATORY) :
+    // append the bearer header LAST so it wins over any colliding
+    // `Authorization` value the caller may have placed in `headers`.
+    if (typeof options.authToken === "string" && options.authToken.length > 0) {
+      this.headers["Authorization"] = `Bearer ${options.authToken}`;
+    }
+
     if (typeof this.fetchImpl !== "function") {
       throw new Error(
         "GitnexusCopilotClient: no fetch implementation available. " +
@@ -154,11 +161,14 @@ export class GitnexusCopilotClient {
       });
       if (!res.ok) {
         const body = await safeText(res);
-        throw new CopilotHTTPError(
-          `GitnexusCopilotClient: GET ${path} -> HTTP ${res.status}`,
-          res.status,
-          body,
-        );
+        const message = `GitnexusCopilotClient: GET ${path} -> HTTP ${res.status}`;
+        // Iron Rule Sigma-COPILOT-SDK-AUTH-1 : surface auth failures as a
+        // distinct subclass so callers can refresh tokens without parsing
+        // status codes by hand.
+        if (res.status === 401 || res.status === 403) {
+          throw new CopilotAuthError(message, res.status, body);
+        }
+        throw new CopilotHTTPError(message, res.status, body);
       }
       return (await res.json()) as T;
     } finally {
@@ -179,6 +189,22 @@ export class CopilotHTTPError extends Error {
     this.name = "CopilotHTTPError";
     this.status = status;
     this.body = body;
+  }
+}
+
+/**
+ * Error thrown on HTTP 401 / 403 responses. Subclass of `CopilotHTTPError`
+ * so existing `catch (CopilotHTTPError)` blocks keep working ; callers that
+ * want to refresh a bearer token can branch on `instanceof CopilotAuthError`.
+ *
+ * Iron Rule Sigma-COPILOT-SDK-AUTH-1 (Sigma-BEARER-AUTH-MANDATORY) :
+ * 401 = missing / expired bearer ; 403 = bearer valid but lacks scope.
+ * The SDK does NOT retry — token refresh is a caller-side concern.
+ */
+export class CopilotAuthError extends CopilotHTTPError {
+  constructor(message: string, status: number, body: string) {
+    super(message, status, body);
+    this.name = "CopilotAuthError";
   }
 }
 

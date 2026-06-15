@@ -32,6 +32,7 @@ export * from "./types.js";
 export {
   GitnexusCopilotClient,
   CopilotHTTPError,
+  CopilotAuthError,
   type BLTContextParams,
   type ClusterContextParams,
   type ForgeContextParams,
