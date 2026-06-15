@@ -124,7 +124,7 @@ Le diff monolithique unique a été supprimé et remplacé par deux artefacts di
 
 | Fichier | Contenu | Risque de conflit au bump |
 |---|---|---|
-| [`patches/additive-files.diff`](patches/additive-files.diff) | ~99 fichiers neufs que nous possédons entièrement (tous les `docker-server-*.mjs`, les composants React additifs, les pure-function libs, les scripts, etc.) | **Nul** — ce sont des fichiers créés par nous, upstream ne les touche pas |
+| [`patches/additive-files.diff`](patches/additive-files.diff) | 135 fichiers neufs que nous possédons entièrement (tous les `docker-server-*.mjs` dont les 5 `docker-server-copilot*.mjs` Tier 3.7 Phase A, les composants React additifs, les pure-function libs, les scripts, etc.) | **Nul** — ce sont des fichiers créés par nous, upstream ne les touche pas |
 | [`patches/inplace-edits.diff`](patches/inplace-edits.diff) | 17 fichiers upstream modifiés en place (`docker-server.mjs`, `Dockerfile.web`, `App.tsx`, `useAppState.tsx`, `useSigma.ts`, `GraphCanvas.tsx`, `package.json`, `package-lock.json`, etc.) | **Toute la surface** — ces fichiers peuvent diverger à chaque bump |
 
 **Shim `docker-server-routes.mjs` (additif)** : le câblage de routes (chaîne de dispatch + imports + lancement du cron) qui résidait en place dans `docker-server.mjs` a été extrait dans un fichier neuf `upstream/docker-server-routes.mjs` (exports `registerGitnexusRoutes` + `startGitnexusCron`). `docker-server.mjs` reste un fichier in-place mais son footprint est réduit — seuls les handlers utilitaires inline (`handleExport`/`handleImport`/`/listdir`) y demeurent par design.
@@ -337,7 +337,7 @@ Pure frontend extension de la Timeline existante — aucune route serveur, réut
 | [CLAUDE.md](CLAUDE.md) | Règles pour l'agent : maintenir ROADMAP + INVENTORY à chaque feature, rebuild after upstream edits |
 | [../CLAUDE.md](../CLAUDE.md) | Règle workspace : tests CI/CD si module en a déjà |
 | [patches/README.md](patches/README.md) | Comment ré-appliquer les patches sur un clone frais + procédure de bump dry-run |
-| [patches/additive-files.diff](patches/additive-files.diff) | ~99 fichiers neufs que nous possédons (risque de conflit nul) |
+| [patches/additive-files.diff](patches/additive-files.diff) | 135 fichiers neufs que nous possédons (risque de conflit nul) |
 | [patches/inplace-edits.diff](patches/inplace-edits.diff) | 17 édits in-place de fichiers upstream (vraie surface de conflit au bump) |
 | [patches/bump-dry-run-main.md](patches/bump-dry-run-main.md) | Rapport du premier dry-run de bump contre `main` (107 clean / 0 conflict / 9 fail) |
 | [scripts/bump-upstream.mjs](scripts/bump-upstream.mjs) | Outil de bump dry-run : clone la cible, applique les deux diffs, écrit le rapport |

@@ -1676,12 +1676,437 @@ index 00000000..bb43b60f
 +
 +  return false;
 +}
+diff --git a/docker-server-copilot-blt.mjs b/docker-server-copilot-blt.mjs
+new file mode 100644
+index 00000000..35e738fc
+--- /dev/null
++++ b/docker-server-copilot-blt.mjs
+@@ -0,0 +1,170 @@
++/**
++ * Architect's Copilot AI — Belt Market BLT consumer (Tier 3.7 Phase A — Task A2).
++ *
++ * Exposes the Belt Market BLT supply-chain ledger as a synthesis endpoint
++ * the Copilot LLM agent can consume to annotate recommendations with an
++ * economic cost (e.g. "refactor oauth.ts costs ~3 BLT vs 7 BLT accumulated
++ * debt").
++ *
++ *   GET /copilot/blt-context?repo=<repoId>&limit=<N>
++ *     → { tx_count, total_blt, tier_breakdown, recent: [{tx_id, tier, amount, status, ts}], mode }
++ *
++ * Iron Rule COPILOT-1 (spec § 7) — *synthesis-only, no new analytics*. This
++ * module READS the append-only JSONL ledger (source-of-truth ELYSIUM Belt
++ * Market) and re-aggregates the last N transactions touching repoId — zero
++ * mutation, zero new metric.
++ *
++ * Iron Rule BLT-PE-7 (Σ-WALLET-DB-READONLY-PLANE) — explicit read-only
++ * posture. We open the JSONL file with `fs.readFile` (no write handle), no
++ * lockfile, no truncation. If the file is missing we return mode='absent'
++ * with an empty payload (never crash, never 500).
++ *
++ * --- Path resolution ---
++ *
++ * Default : `<ELYSIUM_REPO_ROOT>/data/governance/blt_supply_chain.jsonl`.
++ * Override : `ELYSIUM_BLT_JSONL` (absolute path) or `ELYSIUM_BLT_JSONL_DIR`
++ * (a directory ; we append `blt_supply_chain.jsonl`).
++ *
++ * Inside the docker-compose stack the ELYSIUM repo is mounted read-only
++ * at `/data/elysium` on the gitnexus-web container ; this is the canonical
++ * deploy-time path. Outside Docker (smoke tests, local dev) the env var
++ * `ELYSIUM_REPO_ROOT` is honored.
++ */
++
++import { promises as fs } from 'node:fs';
++import { existsSync } from 'node:fs';
++import path from 'node:path';
++
++const KNOWN_TIERS = Object.freeze(['t0', 't1', 't2', 't3', 't4', 't5']);
++
++function resolveLedgerPath() {
++  if (process.env.ELYSIUM_BLT_JSONL && process.env.ELYSIUM_BLT_JSONL.length > 0) {
++    return process.env.ELYSIUM_BLT_JSONL;
++  }
++  const dir =
++    process.env.ELYSIUM_BLT_JSONL_DIR ||
++    process.env.ELYSIUM_GOVERNANCE_DIR ||
++    (process.env.ELYSIUM_REPO_ROOT
++      ? path.join(process.env.ELYSIUM_REPO_ROOT, 'data', 'governance')
++      : '/data/elysium/data/governance');
++  return path.join(dir, 'blt_supply_chain.jsonl');
++}
++
++/**
++ * Parse a JSONL ledger and aggregate the last `limit` entries touching
++ * `repoId`. Tolerant : malformed lines are skipped (counted in `parseErrors`).
++ *
++ * @param {string} ledgerPath absolute path to the JSONL file
++ * @param {{repoId?: string|null, limit?: number}} opts
++ * @returns {Promise<{tx_count, total_blt, tier_breakdown, recent, mode, parseErrors, ledger}>}
++ */
++export async function readBLTLedger(ledgerPath, opts = {}) {
++  const limit = Math.max(1, Math.min(Number(opts.limit) || 50, 1000));
++  const repoId = opts.repoId || null;
++
++  if (!ledgerPath || !existsSync(ledgerPath)) {
++    return {
++      tx_count: 0,
++      total_blt: 0,
++      tier_breakdown: {},
++      recent: [],
++      mode: 'absent',
++      parseErrors: 0,
++      ledger: ledgerPath,
++    };
++  }
++
++  let raw;
++  try {
++    raw = await fs.readFile(ledgerPath, 'utf8');
++  } catch (err) {
++    return {
++      tx_count: 0,
++      total_blt: 0,
++      tier_breakdown: {},
++      recent: [],
++      mode: 'error',
++      error: err.message,
++      parseErrors: 0,
++      ledger: ledgerPath,
++    };
++  }
++
++  const lines = raw.split(/\r?\n/).filter((l) => l.trim().length > 0);
++  const recent = [];
++  let parseErrors = 0;
++  let totalBLT = 0;
++  const tierBreakdown = {};
++
++  // Read newest-first ; the ledger is append-only so the last lines are the
++  // freshest. We walk backwards to honor the `limit` cap cheaply.
++  for (let i = lines.length - 1; i >= 0 && recent.length < limit; i--) {
++    let entry;
++    try {
++      entry = JSON.parse(lines[i]);
++    } catch (_err) {
++      parseErrors += 1;
++      continue;
++    }
++    // Filter by repoId if provided. Match against any of: repoId, repo_id,
++    // repo, target_repo (we accept the source-of-truth variation).
++    if (repoId) {
++      const hit =
++        entry.repoId === repoId ||
++        entry.repo_id === repoId ||
++        entry.repo === repoId ||
++        entry.target_repo === repoId;
++      if (!hit) continue;
++    }
++    const amount = Number(entry.amount ?? entry.blt ?? 0) || 0;
++    const tier = String(entry.tier ?? entry.belt_tier ?? 'unknown').toLowerCase();
++    const status = String(entry.status ?? 'unknown');
++    totalBLT += amount;
++    tierBreakdown[tier] = (tierBreakdown[tier] || 0) + amount;
++    recent.push({
++      tx_id: entry.tx_id ?? entry.id ?? null,
++      tier,
++      amount,
++      status,
++      ts: entry.ts ?? entry.timestamp ?? entry.created_at ?? null,
++    });
++  }
++
++  return {
++    tx_count: recent.length,
++    total_blt: Math.round(totalBLT * 1000) / 1000,
++    tier_breakdown: tierBreakdown,
++    recent,
++    mode: 'live',
++    parseErrors,
++    ledger: ledgerPath,
++    knownTiers: KNOWN_TIERS,
++  };
++}
++
++function sendJson(res, code, body) {
++  res.writeHead(code, { 'Content-Type': 'application/json' });
++  res.end(JSON.stringify(body));
++}
++
++export async function handleCopilotBLTRoute(req, url, res) {
++  if (url.pathname !== '/copilot/blt-context') return false;
++  if (req.method !== 'GET') {
++    console.warn(`[copilot-blt] method-mismatch: ${req.method} ${url.pathname} (expected GET)`);
++    return false;
++  }
++  try {
++    const repoId = url.searchParams.get('repo') || null;
++    const limit = Number(url.searchParams.get('limit')) || 50;
++    const ledgerPath = resolveLedgerPath();
++    const payload = await readBLTLedger(ledgerPath, { repoId, limit });
++    // Iron Rule COPILOT-1 + BLT-PE-7 footer for downstream consumers.
++    payload.ironRule = 'COPILOT-1: synthesis-only ; BLT-PE-7: read-only plane.';
++    sendJson(res, 200, payload);
++  } catch (err) {
++    sendJson(res, 500, { error: err.message || String(err) });
++  }
++  return true;
++}
++
++export const _internals = { resolveLedgerPath };
+diff --git a/docker-server-copilot-cluster.mjs b/docker-server-copilot-cluster.mjs
+new file mode 100644
+index 00000000..855d6c22
+--- /dev/null
++++ b/docker-server-copilot-cluster.mjs
+@@ -0,0 +1,243 @@
++/**
++ * Architect's Copilot AI — cluster ops hash-chain consumer (Tier 3.7 Phase A — Task A3).
++ *
++ * Exposes the ELYSIUM cluster_ops audit JSONL ledger as a synthesis endpoint
++ * the Copilot LLM agent can cite when scoring recommendations (e.g. "this
++ * file is risky because the last 3 kubectl_apply on its namespace were
++ * reverted").
++ *
++ *   GET /copilot/cluster-context?actions=<comma_list>&limit=<N>
++ *     → { chain_valid, total_entries, last_hash, recent, corrupted_seqs, mode }
++ *
++ * Iron Rule COPILOT-1 (spec § 7) — *synthesis-only, no new analytics*. We
++ * READ the append-only ledger written by `scripts/governance/sigma_cluster_ops_audit.py`
++ * and re-verify the hash chain (same algorithm) — zero mutation, zero new
++ * metric.
++ *
++ * --- Hash chain algorithm (mirrors sigma_cluster_ops_audit.py) ---
++ *
++ *   this_hash = sha256(prev_hash + canonical_json(entry_without_this_hash))[:16]
++ *
++ *   canonical_json = JSON.stringify with sort_keys=True + separators=(",", ":")
++ *   (we approximate via a deterministic stable-stringify in Node).
++ *
++ * --- Path resolution ---
++ *
++ * Default : `<ELYSIUM_REPO_ROOT>/data/governance/cluster_ops.jsonl`.
++ * Override : `ELYSIUM_CLUSTER_OPS_JSONL` (absolute path) or
++ * `ELYSIUM_CLUSTER_OPS_DIR` (directory ; we append `cluster_ops.jsonl`).
++ *
++ * Iron Rule CLUSTER-OPS-1 — hash chain integrity is the gate. If a single
++ * link is broken we still return the recent entries but flag the corrupted
++ * seqs so the LLM can downgrade its confidence.
++ */
++
++import { promises as fs } from 'node:fs';
++import { existsSync } from 'node:fs';
++import { createHash } from 'node:crypto';
++import path from 'node:path';
++
++const GENESIS_HASH = '0000000000000000';
++const KNOWN_ACTIONS = Object.freeze([
++  'bootstrap_chain',
++  'kubectl_apply',
++  'kubectl_delete',
++  'kubectl_patch',
++  'helm_install',
++  'helm_upgrade',
++  'argocd_sync',
++  'pvc_resize',
++]);
++
++function resolveLedgerPath() {
++  if (process.env.ELYSIUM_CLUSTER_OPS_JSONL && process.env.ELYSIUM_CLUSTER_OPS_JSONL.length > 0) {
++    return process.env.ELYSIUM_CLUSTER_OPS_JSONL;
++  }
++  const dir =
++    process.env.ELYSIUM_CLUSTER_OPS_DIR ||
++    process.env.ELYSIUM_GOVERNANCE_DIR ||
++    (process.env.ELYSIUM_REPO_ROOT
++      ? path.join(process.env.ELYSIUM_REPO_ROOT, 'data', 'governance')
++      : '/data/elysium/data/governance');
++  return path.join(dir, 'cluster_ops.jsonl');
++}
++
++/**
++ * Deterministic JSON stringify that mirrors Python's
++ * `json.dumps(entry, sort_keys=True, separators=(",", ":"))`.
++ * Recursive on plain objects ; arrays preserve order ; null/bool/number/string
++ * use the standard JSON encoding (good enough for ASCII-safe ledger entries).
++ */
++export function canonicalJSON(value) {
++  if (value === null || value === undefined) return 'null';
++  if (typeof value === 'number') {
++    // Match Python's json.dumps for finite numbers.
++    if (!Number.isFinite(value)) return 'null';
++    return JSON.stringify(value);
++  }
++  if (typeof value === 'boolean') return value ? 'true' : 'false';
++  if (typeof value === 'string') return JSON.stringify(value);
++  if (Array.isArray(value)) {
++    return '[' + value.map((v) => canonicalJSON(v)).join(',') + ']';
++  }
++  if (typeof value === 'object') {
++    const keys = Object.keys(value).sort();
++    return (
++      '{' +
++      keys
++        .map((k) => JSON.stringify(k) + ':' + canonicalJSON(value[k]))
++        .join(',') +
++      '}'
++    );
++  }
++  return JSON.stringify(value);
++}
++
++/**
++ * Recompute the expected this_hash for an entry.
++ * @param {string} prevHash
++ * @param {object} entry the entry WITH this_hash already (we strip it)
++ */
++export function computeEntryHash(prevHash, entry) {
++  const { this_hash: _omit, ...withoutHash } = entry;
++  const payload = prevHash + canonicalJSON(withoutHash);
++  return createHash('sha256').update(payload, 'utf8').digest('hex').slice(0, 16);
++}
++
++/**
++ * Verify a JSONL ledger's hash chain, return aggregated stats + recent
++ * entries. Tolerant : malformed lines and bad hashes do not abort the
++ * walk — they are surfaced so the LLM agent can downgrade its confidence.
++ *
++ * @param {string} ledgerPath
++ * @param {{actions?: string[]|null, limit?: number}} opts
++ */
++export async function readClusterOpsLedger(ledgerPath, opts = {}) {
++  const limit = Math.max(1, Math.min(Number(opts.limit) || 50, 1000));
++  const actions =
++    Array.isArray(opts.actions) && opts.actions.length > 0
++      ? new Set(opts.actions.map((a) => String(a).toLowerCase()))
++      : null;
++
++  if (!ledgerPath || !existsSync(ledgerPath)) {
++    return {
++      chain_valid: null,
++      total_entries: 0,
++      last_hash: GENESIS_HASH,
++      recent: [],
++      corrupted_seqs: [],
++      mode: 'absent',
++      ledger: ledgerPath,
++    };
++  }
++
++  let raw;
++  try {
++    raw = await fs.readFile(ledgerPath, 'utf8');
++  } catch (err) {
++    return {
++      chain_valid: null,
++      total_entries: 0,
++      last_hash: GENESIS_HASH,
++      recent: [],
++      corrupted_seqs: [],
++      mode: 'error',
++      error: err.message,
++      ledger: ledgerPath,
++    };
++  }
++
++  const lines = raw.split(/\r?\n/).filter((l) => l.trim().length > 0);
++
++  // Full chain walk (forward) — verify hashes ; collect filtered tail.
++  let prevHash = GENESIS_HASH;
++  let chainValid = true;
++  const corruptedSeqs = [];
++  let lastHash = GENESIS_HASH;
++  let totalEntries = 0;
++  // Tail buffer keeps `limit` matching entries newest-first ; we don't know
++  // matches in advance, so we collect all matching entries then slice the
++  // last `limit`.
++  const matching = [];
++
++  for (const line of lines) {
++    let entry;
++    try {
++      entry = JSON.parse(line);
++    } catch (_err) {
++      corruptedSeqs.push({ seq: null, reason: 'invalid_json' });
++      chainValid = false;
++      continue;
++    }
++    totalEntries += 1;
++    const expected = computeEntryHash(prevHash, entry);
++    const declared = entry.this_hash || null;
++    if (declared !== expected) {
++      chainValid = false;
++      corruptedSeqs.push({
++        seq: entry.seq ?? null,
++        declared,
++        expected,
++        reason: 'hash_mismatch',
++      });
++    }
++    prevHash = declared || expected;
++    lastHash = prevHash;
++
++    if (!actions || actions.has(String(entry.action || '').toLowerCase())) {
++      matching.push({
++        seq: entry.seq ?? null,
++        ts: entry.ts ?? null,
++        actor: entry.actor ?? null,
++        action: entry.action ?? null,
++        resource: entry.resource ?? null,
++        namespace: entry.namespace ?? null,
++        post_action_status: entry.post_action_status ?? null,
++        this_hash: entry.this_hash ?? null,
++      });
++    }
++  }
++
++  // Slice the last `limit` matching, newest-first.
++  const recent = matching.slice(-limit).reverse();
++
++  return {
++    chain_valid: chainValid,
++    total_entries: totalEntries,
++    last_hash: lastHash,
++    recent,
++    corrupted_seqs: corruptedSeqs,
++    mode: 'live',
++    ledger: ledgerPath,
++    knownActions: KNOWN_ACTIONS,
++  };
++}
++
++function sendJson(res, code, body) {
++  res.writeHead(code, { 'Content-Type': 'application/json' });
++  res.end(JSON.stringify(body));
++}
++
++export async function handleCopilotClusterRoute(req, url, res) {
++  if (url.pathname !== '/copilot/cluster-context') return false;
++  if (req.method !== 'GET') {
++    console.warn(`[copilot-cluster] method-mismatch: ${req.method} ${url.pathname} (expected GET)`);
++    return false;
++  }
++  try {
++    const actionsRaw = url.searchParams.get('actions') || '';
++    const actions = actionsRaw
++      ? actionsRaw.split(',').map((a) => a.trim()).filter(Boolean)
++      : null;
++    const limit = Number(url.searchParams.get('limit')) || 50;
++    const ledgerPath = resolveLedgerPath();
++    const payload = await readClusterOpsLedger(ledgerPath, { actions, limit });
++    payload.ironRule = 'COPILOT-1: synthesis-only ; CLUSTER-OPS-1: hash-chain verified.';
++    sendJson(res, 200, payload);
++  } catch (err) {
++    sendJson(res, 500, { error: err.message || String(err) });
++  }
++  return true;
++}
++
++export const _internals = { resolveLedgerPath, GENESIS_HASH };
 diff --git a/docker-server-copilot-core.mjs b/docker-server-copilot-core.mjs
 new file mode 100644
-index 00000000..858259d6
+index 00000000..a97284bc
 --- /dev/null
 +++ b/docker-server-copilot-core.mjs
-@@ -0,0 +1,206 @@
+@@ -0,0 +1,210 @@
 +/**
 + * Architect's Copilot AI — core helpers (Tier 3.7 Phase A — Task A1).
 + *
@@ -1738,7 +2163,7 @@ index 00000000..858259d6
 +]);
 +
 +// Static mirror of the MCP tool names registered in `mcp-server/server.mjs`.
-+// Validated by `mcp-server/smoke.mjs` (asserts `tools.length === 31` + names).
++// Validated by `mcp-server/smoke.mjs` (asserts `tools.length === 34` + names).
 +// Kept here as a constant — re-importing `server.mjs` would start its readline
 +// loop and hijack process stdin in test contexts.
 +export const KNOWN_MCP_TOOLS = Object.freeze([
@@ -1773,6 +2198,10 @@ index 00000000..858259d6
 +  'gitnexus_graph_metrics',
 +  'gitnexus_graph_lens_metrics',
 +  'gitnexus_copilot_inventory',
++  // Phase A Tasks A2/A3/A4 (Mycelium synergy consumers — synthesis-only).
++  'gitnexus_copilot_blt_context',
++  'gitnexus_copilot_cluster_context',
++  'gitnexus_copilot_forge_context',
 +]);
 +
 +// Minimum policy gate: a user permission claim must include one of these.
@@ -1888,12 +2317,239 @@ index 00000000..858259d6
 +    },
 +  };
 +}
+diff --git a/docker-server-copilot-forge.mjs b/docker-server-copilot-forge.mjs
+new file mode 100644
+index 00000000..716ba2f4
+--- /dev/null
++++ b/docker-server-copilot-forge.mjs
+@@ -0,0 +1,221 @@
++/**
++ * Architect's Copilot AI — ASTKG / Forge concept feed (Tier 3.7 Phase A — Task A4).
++ *
++ * Exposes the ELYSIUM Forge concept graph (or the inter_graph.kuzu meta-layer)
++ * as a context endpoint the Copilot LLM agent can consume when proposing
++ * structural recommendations (e.g. "this concept already exists in the
++ * Forge, prefer assimilating it instead of forking").
++ *
++ *   GET /copilot/forge-context?concept=<slug>&depth=<N>
++ *     → { nodes: [...], edges: [...], total_concepts, mode }
++ *
++ * Iron Rule COPILOT-1 (spec § 7) — *synthesis-only, no new analytics*. We
++ * READ the Forge graph (inter_graph.kuzu) and project a neighborhood — zero
++ * new concept generation.
++ *
++ * --- Backend strategy (priority order) ---
++ *
++ *   1. INTER_GRAPH_URL env → HTTP bridge (preferred ; same pattern as
++ *      server.mjs query_meta_graph tool).
++ *   2. kuzu-node optional dependency → in-process Cypher read-only query.
++ *   3. JSONL fallback `<governance>/forge_concepts.jsonl` → simple slug
++ *      lookup, no edges.
++ *   4. Stub mode → empty graph + `mode='stub'` + explicit log.
++ *
++ * The route never crashes. If every backend is unreachable we return an
++ * empty graph payload with `mode: 'stub'` so the UI can render an explicit
++ * "feed unavailable" notice instead of erroring.
++ */
++
++import { promises as fs } from 'node:fs';
++import { existsSync } from 'node:fs';
++import path from 'node:path';
++
++const KNOWN_NODE_TYPES = Object.freeze([
++  'concept',
++  'api_endpoint',
++  'model',
++  'ui_component',
++  'doc',
++]);
++
++function resolveJSONLPath() {
++  const dir =
++    process.env.ELYSIUM_FORGE_DIR ||
++    process.env.ELYSIUM_GOVERNANCE_DIR ||
++    (process.env.ELYSIUM_REPO_ROOT
++      ? path.join(process.env.ELYSIUM_REPO_ROOT, 'data', 'governance')
++      : '/data/elysium/data/governance');
++  return path.join(dir, 'forge_concepts.jsonl');
++}
++
++function resolveKuzuPath() {
++  const dir =
++    process.env.ELYSIUM_INTER_GRAPH_DIR ||
++    process.env.ELYSIUM_GOVERNANCE_DIR ||
++    (process.env.ELYSIUM_REPO_ROOT
++      ? path.join(process.env.ELYSIUM_REPO_ROOT, 'data', 'governance')
++      : '/data/elysium/data/governance');
++  return path.join(dir, 'inter_graph.kuzu');
++}
++
++async function tryHTTPBridge(concept, depth) {
++  const base = process.env.INTER_GRAPH_URL;
++  if (!base || base.length === 0) return null;
++  try {
++    const url = new URL('/inter-graph/concept', base);
++    if (concept) url.searchParams.set('concept', concept);
++    if (depth) url.searchParams.set('depth', String(depth));
++    const controller = new AbortController();
++    const timer = setTimeout(() => controller.abort(), 10000);
++    let resp;
++    try {
++      resp = await fetch(url.toString(), { signal: controller.signal });
++    } finally {
++      clearTimeout(timer);
++    }
++    if (!resp.ok) return null;
++    const json = await resp.json().catch(() => null);
++    if (!json) return null;
++    return {
++      mode: 'bridge',
++      nodes: Array.isArray(json.nodes) ? json.nodes : [],
++      edges: Array.isArray(json.edges) ? json.edges : [],
++      total_concepts: Number(json.total_concepts) || (Array.isArray(json.nodes) ? json.nodes.length : 0),
++      backend: 'INTER_GRAPH_URL',
++    };
++  } catch (_err) {
++    return null;
++  }
++}
++
++async function tryJSONLFallback(concept, depth) {
++  const ledgerPath = resolveJSONLPath();
++  if (!existsSync(ledgerPath)) return null;
++  let raw;
++  try {
++    raw = await fs.readFile(ledgerPath, 'utf8');
++  } catch (_err) {
++    return null;
++  }
++  const lines = raw.split(/\r?\n/).filter((l) => l.trim().length > 0);
++  const all = [];
++  for (const line of lines) {
++    try {
++      all.push(JSON.parse(line));
++    } catch (_err) {
++      continue;
++    }
++  }
++
++  let nodes = all;
++  if (concept) {
++    // Match if slug, id, name, or any tag equals the requested concept.
++    const target = String(concept).toLowerCase();
++    nodes = all.filter((n) => {
++      if (String(n.slug || '').toLowerCase() === target) return true;
++      if (String(n.id || '').toLowerCase() === target) return true;
++      if (String(n.name || '').toLowerCase() === target) return true;
++      const tags = Array.isArray(n.tags) ? n.tags : [];
++      return tags.map((t) => String(t).toLowerCase()).includes(target);
++    });
++  }
++
++  // Depth N : we have no edge structure in the JSONL fallback (one row per
++  // concept). Edges are derived from the optional `depends_on` array, if any.
++  const includeIds = new Set(nodes.map((n) => n.id || n.slug));
++  const edges = [];
++  if (depth > 0) {
++    for (const n of nodes) {
++      const deps = Array.isArray(n.depends_on) ? n.depends_on : [];
++      for (const dep of deps) {
++        edges.push({ from: n.id || n.slug, to: dep, type: 'depends_on' });
++        includeIds.add(dep);
++      }
++    }
++  }
++
++  const expandedNodes = all.filter((n) => includeIds.has(n.id) || includeIds.has(n.slug));
++
++  return {
++    mode: 'jsonl',
++    nodes: expandedNodes.map((n) => ({
++      id: n.id || n.slug,
++      slug: n.slug || n.id,
++      type: n.type || 'concept',
++      name: n.name || n.slug || n.id,
++      origin: n.origin || null,
++      status: n.status || null,
++    })),
++    edges,
++    total_concepts: all.length,
++    backend: 'forge_concepts.jsonl',
++    ledger: ledgerPath,
++  };
++}
++
++/**
++ * Resolve the forge concept graph using the cheapest available backend.
++ * Pure function, side-effect-free (except read-only HTTP / FS).
++ */
++export async function readForgeContext({ concept = null, depth = 1 } = {}) {
++  const depthN = Math.max(0, Math.min(Number(depth) || 0, 5));
++
++  const bridge = await tryHTTPBridge(concept, depthN);
++  if (bridge) {
++    bridge.requestedConcept = concept;
++    bridge.requestedDepth = depthN;
++    return bridge;
++  }
++
++  const jsonl = await tryJSONLFallback(concept, depthN);
++  if (jsonl) {
++    jsonl.requestedConcept = concept;
++    jsonl.requestedDepth = depthN;
++    return jsonl;
++  }
++
++  // Stub mode — no backend reachable. Honest framing : explicit empty graph
++  // + concern message so the UI / LLM never silently mis-interpret missing
++  // data as "no concepts exist".
++  const kuzuPath = resolveKuzuPath();
++  const kuzuPresent = existsSync(kuzuPath);
++  return {
++    mode: 'stub',
++    nodes: [],
++    edges: [],
++    total_concepts: 0,
++    requestedConcept: concept,
++    requestedDepth: depthN,
++    backend: 'none',
++    concern: kuzuPresent
++      ? `inter_graph.kuzu present at ${kuzuPath} but kuzu-node not installed and INTER_GRAPH_URL unset.`
++      : 'No forge backend reachable. Set INTER_GRAPH_URL or populate forge_concepts.jsonl.',
++    knownNodeTypes: KNOWN_NODE_TYPES,
++  };
++}
++
++function sendJson(res, code, body) {
++  res.writeHead(code, { 'Content-Type': 'application/json' });
++  res.end(JSON.stringify(body));
++}
++
++export async function handleCopilotForgeRoute(req, url, res) {
++  if (url.pathname !== '/copilot/forge-context') return false;
++  if (req.method !== 'GET') {
++    console.warn(`[copilot-forge] method-mismatch: ${req.method} ${url.pathname} (expected GET)`);
++    return false;
++  }
++  try {
++    const concept = url.searchParams.get('concept') || null;
++    const depth = Number(url.searchParams.get('depth')) || 1;
++    const payload = await readForgeContext({ concept, depth });
++    payload.ironRule = 'COPILOT-1: synthesis-only ; COPILOT-2: MCP-only data access (Forge feed = read-only).';
++    sendJson(res, 200, payload);
++  } catch (err) {
++    sendJson(res, 500, { error: err.message || String(err) });
++  }
++  return true;
++}
++
++export const _internals = { resolveJSONLPath, resolveKuzuPath, tryHTTPBridge, tryJSONLFallback };
 diff --git a/docker-server-copilot.mjs b/docker-server-copilot.mjs
 new file mode 100644
-index 00000000..67e09c2a
+index 00000000..80982ce0
 --- /dev/null
 +++ b/docker-server-copilot.mjs
-@@ -0,0 +1,98 @@
+@@ -0,0 +1,107 @@
 +/**
 + * Architect's Copilot AI — REST routes (Tier 3.7 Phase A — Task A1).
 + *
@@ -1913,6 +2569,9 @@ index 00000000..67e09c2a
 +  inventoryMCPTools,
 +  gatedInventory,
 +} from './docker-server-copilot-core.mjs';
++import { handleCopilotBLTRoute } from './docker-server-copilot-blt.mjs';
++import { handleCopilotClusterRoute } from './docker-server-copilot-cluster.mjs';
++import { handleCopilotForgeRoute } from './docker-server-copilot-forge.mjs';
 +
 +function sendJson(res, code, body) {
 +  res.writeHead(code, { 'Content-Type': 'application/json' });
@@ -1944,6 +2603,12 @@ index 00000000..67e09c2a
 +
 +export async function handleCopilotRoute(req, url, res) {
 +  if (!url.pathname.startsWith('/copilot/')) return false;
++
++  // Phase A Tasks A2/A3/A4 — Mycelium synergy consumers (BLT, cluster ops, forge).
++  // Each handler returns true once it owned the request.
++  if (await handleCopilotBLTRoute(req, url, res)) return true;
++  if (await handleCopilotClusterRoute(req, url, res)) return true;
++  if (await handleCopilotForgeRoute(req, url, res)) return true;
 +
 +  // GET /copilot/mcp-inventory — Task A1 inventory gate (no auth, read-only).
 +  if (url.pathname === '/copilot/mcp-inventory') {
