@@ -324,10 +324,19 @@ index a6927515..c355388c 100644
          "url": "https://github.com/sponsors/colinhacks"
        }
 diff --git a/gitnexus-web/src/App.tsx b/gitnexus-web/src/App.tsx
-index 68f7d496..c3d29e63 100644
+index 68f7d496..eeb70486 100644
 --- a/gitnexus-web/src/App.tsx
 +++ b/gitnexus-web/src/App.tsx
-@@ -23,6 +23,9 @@ import {
+@@ -16,6 +16,8 @@ import {
+   fetchRepos,
+   normalizeServerUrl,
+   connectHeartbeat,
++  getBackendUrl,
++  setBackendUrl,
+   BackendError,
+   type ConnectResult,
+   type BackendRepo,
+@@ -23,6 +25,9 @@ import {
  import { ERROR_RESET_DELAY_MS } from './config/ui-constants';
  import { formatBackendError } from './i18n/error-messages';
  import { useTranslation } from 'react-i18next';
@@ -337,7 +346,7 @@ index 68f7d496..c3d29e63 100644
  
  const AppContent = () => {
    const { t } = useTranslation(['common', 'errors']);
-@@ -53,6 +56,20 @@ const AppContent = () => {
+@@ -53,6 +58,36 @@ const AppContent = () => {
    const graphCanvasRef = useRef<GraphCanvasHandle>(null);
    const [serverDisconnected, setServerDisconnected] = useState(false);
  
@@ -352,13 +361,29 @@ index 68f7d496..c3d29e63 100644
 +
 +  useEffect(() => {
 +    if (!isMultigraphMode) return;
-+    new MultigraphLoader().listGraphs().then(setMultigraphs).catch(console.error);
++    // Honor ?server= so the sidebar list AND each graph fetch hit the gateway.
++    const serverParam = new URLSearchParams(window.location.search).get('server');
++    if (serverParam) {
++      try {
++        setBackendUrl(normalizeServerUrl(serverParam));
++      } catch {
++        // fall back to the default backend URL
++      }
++    }
++    // Live source: the Σ-BRAIN-GRAPH-GATEWAY /api/repos (each lens = a graph).
++    // Falls back to the static gitnexus.config.json if the gateway is unreachable.
++    const loader = new MultigraphLoader();
++    loader
++      .listGraphsFromBackend(getBackendUrl())
++      .catch(() => loader.listGraphs())
++      .then(setMultigraphs)
++      .catch(console.error);
 +  }, [isMultigraphMode]);
 +
    const handleServerConnect = useCallback(
      async (result: ConnectResult): Promise<void> => {
        // Use the canonical repo name from the server response so all subsequent
-@@ -216,6 +233,17 @@ const AppContent = () => {
+@@ -216,6 +251,17 @@ const AppContent = () => {
      return cleanup;
    }, [viewMode]);
  
