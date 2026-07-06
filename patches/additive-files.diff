@@ -34204,3 +34204,57 @@ index 00000000..d34cb8e5
 +  handleCopilotMetricsRoute,
 +  resetRegistryForTests,
 +};
+diff --git a/gitnexus/src/core/wiki/local-cli-args.ts b/gitnexus/src/core/wiki/local-cli-args.ts
+new file mode 100644
+index 00000000..2573e6cf
+--- /dev/null
++++ b/gitnexus/src/core/wiki/local-cli-args.ts
+@@ -0,0 +1,48 @@
++/**
++ * Pure argument construction for the local `claude` CLI wiki provider.
++ *
++ * Extracted from local-cli-client.ts so the security-critical tool-restriction
++ * logic is unit-testable without importing the IO layer (logger/pino, spawn).
++ */
++
++/**
++ * Tools the wiki generator denies to the `claude` CLI. Wiki generation needs
++ * NO tools — all source content is passed inline in the prompt and only prose
++ * is expected back — so every tool that can execute code, mutate the
++ * filesystem, or reach the network is hard-denied.
++ *
++ * `--disallowedTools` is the one lever an injected instruction cannot re-enable:
++ * it takes precedence over `--allowedTools` and over any permission-mode bypass.
++ * This gives the `claude` provider read-only parity with the `codex` provider's
++ * `--sandbox read-only`, closing the "prompt injection → command execution"
++ * vector where untrusted repository content reaches the model with cwd=repoPath.
++ *
++ * A denylist is intentional: unknown/extra names are harmless no-ops, so
++ * over-listing stays safe as the tool surface evolves. An allowlist that missed
++ * a future mutating tool would silently re-open the vector.
++ */
++export const CLAUDE_DENIED_TOOLS = [
++  'Bash',
++  'Edit',
++  'MultiEdit',
++  'Write',
++  'NotebookEdit',
++  'WebFetch',
++  'WebSearch',
++  'Task',
++  'KillShell',
++] as const;
++
++/**
++ * Build the argv for a headless `claude -p` wiki-generation call. The prompt
++ * itself is delivered on stdin by the caller. `--disallowedTools` is placed
++ * last so its variadic value list stays terminal (no later flag is swallowed).
++ */
++export function buildClaudeArgs(config: { model?: string }): string[] {
++  const args = ['-p', '--output-format', 'text', '--no-session-persistence'];
++  if (config.model) {
++    args.push('--model', config.model);
++  }
++  args.push('--disallowedTools', ...CLAUDE_DENIED_TOOLS);
++  return args;
++}
