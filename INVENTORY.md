@@ -405,6 +405,14 @@ Pure frontend extension de la Timeline existante — aucune route serveur, réut
 - 🎯 Section "Vision architecturale — trois chemins" — A (Architectural CI) / B (Architect's Copilot, recommandé) / C (Galaxie OSS)
 - 🚨 Section "Refactos structurels à surveiller" — 7 issues identifiées dans la revue 2026-05-26
 
+### B.sec — Wiki prompt-injection guard (P0-5, 2026-07-06)
+
+Durcissement sécurité du chemin LLM du wiki (contenu de dépôt non-fiable → prompt) :
+
+- **Cadrage anti-injection** : `ANTI_INJECTION_DIRECTIVE` + `appendAntiInjectionFrame` ([`upstream/gitnexus/src/core/wiki/prompts.ts`](upstream/gitnexus/src/core/wiki/prompts.ts)) apposés **systématiquement** par `buildSystemPrompt` ([`generator.ts`](upstream/gitnexus/src/core/wiki/generator.ts)) sur module/parent/overview — le contenu du dépôt est déclaré donnée, jamais instruction.
+- **Parité read-only `claude`** : `callClaudeLLM` ([`local-cli-client.ts`](upstream/gitnexus/src/core/wiki/local-cli-client.ts)) passe `--disallowedTools` (Bash/Write/Edit/WebFetch/…) via le module pur `local-cli-args.ts` — levier non-contournable, parité avec le `--sandbox read-only` de `codex`, ferme le vecteur injection→exécution de commande.
+- Test [`tests/unit/wiki-prompt-injection-guard.test.mjs`](tests/unit/wiki-prompt-injection-guard.test.mjs) (6/6). Résiduels documentés (GROUPING, cluster-enricher, délimiteur nonce). Spec : [`docs/superpowers/specs/2026-07-06-wiki-prompt-injection-guard.md`](docs/superpowers/specs/2026-07-06-wiki-prompt-injection-guard.md).
+
 ---
 
 ## Partie C — Distance avec upstream
