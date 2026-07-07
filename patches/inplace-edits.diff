@@ -401,6 +401,29 @@ index 68f7d496..eeb70486 100644
    // Render based on view mode
    if (viewMode === 'onboarding') {
      return (
+diff --git a/gitnexus-web/src/lib/graph-adapter.ts b/gitnexus-web/src/lib/graph-adapter.ts
+index bb3f5f11..faf8a7c3 100644
+--- a/gitnexus-web/src/lib/graph-adapter.ts
++++ b/gitnexus-web/src/lib/graph-adapter.ts
+@@ -241,9 +241,15 @@ export const knowledgeGraphToGraphology = (
+ 
+     // Symbol nodes get colored by community if available
+     const usesCommunityColor = hasCommunity && symbolTypes.has(node.label);
+-    const nodeColor = usesCommunityColor
+-      ? getCommunityColor(communityIndex!)
+-      : NODE_COLORS[node.label] || '#9ca3af';
++    // Honor an explicit per-node colour from the projection (domainType hue) when
++    // present — lets non-code lenses (sigil/workflow/inter_graph) colour by
++    // domainType. Falls back to community/type colour for real code graphs.
++    const projectionColor = (node.properties as { communityColor?: string }).communityColor;
++    const nodeColor = projectionColor
++      ? projectionColor
++      : usesCommunityColor
++        ? getCommunityColor(communityIndex!)
++        : NODE_COLORS[node.label] || '#9ca3af';
+ 
+     graph.addNode(nodeId, {
+       x,
 diff --git a/gitnexus-web/test/setup.ts b/gitnexus-web/test/setup.ts
 index c9a69811..934ef0c6 100644
 --- a/gitnexus-web/test/setup.ts
