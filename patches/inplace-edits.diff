@@ -401,6 +401,22 @@ index 68f7d496..eeb70486 100644
    // Render based on view mode
    if (viewMode === 'onboarding') {
      return (
+diff --git a/gitnexus-web/src/hooks/useSigma.ts b/gitnexus-web/src/hooks/useSigma.ts
+index a2121dad..5d105456 100644
+--- a/gitnexus-web/src/hooks/useSigma.ts
++++ b/gitnexus-web/src/hooks/useSigma.ts
+@@ -385,6 +385,11 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
+ 
+       if (refresh) {
+         sigmaRef.current?.refresh();
++        // Re-fit camera to the settled force-layout positions (parity with
++        // stopTreeLayout / stopCirclesLayout) so the graph fills the viewport
++        // instead of rendering off-centre — most visible on small graphs like
++        // the inter_graph master-graph-of-graphs.
++        sigmaRef.current?.getCamera().animatedReset({ duration: 600 });
+       }
+     },
+     [options.layoutMode, stopTreeLayout, stopCirclesLayout],
 diff --git a/gitnexus-web/src/lib/graph-adapter.ts b/gitnexus-web/src/lib/graph-adapter.ts
 index bb3f5f11..faf8a7c3 100644
 --- a/gitnexus-web/src/lib/graph-adapter.ts
