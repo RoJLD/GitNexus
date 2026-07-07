@@ -129,6 +129,28 @@ the components stayed). It went unnoticed because **every CI job was
 `continue-on-error: true`** and the live deployment ran an old cached image.
 Restored from the last-good commit `d2a9234a` on 2026-06-03.
 
+**It recurred on 2026-07-07.** The `v1.6.5 → v1.6.7` bump series (through
+`d7f88358 feat(web-bump): … regen inplace-edits.diff`) regenerated
+`inplace-edits.diff` from an inconsistent clone again — gutting it to
+**9 files / 591 lines**, dropping the same infra edits (`useAppState`
+analytics props, `package.json` deps `three`/`umap-js`/`react-force-graph-3d`,
+the `lucide-icons` shim). The clone was also left on `v1.6.7` while the pin
+docs still said `v1.6.5`. Neither `v1.6.5` nor `v1.6.7` reapply produced a
+building tree. Restored 2026-07-07 by reverting the clone to `v1.6.5` and
+re-applying the last complete diffs from **`2ed93b73`** (17→18 in-place files,
+8480 lines), then re-layering `graph-adapter` domainType colouring + the
+`BackendRepo.family` field. The `gitnexus-web` image builds again.
+**Deferred (re-apply against this v1.6.5 base in a follow-up):** the auto-fit
+camera edit (`f8c9eb91` — targeted a `stopAllLayouts` that doesn't exist in
+v1.6.5), the P0-5 wiki prompt-injection guard (`fa647b88` — targeted v1.6.7
+wiki files), and the Header family-grouping presentation. The multigraph
+layout (`e3337fd2`) was intentionally dropped (abandoned UX).
+
+**The 2026-07-07 recurrence proves the two guards below were not enforced
+during the bump** — the local drift-guard passes when clone AND diffs are
+gutted consistently, and the CI `build-gate` either didn't run or is still
+`continue-on-error`. Verify `build-gate` is red-on-gutting before the next bump.
+
 To stop this recurring:
 
 1. **Local guard — before committing ANY `upstream/` edit:** run
