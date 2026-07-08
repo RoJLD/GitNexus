@@ -7109,7 +7109,7 @@ index 25c57767..310692db 100644
  
    return <AppStateContext.Provider value={value}>{children}</AppStateContext.Provider>;
 diff --git a/gitnexus-web/src/hooks/useSigma.ts b/gitnexus-web/src/hooks/useSigma.ts
-index 461de0f5..9fae408d 100644
+index 461de0f5..f6c2a612 100644
 --- a/gitnexus-web/src/hooks/useSigma.ts
 +++ b/gitnexus-web/src/hooks/useSigma.ts
 @@ -8,6 +8,34 @@ import EdgeCurveProgram from '@sigma/edge-curve';
@@ -7204,7 +7204,7 @@ index 461de0f5..9fae408d 100644
 -  setGraph: (graph: Graph<SigmaNodeAttributes, SigmaEdgeAttributes>) => void;
 +  setGraph: (
 +    graph: Graph<SigmaNodeAttributes, SigmaEdgeAttributes>,
-+    opts?: { cacheKey?: string; skipLayout?: boolean },
++    opts?: { cacheKey?: string; skipLayout?: boolean; circular?: boolean },
 +  ) => void;
 +  /**
 +   * Wipe persisted layout cache for `cacheKey` and re-run FA2 on the
