@@ -645,7 +645,7 @@ index 8143eb4b..430428bb 100644
 +  startGitnexusCron(GITNEXUS_API);
  });
 diff --git a/gitnexus-web/package-lock.json b/gitnexus-web/package-lock.json
-index cf69e108..8f37059b 100644
+index cf69e108..930769bf 100644
 --- a/gitnexus-web/package-lock.json
 +++ b/gitnexus-web/package-lock.json
 @@ -16,9 +16,11 @@
@@ -694,371 +694,67 @@ index cf69e108..8f37059b 100644
          "@vercel/node": "^5.5.16",
          "@vitejs/plugin-react": "^5.1.4",
          "@vitest/coverage-v8": "^4.1.5",
-@@ -789,6 +797,7 @@
-       "cpu": [
-         "ppc64"
-       ],
-+      "dev": true,
+@@ -196,6 +204,7 @@
+       "integrity": "sha512-CGOfOJqWjg2qW/Mb6zNsDm+u5vFQ8DxXfbM09z69p5Z6+mE1ikP2jUXw+j42Pf1XTYED2Rni5f95npYeuwMDQA==",
+       "dev": true,
        "license": "MIT",
-       "optional": true,
-       "os": [
-@@ -805,6 +814,7 @@
-       "cpu": [
-         "arm"
-       ],
-+      "dev": true,
-       "license": "MIT",
-       "optional": true,
-       "os": [
-@@ -821,6 +831,7 @@
-       "cpu": [
-         "arm64"
-       ],
-+      "dev": true,
-       "license": "MIT",
-       "optional": true,
-       "os": [
-@@ -837,6 +848,7 @@
-       "cpu": [
-         "x64"
-       ],
-+      "dev": true,
-       "license": "MIT",
-       "optional": true,
-       "os": [
-@@ -853,6 +865,7 @@
-       "cpu": [
-         "arm64"
-       ],
-+      "dev": true,
-       "license": "MIT",
-       "optional": true,
-       "os": [
-@@ -869,6 +882,7 @@
-       "cpu": [
-         "x64"
-       ],
-+      "dev": true,
-       "license": "MIT",
-       "optional": true,
-       "os": [
-@@ -885,6 +899,7 @@
-       "cpu": [
-         "arm64"
-       ],
-+      "dev": true,
-       "license": "MIT",
-       "optional": true,
-       "os": [
-@@ -901,6 +916,7 @@
-       "cpu": [
-         "x64"
-       ],
-+      "dev": true,
-       "license": "MIT",
-       "optional": true,
-       "os": [
-@@ -917,6 +933,7 @@
-       "cpu": [
-         "arm"
-       ],
-+      "dev": true,
-       "license": "MIT",
-       "optional": true,
-       "os": [
-@@ -933,6 +950,7 @@
-       "cpu": [
-         "arm64"
-       ],
-+      "dev": true,
-       "license": "MIT",
-       "optional": true,
-       "os": [
-@@ -949,6 +967,7 @@
-       "cpu": [
-         "ia32"
-       ],
-+      "dev": true,
-       "license": "MIT",
-       "optional": true,
-       "os": [
-@@ -965,6 +984,7 @@
-       "cpu": [
-         "loong64"
-       ],
-+      "dev": true,
-       "license": "MIT",
-       "optional": true,
-       "os": [
-@@ -981,6 +1001,7 @@
-       "cpu": [
-         "mips64el"
-       ],
-+      "dev": true,
-       "license": "MIT",
-       "optional": true,
-       "os": [
-@@ -997,6 +1018,7 @@
-       "cpu": [
-         "ppc64"
-       ],
-+      "dev": true,
-       "license": "MIT",
-       "optional": true,
-       "os": [
-@@ -1013,6 +1035,7 @@
-       "cpu": [
-         "riscv64"
-       ],
-+      "dev": true,
-       "license": "MIT",
-       "optional": true,
-       "os": [
-@@ -1029,6 +1052,7 @@
-       "cpu": [
-         "s390x"
-       ],
-+      "dev": true,
-       "license": "MIT",
-       "optional": true,
-       "os": [
-@@ -1045,6 +1069,7 @@
-       "cpu": [
-         "x64"
-       ],
-+      "dev": true,
-       "license": "MIT",
-       "optional": true,
-       "os": [
-@@ -1061,6 +1086,7 @@
-       "cpu": [
-         "arm64"
-       ],
-+      "dev": true,
-       "license": "MIT",
-       "optional": true,
-       "os": [
-@@ -1077,6 +1103,7 @@
-       "cpu": [
-         "x64"
-       ],
-+      "dev": true,
-       "license": "MIT",
-       "optional": true,
-       "os": [
-@@ -1093,6 +1120,7 @@
-       "cpu": [
-         "arm64"
-       ],
-+      "dev": true,
-       "license": "MIT",
-       "optional": true,
-       "os": [
-@@ -1109,6 +1137,7 @@
-       "cpu": [
-         "x64"
-       ],
-+      "dev": true,
-       "license": "MIT",
-       "optional": true,
-       "os": [
-@@ -1125,6 +1154,7 @@
-       "cpu": [
-         "arm64"
-       ],
-+      "dev": true,
-       "license": "MIT",
-       "optional": true,
-       "os": [
-@@ -1141,6 +1171,7 @@
-       "cpu": [
-         "x64"
-       ],
-+      "dev": true,
-       "license": "MIT",
-       "optional": true,
-       "os": [
-@@ -1157,6 +1188,7 @@
-       "cpu": [
-         "arm64"
-       ],
-+      "dev": true,
-       "license": "MIT",
-       "optional": true,
-       "os": [
-@@ -1173,6 +1205,7 @@
-       "cpu": [
-         "ia32"
-       ],
-+      "dev": true,
-       "license": "MIT",
-       "optional": true,
-       "os": [
-@@ -1189,6 +1222,7 @@
-       "cpu": [
-         "x64"
-       ],
-+      "dev": true,
-       "license": "MIT",
-       "optional": true,
-       "os": [
-@@ -1702,6 +1736,7 @@
-       "version": "0.128.0",
-       "resolved": "https://registry.npmjs.org/@oxc-project/types/-/types-0.128.0.tgz",
-       "integrity": "sha512-huv1Y/LzBJkBVHt3OlC7u0zHBW9qXf1FdD7sGmc1rXc2P1mTwHssYv7jyGx5KAACSCH+9B3Bhn6Z9luHRvf7pQ==",
-+      "dev": true,
-       "license": "MIT",
-       "funding": {
-         "url": "https://github.com/sponsors/Boshen"
-@@ -1730,6 +1765,7 @@
-       "cpu": [
-         "arm64"
-       ],
-+      "dev": true,
-       "license": "MIT",
-       "optional": true,
-       "os": [
-@@ -1746,6 +1782,7 @@
-       "cpu": [
-         "arm64"
-       ],
-+      "dev": true,
-       "license": "MIT",
-       "optional": true,
-       "os": [
-@@ -1762,6 +1799,7 @@
-       "cpu": [
-         "x64"
-       ],
-+      "dev": true,
-       "license": "MIT",
-       "optional": true,
-       "os": [
-@@ -1778,6 +1816,7 @@
-       "cpu": [
-         "x64"
-       ],
-+      "dev": true,
-       "license": "MIT",
-       "optional": true,
-       "os": [
-@@ -1794,6 +1833,7 @@
-       "cpu": [
-         "arm"
-       ],
-+      "dev": true,
-       "license": "MIT",
-       "optional": true,
-       "os": [
-@@ -1810,6 +1850,7 @@
-       "cpu": [
-         "arm64"
-       ],
-+      "dev": true,
-       "license": "MIT",
-       "optional": true,
-       "os": [
-@@ -1826,6 +1867,7 @@
-       "cpu": [
-         "arm64"
-       ],
-+      "dev": true,
-       "license": "MIT",
-       "optional": true,
-       "os": [
-@@ -1842,6 +1884,7 @@
-       "cpu": [
-         "ppc64"
-       ],
-+      "dev": true,
-       "license": "MIT",
-       "optional": true,
-       "os": [
-@@ -1858,6 +1901,7 @@
-       "cpu": [
-         "s390x"
-       ],
-+      "dev": true,
-       "license": "MIT",
-       "optional": true,
-       "os": [
-@@ -1874,6 +1918,7 @@
-       "cpu": [
-         "x64"
-       ],
-+      "dev": true,
-       "license": "MIT",
-       "optional": true,
-       "os": [
-@@ -1890,6 +1935,7 @@
-       "cpu": [
-         "x64"
-       ],
-+      "dev": true,
-       "license": "MIT",
-       "optional": true,
-       "os": [
-@@ -1906,6 +1952,7 @@
-       "cpu": [
-         "arm64"
-       ],
-+      "dev": true,
-       "license": "MIT",
-       "optional": true,
-       "os": [
-@@ -1922,6 +1969,7 @@
-       "cpu": [
-         "wasm32"
-       ],
-+      "dev": true,
-       "license": "MIT",
-       "optional": true,
++      "peer": true,
        "dependencies": {
-@@ -1940,6 +1988,7 @@
-       "cpu": [
-         "arm64"
+         "@babel/code-frame": "^7.29.0",
+         "@babel/generator": "^7.29.0",
+@@ -646,6 +655,7 @@
+         }
        ],
-+      "dev": true,
        "license": "MIT",
-       "optional": true,
-       "os": [
-@@ -1956,6 +2005,7 @@
-       "cpu": [
-         "x64"
++      "peer": true,
+       "engines": {
+         "node": ">=20.19.0"
+       },
+@@ -694,6 +704,7 @@
+         }
        ],
-+      "dev": true,
        "license": "MIT",
-       "optional": true,
-       "os": [
-@@ -2267,27 +2317,6 @@
-         "vite": "^5.2.0 || ^6 || ^7 || ^8"
++      "peer": true,
+       "engines": {
+         "node": ">=20.19.0"
+       }
+@@ -751,27 +762,6 @@
+         "node": ">=16"
        }
      },
--    "node_modules/@testing-library/dom": {
--      "version": "10.4.1",
--      "resolved": "https://registry.npmjs.org/@testing-library/dom/-/dom-10.4.1.tgz",
--      "integrity": "sha512-o4PXJQidqJl82ckFaXUeoAW+XysPLauYI43Abki5hABd853iMhitooc6znOnczgbTYmEP6U6/y1ZyKAIsvMKGg==",
--      "dev": true,
+-    "node_modules/@emnapi/core": {
+-      "version": "1.10.0",
+-      "resolved": "https://registry.npmjs.org/@emnapi/core/-/core-1.10.0.tgz",
+-      "integrity": "sha512-yq6OkJ4p82CAfPl0u9mQebQHKPJkY7WrIuk205cTYnYe+k2Z8YBh11FrbRG/H6ihirqcacOgl2BIO8oyMQLeXw==",
 -      "license": "MIT",
--      "peer": true,
+-      "optional": true,
 -      "dependencies": {
--        "@babel/code-frame": "^7.10.4",
--        "@babel/runtime": "^7.12.5",
--        "@types/aria-query": "^5.0.1",
--        "aria-query": "5.3.0",
--        "dom-accessibility-api": "^0.5.9",
--        "lz-string": "^1.5.0",
--        "picocolors": "1.1.1",
--        "pretty-format": "^27.0.2"
--      },
--      "engines": {
--        "node": ">=18"
+-        "@emnapi/wasi-threads": "1.2.1",
+-        "tslib": "^2.4.0"
 -      }
 -    },
-     "node_modules/@testing-library/jest-dom": {
-       "version": "6.9.1",
-       "resolved": "https://registry.npmjs.org/@testing-library/jest-dom/-/jest-dom-6.9.1.tgz",
-@@ -2411,6 +2440,12 @@
+-    "node_modules/@emnapi/runtime": {
+-      "version": "1.10.0",
+-      "resolved": "https://registry.npmjs.org/@emnapi/runtime/-/runtime-1.10.0.tgz",
+-      "integrity": "sha512-ewvYlk86xUoGI0zQRNq/mC+16R1QeDlKQy21Ki3oSYXNgLb45GV1P6A0M+/s6nyCuNDqe5VpaY84BzXGwVbwFA==",
+-      "license": "MIT",
+-      "optional": true,
+-      "dependencies": {
+-        "tslib": "^2.4.0"
+-      }
+-    },
+     "node_modules/@emnapi/wasi-threads": {
+       "version": "1.2.1",
+       "resolved": "https://registry.npmjs.org/@emnapi/wasi-threads/-/wasi-threads-1.2.1.tgz",
+@@ -1385,6 +1375,7 @@
+       "resolved": "https://registry.npmjs.org/@langchain/core/-/core-1.1.45.tgz",
+       "integrity": "sha512-Y/wvuglLTMKJahkl4QD9dBIdF/z/CxZJWdTfHJF/q2jtlJtoFf6Mb5JpGxZfsi3mBY6NSG941FSLTcqhCKrhBA==",
+       "license": "MIT",
++      "peer": true,
+       "dependencies": {
+         "@cfworker/json-schema": "^4.0.2",
+         "@standard-schema/spec": "^1.1.0",
+@@ -2411,6 +2402,12 @@
        "dev": true,
        "license": "MIT"
      },
@@ -1071,39 +767,41 @@ index cf69e108..8f37059b 100644
      "node_modules/@tybys/wasm-util": {
        "version": "0.10.1",
        "resolved": "https://registry.npmjs.org/@tybys/wasm-util/-/wasm-util-0.10.1.tgz",
-@@ -2421,14 +2456,6 @@
-         "tslib": "^2.4.0"
-       }
-     },
--    "node_modules/@types/aria-query": {
--      "version": "5.0.4",
--      "resolved": "https://registry.npmjs.org/@types/aria-query/-/aria-query-5.0.4.tgz",
--      "integrity": "sha512-rfT93uj5s0PRL7EzccGMs3brplhcrghnDoV26NqKhCAS1hVo+WdNsPvE/yb6ilfr5hi2MEk6d5EWJTKdxg8jVw==",
--      "dev": true,
+@@ -2426,8 +2423,7 @@
+       "resolved": "https://registry.npmjs.org/@types/aria-query/-/aria-query-5.0.4.tgz",
+       "integrity": "sha512-rfT93uj5s0PRL7EzccGMs3brplhcrghnDoV26NqKhCAS1hVo+WdNsPvE/yb6ilfr5hi2MEk6d5EWJTKdxg8jVw==",
+       "dev": true,
 -      "license": "MIT",
 -      "peer": true
--    },
++      "license": "MIT"
+     },
      "node_modules/@types/babel__core": {
        "version": "7.20.5",
-       "resolved": "https://registry.npmjs.org/@types/babel__core/-/babel__core-7.20.5.tgz",
-@@ -2820,7 +2847,7 @@
-       "version": "25.6.0",
-       "resolved": "https://registry.npmjs.org/@types/node/-/node-25.6.0.tgz",
+@@ -2822,6 +2818,7 @@
        "integrity": "sha512-+qIYRKdNYJwY3vRCZMdJbPLJAtGjQBudzZzdzwQYkEPQd+PJGixUL5QfvCLDaULoLv+RhT3LDkwEfKaAkgSmNQ==",
--      "devOptional": true,
-+      "dev": true,
+       "devOptional": true,
        "license": "MIT",
++      "peer": true,
        "dependencies": {
          "undici-types": "~7.19.0"
-@@ -2836,6 +2863,7 @@
-       "version": "19.2.14",
+       }
+@@ -2837,6 +2834,7 @@
        "resolved": "https://registry.npmjs.org/@types/react/-/react-19.2.14.tgz",
        "integrity": "sha512-ilcTH/UniCkMdtexkoCN0bI7pMcJDvmQFPvuPvmEaYA/NSfFTAgdUSLAoVjaRJm7+6PvcM+q1zYOwS4wTYMF9w==",
-+      "dev": true,
        "license": "MIT",
++      "peer": true,
        "dependencies": {
          "csstype": "^3.2.2"
-@@ -2861,6 +2889,28 @@
+       }
+@@ -2847,6 +2845,7 @@
+       "integrity": "sha512-jp2L/eY6fn+KgVVQAOqYItbF0VY/YApe5Mz2F0aykSO8gx31bYCZyvSeYxCHKvzHG5eZjc+zyaS5BrBWya2+kQ==",
+       "dev": true,
+       "license": "MIT",
++      "peer": true,
+       "peerDependencies": {
+         "@types/react": "^19.2.0"
+       }
+@@ -2861,6 +2860,28 @@
          "@types/react": "*"
        }
      },
@@ -1132,7 +830,7 @@ index cf69e108..8f37059b 100644
      "node_modules/@types/trusted-types": {
        "version": "2.0.7",
        "resolved": "https://registry.npmjs.org/@types/trusted-types/-/trusted-types-2.0.7.tgz",
-@@ -2874,6 +2924,13 @@
+@@ -2874,6 +2895,13 @@
        "integrity": "sha512-ko/gIFJRv177XgZsZcBwnqJN5x/Gien8qNOn0D5bQU/zAzVf9Zt3BlcUiLqhV9y4ARk0GbT3tnUiPNgnTXzc/Q==",
        "license": "MIT"
      },
@@ -1146,7 +844,15 @@ index cf69e108..8f37059b 100644
      "node_modules/@ungap/structured-clone": {
        "version": "1.3.0",
        "resolved": "https://registry.npmjs.org/@ungap/structured-clone/-/structured-clone-1.3.0.tgz",
-@@ -3182,6 +3239,54 @@
+@@ -3034,6 +3062,7 @@
+       "integrity": "sha512-38C0/Ddb7HcRG0Z4/DUem8x57d2p9jYgp18mkaYswEOQBGsI1CG4f/hjm0ZCeaJfWhSZ4k7jgs29V1Zom7Ki9A==",
+       "dev": true,
+       "license": "MIT",
++      "peer": true,
+       "dependencies": {
+         "@bcoe/v8-coverage": "^1.0.2",
+         "@vitest/utils": "4.1.5",
+@@ -3182,6 +3211,55 @@
          "url": "https://opencollective.com/vitest"
        }
      },
@@ -1177,7 +883,8 @@ index cf69e108..8f37059b 100644
 +      "version": "0.184.0",
 +      "resolved": "https://registry.npmjs.org/three/-/three-0.184.0.tgz",
 +      "integrity": "sha512-wtTRjG92pM5eUg/KuUnHsqSAlPM296brTOcLgMRqEeylYTh/CdtvKUvCyyCQTzFuStieWxvZb8mVTMvdPyUpxg==",
-+      "license": "MIT"
++      "license": "MIT",
++      "peer": true
 +    },
 +    "node_modules/3d-force-graph/node_modules/three-render-objects": {
 +      "version": "1.41.1",
@@ -1201,7 +908,7 @@ index cf69e108..8f37059b 100644
      "node_modules/abbrev": {
        "version": "3.0.1",
        "resolved": "https://registry.npmjs.org/abbrev/-/abbrev-3.0.1.tgz",
-@@ -3192,6 +3297,15 @@
+@@ -3192,11 +3270,21 @@
          "node": "^18.17.0 || >=20.5.0"
        }
      },
@@ -1217,33 +924,37 @@ index cf69e108..8f37059b 100644
      "node_modules/acorn": {
        "version": "8.15.0",
        "resolved": "https://registry.npmjs.org/acorn/-/acorn-8.15.0.tgz",
-@@ -3254,17 +3368,6 @@
-         "url": "https://github.com/sponsors/epoberezkin"
-       }
-     },
--    "node_modules/ansi-regex": {
--      "version": "5.0.1",
--      "resolved": "https://registry.npmjs.org/ansi-regex/-/ansi-regex-5.0.1.tgz",
--      "integrity": "sha512-quJQXlTSUGL2LH9SUXo8VwsY4soanhgo6LNSm84E1LBcE8s3O0wpdiRzyR9z/ZZJMlMWv37qOOb9pdJlMUEKFQ==",
--      "dev": true,
--      "license": "MIT",
+       "integrity": "sha512-NZyJarBfL7nWwIq+FDL6Zp/yHEhePMNnnJ0y3qfieCrmNvYct8uvtiV41UvlSe6apAfk0fY1FbWx+NwfmpvtTg==",
+       "license": "MIT",
++      "peer": true,
+       "bin": {
+         "acorn": "bin/acorn"
+       },
+@@ -3260,7 +3348,6 @@
+       "integrity": "sha512-quJQXlTSUGL2LH9SUXo8VwsY4soanhgo6LNSm84E1LBcE8s3O0wpdiRzyR9z/ZZJMlMWv37qOOb9pdJlMUEKFQ==",
+       "dev": true,
+       "license": "MIT",
 -      "peer": true,
--      "engines": {
--        "node": ">=8"
--      }
--    },
-     "node_modules/ansi-styles": {
-       "version": "5.2.0",
-       "resolved": "https://registry.npmjs.org/ansi-styles/-/ansi-styles-5.2.0.tgz",
-@@ -3734,6 +3837,7 @@
-       "version": "3.2.3",
-       "resolved": "https://registry.npmjs.org/csstype/-/csstype-3.2.3.tgz",
-       "integrity": "sha512-z1HGKcYy2xA8AGQfwrn0PAy+PB7X/GSj3UVJW9qKyn43xWa+gl5nXmU4qqLMRzWVLFC8KusUX8T/0kCiOYpAIQ==",
-+      "dev": true,
-       "license": "MIT"
-     },
-     "node_modules/cytoscape": {
-@@ -3846,6 +3950,12 @@
+       "engines": {
+         "node": ">=8"
+       }
+@@ -3478,6 +3565,7 @@
+         }
+       ],
+       "license": "MIT",
++      "peer": true,
+       "dependencies": {
+         "baseline-browser-mapping": "^2.9.0",
+         "caniuse-lite": "^1.0.30001759",
+@@ -3741,6 +3829,7 @@
+       "resolved": "https://registry.npmjs.org/cytoscape/-/cytoscape-3.33.1.tgz",
+       "integrity": "sha512-iJc4TwyANnOGR1OmWhsS9ayRS3s+XQ185FmuHObThD+5AeJCakAAbWv8KimMTt08xCCLNgneQwFp+JRJOr9qGQ==",
+       "license": "MIT",
++      "peer": true,
+       "engines": {
+         "node": ">=0.10"
+       }
+@@ -3846,6 +3935,12 @@
          "node": ">=12"
        }
      },
@@ -1256,7 +967,7 @@ index cf69e108..8f37059b 100644
      "node_modules/d3-brush": {
        "version": "3.0.0",
        "resolved": "https://registry.npmjs.org/d3-brush/-/d3-brush-3.0.0.tgz",
-@@ -3989,6 +4099,22 @@
+@@ -3989,6 +4084,22 @@
          "node": ">=12"
        }
      },
@@ -1279,7 +990,7 @@ index cf69e108..8f37059b 100644
      "node_modules/d3-format": {
        "version": "3.1.2",
        "resolved": "https://registry.npmjs.org/d3-format/-/d3-format-3.1.2.tgz",
-@@ -4031,6 +4157,12 @@
+@@ -4031,6 +4142,12 @@
          "node": ">=12"
        }
      },
@@ -1292,7 +1003,15 @@ index cf69e108..8f37059b 100644
      "node_modules/d3-path": {
        "version": "3.1.0",
        "resolved": "https://registry.npmjs.org/d3-path/-/d3-path-3.1.0.tgz",
-@@ -4235,6 +4367,18 @@
+@@ -4141,6 +4258,7 @@
+       "resolved": "https://registry.npmjs.org/d3-selection/-/d3-selection-3.0.0.tgz",
+       "integrity": "sha512-fmTRWbNMmsmWq6xJV8D19U/gw/bwrHfNXxrIN+HfZgnzqTHp9jOmKMhsTUjXOJnZOdZY9Q28y4yebKzqDKlxlQ==",
+       "license": "ISC",
++      "peer": true,
+       "engines": {
+         "node": ">=12"
+       }
+@@ -4235,6 +4353,18 @@
          "lodash-es": "^4.17.21"
        }
      },
@@ -1311,39 +1030,17 @@ index cf69e108..8f37059b 100644
      "node_modules/data-urls": {
        "version": "7.0.0",
        "resolved": "https://registry.npmjs.org/data-urls/-/data-urls-7.0.0.tgz",
-@@ -4398,14 +4542,6 @@
-         "node": ">=0.3.1"
-       }
-     },
--    "node_modules/dom-accessibility-api": {
--      "version": "0.5.16",
--      "resolved": "https://registry.npmjs.org/dom-accessibility-api/-/dom-accessibility-api-0.5.16.tgz",
--      "integrity": "sha512-X7BJ2yElsnOJ30pZF4uIIDfBEVgF4XEBxL9Bxhy6dnrm5hkzqmsWHGTiHqRiITNhMyFLyAiWndIJP7Z1NTteDg==",
--      "dev": true,
+@@ -4403,8 +4533,7 @@
+       "resolved": "https://registry.npmjs.org/dom-accessibility-api/-/dom-accessibility-api-0.5.16.tgz",
+       "integrity": "sha512-X7BJ2yElsnOJ30pZF4uIIDfBEVgF4XEBxL9Bxhy6dnrm5hkzqmsWHGTiHqRiITNhMyFLyAiWndIJP7Z1NTteDg==",
+       "dev": true,
 -      "license": "MIT",
 -      "peer": true
--    },
++      "license": "MIT"
+     },
      "node_modules/dompurify": {
        "version": "3.4.2",
-       "resolved": "https://registry.npmjs.org/dompurify/-/dompurify-3.4.2.tgz",
-@@ -4569,7 +4705,7 @@
-       "version": "0.27.0",
-       "resolved": "https://registry.npmjs.org/esbuild/-/esbuild-0.27.0.tgz",
-       "integrity": "sha512-jd0f4NHbD6cALCyGElNpGAOtWxSq46l9X/sWB0Nzd5er4Kz2YTm+Vl0qKFT9KUJvD8+fiO8AvoHhFvEatfVixA==",
--      "devOptional": true,
-+      "dev": true,
-       "hasInstallScript": true,
-       "license": "MIT",
-       "bin": {
-@@ -4726,6 +4862,7 @@
-       "version": "6.5.0",
-       "resolved": "https://registry.npmjs.org/fdir/-/fdir-6.5.0.tgz",
-       "integrity": "sha512-tIbYtZbucOs0BRGqPJkshJUYdL+SDH7dVM8gjy+ERp3WAUjLEFJE+02kanyHtwjWOnwrKYBiwAmM0p4kLJAnXg==",
-+      "dev": true,
-       "license": "MIT",
-       "engines": {
-         "node": ">=12.0.0"
-@@ -4739,6 +4876,13 @@
+@@ -4739,6 +4868,13 @@
          }
        }
      },
@@ -1357,7 +1054,7 @@ index cf69e108..8f37059b 100644
      "node_modules/file-uri-to-path": {
        "version": "1.0.0",
        "resolved": "https://registry.npmjs.org/file-uri-to-path/-/file-uri-to-path-1.0.0.tgz",
-@@ -4759,6 +4903,20 @@
+@@ -4759,6 +4895,20 @@
          "node": ">=8"
        }
      },
@@ -1378,29 +1075,7 @@ index cf69e108..8f37059b 100644
      "node_modules/follow-redirects": {
        "version": "1.16.0",
        "resolved": "https://registry.npmjs.org/follow-redirects/-/follow-redirects-1.16.0.tgz",
-@@ -4807,6 +4965,7 @@
-       "version": "2.3.3",
-       "resolved": "https://registry.npmjs.org/fsevents/-/fsevents-2.3.3.tgz",
-       "integrity": "sha512-5xoDfX+fL7faATnagmWPpbFtwh/R77WmMMqqHGS65C3vvB0YHrgF+B1YmZ3441tMj5n63k0212XNoJwzlhffQw==",
-+      "dev": true,
-       "hasInstallScript": true,
-       "license": "MIT",
-       "optional": true,
-@@ -4987,13 +5146,6 @@
-         "graphology-types": ">=0.19.0"
-       }
-     },
--    "node_modules/graphology-types": {
--      "version": "0.24.8",
--      "resolved": "https://registry.npmjs.org/graphology-types/-/graphology-types-0.24.8.tgz",
--      "integrity": "sha512-hDRKYXa8TsoZHjgEaysSRyPdT6uB78Ci8WnjgbStlQysz7xR52PInxNsmnB7IBOM1BhikxkNyCVEFgmPKnpx3Q==",
--      "license": "MIT",
--      "peer": true
--    },
-     "node_modules/graphology-utils": {
-       "version": "2.5.2",
-       "resolved": "https://registry.npmjs.org/graphology-utils/-/graphology-utils-2.5.2.tgz",
-@@ -5248,6 +5400,12 @@
+@@ -5248,6 +5398,12 @@
          "url": "https://github.com/sponsors/wooorm"
        }
      },
@@ -1413,7 +1088,7 @@ index cf69e108..8f37059b 100644
      "node_modules/is-decimal": {
        "version": "2.0.1",
        "resolved": "https://registry.npmjs.org/is-decimal/-/is-decimal-2.0.1.tgz",
-@@ -5371,6 +5529,15 @@
+@@ -5371,6 +5527,15 @@
          "node": ">=8"
        }
      },
@@ -1429,7 +1104,7 @@ index cf69e108..8f37059b 100644
      "node_modules/jiti": {
        "version": "2.6.1",
        "resolved": "https://registry.npmjs.org/jiti/-/jiti-2.6.1.tgz",
-@@ -5412,7 +5579,6 @@
+@@ -5412,7 +5577,6 @@
        "version": "4.0.0",
        "resolved": "https://registry.npmjs.org/js-tokens/-/js-tokens-4.0.0.tgz",
        "integrity": "sha512-RdJUflcE3cUzKiMqQgsCu06FPu9UdIJO0beYbPhHN4k6apgJtifcoCtT9bcxOpYBtpD2kCM6Sbzg4CausW/PKQ==",
@@ -1437,7 +1112,7 @@ index cf69e108..8f37059b 100644
        "license": "MIT"
      },
      "node_modules/jsdom": {
-@@ -5550,6 +5716,18 @@
+@@ -5550,6 +5714,18 @@
          "node": ">=6"
        }
      },
@@ -1456,7 +1131,7 @@ index cf69e108..8f37059b 100644
      "node_modules/katex": {
        "version": "0.16.27",
        "resolved": "https://registry.npmjs.org/katex/-/katex-0.16.27.tgz",
-@@ -5923,6 +6101,18 @@
+@@ -5923,6 +6099,18 @@
          "url": "https://github.com/sponsors/wooorm"
        }
      },
@@ -1475,25 +1150,15 @@ index cf69e108..8f37059b 100644
      "node_modules/lowlight": {
        "version": "1.20.0",
        "resolved": "https://registry.npmjs.org/lowlight/-/lowlight-1.20.0.tgz",
-@@ -5955,17 +6145,6 @@
-         "react": "^16.5.1 || ^17.0.0 || ^18.0.0 || ^19.0.0"
-       }
-     },
--    "node_modules/lz-string": {
--      "version": "1.5.0",
--      "resolved": "https://registry.npmjs.org/lz-string/-/lz-string-1.5.0.tgz",
--      "integrity": "sha512-h5bgJWpxJNswbU7qCrV0tIKQCaS3blPDrqKWx+QxzuzL1zGUzij9XCWLrSLsJPu5t+eWA/ycetzYAO5IOMcWAQ==",
--      "dev": true,
--      "license": "MIT",
+@@ -5961,7 +6149,6 @@
+       "integrity": "sha512-h5bgJWpxJNswbU7qCrV0tIKQCaS3blPDrqKWx+QxzuzL1zGUzij9XCWLrSLsJPu5t+eWA/ycetzYAO5IOMcWAQ==",
+       "dev": true,
+       "license": "MIT",
 -      "peer": true,
--      "bin": {
--        "lz-string": "bin/bin.js"
--      }
--    },
-     "node_modules/magic-string": {
-       "version": "0.30.21",
-       "resolved": "https://registry.npmjs.org/magic-string/-/magic-string-0.30.21.tgz",
-@@ -6369,6 +6548,13 @@
+       "bin": {
+         "lz-string": "bin/bin.js"
+       }
+@@ -6369,6 +6556,13 @@
          "uuid": "^11.1.0 || ^12 || ^13 || ^14.0.0"
        }
      },
@@ -1507,7 +1172,7 @@ index cf69e108..8f37059b 100644
      "node_modules/micromark": {
        "version": "4.0.2",
        "resolved": "https://registry.npmjs.org/micromark/-/micromark-4.0.2.tgz",
-@@ -7075,6 +7261,79 @@
+@@ -7075,6 +7269,79 @@
          "node": ">=10"
        }
      },
@@ -1587,15 +1252,7 @@ index cf69e108..8f37059b 100644
      "node_modules/mlly": {
        "version": "1.8.0",
        "resolved": "https://registry.npmjs.org/mlly/-/mlly-1.8.0.tgz",
-@@ -7125,6 +7384,7 @@
-       "version": "3.3.12",
-       "resolved": "https://registry.npmjs.org/nanoid/-/nanoid-3.3.12.tgz",
-       "integrity": "sha512-ZB9RH/39qpq5Vu6Y+NmUaFhQR6pp+M2Xt76XBnEwDaGcVAqhlvxrl3B2bKS5D3NH3QR76v3aSrKaF/Kiy7lEtQ==",
-+      "dev": true,
-       "funding": [
-         {
-           "type": "github",
-@@ -7139,6 +7399,44 @@
+@@ -7139,6 +7406,44 @@
          "node": "^10 || ^12 || ^13.7 || ^14 || >=15.0.1"
        }
      },
@@ -1640,7 +1297,7 @@ index cf69e108..8f37059b 100644
      "node_modules/node-fetch": {
        "version": "2.6.9",
        "resolved": "https://registry.npmjs.org/node-fetch/-/node-fetch-2.6.9.tgz",
-@@ -7195,6 +7493,15 @@
+@@ -7195,6 +7500,15 @@
          "node": "^18.17.0 || >=20.5.0"
        }
      },
@@ -1656,22 +1313,7 @@ index cf69e108..8f37059b 100644
      "node_modules/obliterator": {
        "version": "2.0.5",
        "resolved": "https://registry.npmjs.org/obliterator/-/obliterator-2.0.5.tgz",
-@@ -7412,12 +7719,14 @@
-       "version": "1.1.1",
-       "resolved": "https://registry.npmjs.org/picocolors/-/picocolors-1.1.1.tgz",
-       "integrity": "sha512-xceH2snhtb5M9liqDsmEw56le376mTZkEX/jEb/RxNFyegNul7eNslCXP9FDj/Lcu0X8KEyMceP2ntpaHrDEVA==",
-+      "dev": true,
-       "license": "ISC"
-     },
-     "node_modules/picomatch": {
-       "version": "4.0.4",
-       "resolved": "https://registry.npmjs.org/picomatch/-/picomatch-4.0.4.tgz",
-       "integrity": "sha512-QP88BAKvMam/3NxH6vj2o21R6MjxZUAd6nlwAS/pnGvN9IVLocLHxGYIzFhg6fUQ+5th6P4dv4eW9jX3DSIj7A==",
-+      "dev": true,
-       "license": "MIT",
-       "engines": {
-         "node": ">=12"
-@@ -7500,10 +7809,23 @@
+@@ -7500,6 +7814,18 @@
          "points-on-curve": "0.2.0"
        }
      },
@@ -1690,40 +1332,31 @@ index cf69e108..8f37059b 100644
      "node_modules/postcss": {
        "version": "8.5.14",
        "resolved": "https://registry.npmjs.org/postcss/-/postcss-8.5.14.tgz",
-       "integrity": "sha512-SoSL4+OSEtR99LHFZQiJLkT59C5B1amGO1NzTwj7TT1qCUgUO6hxOvzkOYxD+vMrXBM3XJIKzokoERdqQq/Zmg==",
-+      "dev": true,
-       "funding": [
-         {
-           "type": "opencollective",
-@@ -7528,20 +7850,14 @@
+@@ -7528,13 +7854,22 @@
          "node": "^10 || ^12 || >=14"
        }
      },
--    "node_modules/pretty-format": {
--      "version": "27.5.1",
--      "resolved": "https://registry.npmjs.org/pretty-format/-/pretty-format-27.5.1.tgz",
--      "integrity": "sha512-Qb1gy5OrP5+zDf2Bvnzdl3jsTf1qXVMazbvCoKhtKqVs4/YK4ozX4gKQJJVyNe+cajNPn0KoC0MC3FUmaHWEmQ==",
--      "dev": true,
 +    "node_modules/preact": {
 +      "version": "10.29.1",
 +      "resolved": "https://registry.npmjs.org/preact/-/preact-10.29.1.tgz",
 +      "integrity": "sha512-gQCLc/vWroE8lIpleXtdJhTFDogTdZG9AjMUpVkDf2iTCNwYNWA+u16dL41TqUDJO4gm2IgrcMv3uTpjd4Pwmg==",
-       "license": "MIT",
--      "peer": true,
--      "dependencies": {
--        "ansi-regex": "^5.0.1",
--        "ansi-styles": "^5.0.0",
--        "react-is": "^17.0.1"
--      },
--      "engines": {
--        "node": "^10.13.0 || ^12.13.0 || ^14.15.0 || >=15.0.0"
++      "license": "MIT",
 +      "funding": {
 +        "type": "opencollective",
 +        "url": "https://opencollective.com/preact"
-       }
-     },
-     "node_modules/pretty-ms": {
-@@ -7569,6 +7885,23 @@
++      }
++    },
+     "node_modules/pretty-format": {
+       "version": "27.5.1",
+       "resolved": "https://registry.npmjs.org/pretty-format/-/pretty-format-27.5.1.tgz",
+       "integrity": "sha512-Qb1gy5OrP5+zDf2Bvnzdl3jsTf1qXVMazbvCoKhtKqVs4/YK4ozX4gKQJJVyNe+cajNPn0KoC0MC3FUmaHWEmQ==",
+       "dev": true,
+       "license": "MIT",
+-      "peer": true,
+       "dependencies": {
+         "ansi-regex": "^5.0.1",
+         "ansi-styles": "^5.0.0",
+@@ -7569,6 +7904,23 @@
          "node": ">=6"
        }
      },
@@ -1747,21 +1380,31 @@ index cf69e108..8f37059b 100644
      "node_modules/property-information": {
        "version": "7.1.0",
        "resolved": "https://registry.npmjs.org/property-information/-/property-information-7.1.0.tgz",
-@@ -7640,13 +7973,37 @@
+@@ -7624,6 +7976,7 @@
+       "resolved": "https://registry.npmjs.org/react/-/react-19.2.6.tgz",
+       "integrity": "sha512-sfWGGfavi0xr8Pg0sVsyHMAOziVYKgPLNrS7ig+ivMNb3wbCBw3KxtflsGBAwD3gYQlE/AEZsTLgToRrSCjb0Q==",
+       "license": "MIT",
++      "peer": true,
+       "engines": {
+         "node": ">=0.10.0"
+       }
+@@ -7633,6 +7986,7 @@
+       "resolved": "https://registry.npmjs.org/react-dom/-/react-dom-19.2.6.tgz",
+       "integrity": "sha512-0prMI+hvBbPjsWnxDLxlCGyM8PN6UuWjEUCYmZhO67xIV9Xasa/r/vDnq+Xyq4Lo27g8QSbO5YzARu0D1Sps3g==",
+       "license": "MIT",
++      "peer": true,
+       "dependencies": {
+         "scheduler": "^0.27.0"
+       },
+@@ -7640,13 +7994,44 @@
          "react": "^19.2.6"
        }
      },
--    "node_modules/react-is": {
--      "version": "17.0.2",
--      "resolved": "https://registry.npmjs.org/react-is/-/react-is-17.0.2.tgz",
--      "integrity": "sha512-w2GsyukL62IJnlaff/nRegPQR94C/XXamvMWmSHRJ4y7Ts/4ocGRmTHvOs8PSE6pB3dWOrD/nueuU5sduBsQ4w==",
--      "dev": true,
 +    "node_modules/react-force-graph-3d": {
 +      "version": "1.29.1",
 +      "resolved": "https://registry.npmjs.org/react-force-graph-3d/-/react-force-graph-3d-1.29.1.tgz",
 +      "integrity": "sha512-5Vp+PGpYnO+zLwgK2NvNqdXHvsWLrFzpDfJW1vUA1twjo9SPvXqfUYQrnRmAbD+K2tOxkZw1BkbH31l5b4TWHg==",
-       "license": "MIT",
--      "peer": true
++      "license": "MIT",
 +      "dependencies": {
 +        "3d-force-graph": "^1.79",
 +        "prop-types": "15",
@@ -1774,11 +1417,19 @@ index cf69e108..8f37059b 100644
 +        "react": "*"
 +      }
 +    },
+     "node_modules/react-is": {
+       "version": "17.0.2",
+       "resolved": "https://registry.npmjs.org/react-is/-/react-is-17.0.2.tgz",
+       "integrity": "sha512-w2GsyukL62IJnlaff/nRegPQR94C/XXamvMWmSHRJ4y7Ts/4ocGRmTHvOs8PSE6pB3dWOrD/nueuU5sduBsQ4w==",
+       "dev": true,
++      "license": "MIT"
++    },
 +    "node_modules/react-kapsule": {
 +      "version": "2.5.7",
 +      "resolved": "https://registry.npmjs.org/react-kapsule/-/react-kapsule-2.5.7.tgz",
 +      "integrity": "sha512-kifAF4ZPD77qZKc4CKLmozq6GY1sBzPEJTIJb0wWFK6HsePJatK3jXplZn2eeAt3x67CDozgi7/rO8fNQ/AL7A==",
-+      "license": "MIT",
+       "license": "MIT",
+-      "peer": true
 +      "dependencies": {
 +        "jerrypick": "^1.1.1"
 +      },
@@ -1791,23 +1442,15 @@ index cf69e108..8f37059b 100644
      },
      "node_modules/react-markdown": {
        "version": "10.1.0",
-@@ -7856,6 +8213,7 @@
-       "version": "1.0.0-rc.18",
-       "resolved": "https://registry.npmjs.org/rolldown/-/rolldown-1.0.0-rc.18.tgz",
-       "integrity": "sha512-phmyKBpuBdRYDf4hgyynGAYn/rDDe+iZXKVJ7WX5b1zQzpLkP5oJRPGsfJuHdzPMlyyEO/4sPW6yfSx2gf7lVg==",
-+      "dev": true,
+@@ -7993,6 +8378,7 @@
+       "resolved": "https://registry.npmjs.org/sigma/-/sigma-3.0.2.tgz",
+       "integrity": "sha512-/BUbeOwPGruiBOm0YQQ6ZMcLIZ6tf/W+Jcm7dxZyAX0tK3WP9/sq7/NAWBxPIxVahdGjCJoGwej0Gdrv0DxlQQ==",
        "license": "MIT",
++      "peer": true,
        "dependencies": {
-         "@oxc-project/types": "=0.128.0",
-@@ -7889,6 +8247,7 @@
-       "version": "1.0.0-rc.18",
-       "resolved": "https://registry.npmjs.org/@rolldown/pluginutils/-/pluginutils-1.0.0-rc.18.tgz",
-       "integrity": "sha512-CUY5Mnhe64xQBGZEEXQ5WyZwsc1JU3vAZLIxtrsBt3LO6UOb+C8GunVKqe9sT8NeWb4lqSaoJtp2xo6GxT1MNw==",
-+      "dev": true,
-       "license": "MIT"
-     },
-     "node_modules/roughjs": {
-@@ -8151,6 +8510,36 @@
+         "events": "^3.3.0",
+         "graphology-utils": "^2.5.2"
+@@ -8151,6 +8537,37 @@
          "node": ">=18"
        }
      },
@@ -1815,7 +1458,8 @@ index cf69e108..8f37059b 100644
 +      "version": "0.169.0",
 +      "resolved": "https://registry.npmjs.org/three/-/three-0.169.0.tgz",
 +      "integrity": "sha512-Ed906MA3dR4TS5riErd4QBsRGPcx+HBDX2O5yYE5GqJeFQTPU+M56Va/f/Oph9X7uZo3W3o4l2ZhBZ6f6qUv0w==",
-+      "license": "MIT"
++      "license": "MIT",
++      "peer": true
 +    },
 +    "node_modules/three-forcegraph": {
 +      "version": "1.43.4",
@@ -1844,7 +1488,7 @@ index cf69e108..8f37059b 100644
      "node_modules/time-span": {
        "version": "4.0.0",
        "resolved": "https://registry.npmjs.org/time-span/-/time-span-4.0.0.tgz",
-@@ -8174,6 +8563,12 @@
+@@ -8174,6 +8591,12 @@
        "dev": true,
        "license": "MIT"
      },
@@ -1857,15 +1501,15 @@ index cf69e108..8f37059b 100644
      "node_modules/tinyexec": {
        "version": "1.0.2",
        "resolved": "https://registry.npmjs.org/tinyexec/-/tinyexec-1.0.2.tgz",
-@@ -8187,6 +8582,7 @@
-       "version": "0.2.16",
-       "resolved": "https://registry.npmjs.org/tinyglobby/-/tinyglobby-0.2.16.tgz",
-       "integrity": "sha512-pn99VhoACYR8nFHhxqix+uvsbXineAasWm5ojXoN8xEwK5Kd3/TrhNn1wByuD52UxWRLy8pu+kRMniEi6Eq9Zg==",
-+      "dev": true,
-       "license": "MIT",
-       "dependencies": {
-         "fdir": "^6.5.0",
-@@ -8411,6 +8807,15 @@
+@@ -8382,6 +8805,7 @@
+       "integrity": "sha512-jl1vZzPDinLr9eUt3J/t7V6FgNEw9QjvBPdysz9KfQDD41fQrC2Y4vKQdiaUpFT4bXlb1RHhLpp8wtm6M5TgSw==",
+       "dev": true,
+       "license": "Apache-2.0",
++      "peer": true,
+       "bin": {
+         "tsc": "bin/tsc",
+         "tsserver": "bin/tsserver"
+@@ -8411,6 +8835,15 @@
        "integrity": "sha512-yDJTmhydvl5lJzBmy/hyOAA0d+aqCBuwl818haVdYCRrWV84o7YyeVm4QlVHStqNrrJSTb6jKuFAVqAFsr+K3Q==",
        "license": "MIT"
      },
@@ -1881,23 +1525,30 @@ index cf69e108..8f37059b 100644
      "node_modules/undici": {
        "version": "5.28.4",
        "resolved": "https://registry.npmjs.org/undici/-/undici-5.28.4.tgz",
-@@ -8428,7 +8833,7 @@
-       "version": "7.19.2",
-       "resolved": "https://registry.npmjs.org/undici-types/-/undici-types-7.19.2.tgz",
-       "integrity": "sha512-qYVnV5OEm2AW8cJMCpdV20CDyaN3g0AjDlOGf1OW4iaDEx8MwdtChUp4zu4H0VP3nDRF/8RKWH+IPp9uW0YGZg==",
--      "devOptional": true,
-+      "dev": true,
-       "license": "MIT"
-     },
-     "node_modules/unified": {
-@@ -8611,6 +9016,7 @@
-       "version": "8.0.11",
+@@ -8612,6 +9045,7 @@
        "resolved": "https://registry.npmjs.org/vite/-/vite-8.0.11.tgz",
        "integrity": "sha512-Jz1mxtUBR5xTT65VOdJZUUeoyLtqljmFkiUXhPTLZka3RDc9vpi/xXkyrnsdRcm2lIi3l3GPMnAidTsEGIj3Ow==",
-+      "dev": true,
        "license": "MIT",
++      "peer": true,
        "dependencies": {
          "lightningcss": "^1.32.0",
+         "picomatch": "^4.0.4",
+@@ -8690,6 +9124,7 @@
+       "integrity": "sha512-9Xx1v3/ih3m9hN+SbfkUyy0JAs72ap3r7joc87XL6jwF0jGg6mFBvQ1SrwaX+h8BlkX6Hz9shdd1uo6AF+ZGpg==",
+       "dev": true,
+       "license": "MIT",
++      "peer": true,
+       "dependencies": {
+         "@vitest/expect": "4.1.5",
+         "@vitest/mocker": "4.1.5",
+@@ -8907,6 +9342,7 @@
+       "resolved": "https://registry.npmjs.org/zod/-/zod-3.25.76.tgz",
+       "integrity": "sha512-gzUt/qt81nXsFGKIFcC3YnfEAx5NkunCfnDlvuBSSFS02bcXu4Lmea0AFIUwbLWxWPx3d9p8S5QoaujKcNQxcQ==",
+       "license": "MIT",
++      "peer": true,
+       "funding": {
+         "url": "https://github.com/sponsors/colinhacks"
+       }
 diff --git a/gitnexus-web/package.json b/gitnexus-web/package.json
 index 211bb65c..49a1c7ae 100644
 --- a/gitnexus-web/package.json
@@ -2517,7 +2168,7 @@ index 98c20c68..50a414e4 100644
            <div className="mt-6 border-t border-border-subtle pt-4">
              <h3 className="mb-3 text-xs font-medium tracking-wide text-text-secondary uppercase">
 diff --git a/gitnexus-web/src/components/GraphCanvas.tsx b/gitnexus-web/src/components/GraphCanvas.tsx
-index e34fd434..cd903ee1 100644
+index e34fd434..5e04191d 100644
 --- a/gitnexus-web/src/components/GraphCanvas.tsx
 +++ b/gitnexus-web/src/components/GraphCanvas.tsx
 @@ -1,4 +1,4 @@
@@ -2921,8 +2572,20 @@ index e34fd434..cd903ee1 100644
    // Expose focusNode to parent via ref
    useImperativeHandle(
      ref,
-@@ -170,6 +494,8 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -168,8 +492,20 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+     [focusNode, graph, nodeById, setSelectedNode, openCodePanel],
+   );
  
++  // Is the active project a governance lens (family = META|DOMAIN, served by the
++  // gateway)? Memoised to a stable boolean so the graph re-mounts exactly once
++  // when availableRepos loads (flipping false→true) — availableRepos is not in the
++  // mount effect's deps otherwise, so without this the lens would fall through to
++  // FA2 whenever its /api/repos entry arrives after its /api/graph.
++  const isLensProject = useMemo(
++    () => Boolean(availableRepos.find((r) => r.name === projectName)?.family),
++    [availableRepos, projectName],
++  );
++
    // Update Sigma graph when KnowledgeGraph changes
    useEffect(() => {
 +    if (groupGraphActive) return;
@@ -2930,7 +2593,7 @@ index e34fd434..cd903ee1 100644
      if (!graph) return;
  
      // Build communityMemberships map from MEMBER_OF relationships
-@@ -189,8 +515,63 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -189,8 +525,68 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
      });
  
      const sigmaGraph = knowledgeGraphToGraphology(graph, communityMemberships);
@@ -2938,8 +2601,13 @@ index e34fd434..cd903ee1 100644
 -  }, [graph, nodeById, setSigmaGraph]);
 +    // projectName already encodes the snapshot suffix (e.g.
 +    // `hmm_studio@c2ac699`) so it doubles as the layout cache key.
-+    setSigmaGraph(sigmaGraph, { cacheKey: projectName || undefined });
-+  }, [graph, nodeById, setSigmaGraph, projectName, groupGraphActive]);
++    setSigmaGraph(sigmaGraph, {
++      cacheKey: projectName || undefined,
++      // Governance lenses (family = META|DOMAIN) are tiny graph-of-graphs — lay
++      // them on a deterministic circle; ordinary repos keep FA2 + their cache.
++      circular: isLensProject,
++    });
++  }, [graph, nodeById, setSigmaGraph, projectName, groupGraphActive, isLensProject]);
 +
 +  // Group graph — load merged multi-repo graph when groupGraphActive flips on
 +  useEffect(() => {
@@ -2996,7 +2664,7 @@ index e34fd434..cd903ee1 100644
  
    // Update node visibility when filters change
    useEffect(() => {
-@@ -205,6 +586,198 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -205,6 +601,198 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
      // eslint-disable-next-line react-hooks/exhaustive-deps -- sigmaRef identity never changes
    }, [visibleLabels, depthFilter, appSelectedNode]);
  
@@ -3195,7 +2863,7 @@ index e34fd434..cd903ee1 100644
    // Sync app selected node with sigma
    useEffect(() => {
      if (appSelectedNode) {
-@@ -249,6 +822,174 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -249,6 +837,174 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
          className="sigma-container h-full w-full cursor-grab active:cursor-grabbing"
        />
  
@@ -3370,7 +3038,7 @@ index e34fd434..cd903ee1 100644
        {/* Hovered node tooltip - only show when NOT selected */}
        {hoveredNodeName && !sigmaSelectedNode && (
          <div className="pointer-events-none absolute top-4 left-1/2 z-20 -translate-x-1/2 animate-fade-in rounded-lg border border-border-subtle bg-elevated/95 px-3 py-1.5 backdrop-blur-sm">
-@@ -350,8 +1091,292 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -350,8 +1106,292 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
        {/* Query FAB */}
        <QueryFAB />
  
@@ -3665,7 +3333,7 @@ index e34fd434..cd903ee1 100644
          <button
            onClick={handleToggleAIHighlights}
            className={
-@@ -369,6 +1394,67 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -369,6 +1409,67 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
            )}
          </button>
        </div>
@@ -3734,7 +3402,7 @@ index e34fd434..cd903ee1 100644
    );
  });
 diff --git a/gitnexus-web/src/components/Header.tsx b/gitnexus-web/src/components/Header.tsx
-index 3061a2e4..86bddbfa 100644
+index 3061a2e4..431fa053 100644
 --- a/gitnexus-web/src/components/Header.tsx
 +++ b/gitnexus-web/src/components/Header.tsx
 @@ -1,4 +1,5 @@
@@ -3798,7 +3466,7 @@ index 3061a2e4..86bddbfa 100644
    const repoDropdownRef = useRef<HTMLDivElement>(null);
    const [isSearchOpen, setIsSearchOpen] = useState(false);
    const [selectedIndex, setSelectedIndex] = useState(0);
-@@ -89,6 +114,28 @@ export const Header = ({
+@@ -89,6 +114,38 @@ export const Header = ({
        .slice(0, 10); // Limit to 10 results
    }, [graph, searchQuery]);
  
@@ -3824,10 +3492,20 @@ index 3061a2e4..86bddbfa 100644
 +    return [...groups.entries()].sort(([a], [b]) => rank(a) - rank(b) || a.localeCompare(b));
 +  }, [availableRepos]);
 +
++  // Governance lenses (family = META | DOMAIN) are graph-of-graphs served by the
++  // sovereign gateway with NO git history, so /snapshots?repo=<lens> hits the SPA
++  // fallback and returns HTML → r.json() throws on '<'. Skip the snapshots fetch +
++  // UI for them (ordinary repos have no family, so their behaviour is unchanged).
++  const activeRepo = availableRepos.find((r) => r.name === projectName);
++  // Until availableRepos has loaded we cannot tell a lens from a real repo — treat
++  // "not loaded" as possibly-a-lens so the snapshots panel stays suppressed and the
++  // /snapshots HTML→JSON error can't flash during the initial-load race.
++  const isGovernanceLens = availableRepos.length === 0 || Boolean(activeRepo?.family);
++
    // Handle clicking outside search or repo dropdown to close them
    useEffect(() => {
      const handleClickOutside = (e: MouseEvent) => {
-@@ -111,6 +158,24 @@ export const Header = ({
+@@ -111,6 +168,24 @@ export const Header = ({
      };
    }, []);
  
@@ -3852,7 +3530,7 @@ index 3061a2e4..86bddbfa 100644
    // Keyboard shortcut (Cmd+K / Ctrl+K)
    useEffect(() => {
      const handleKeyDown = (e: KeyboardEvent) => {
-@@ -204,13 +269,18 @@ export const Header = ({
+@@ -204,13 +279,18 @@ export const Header = ({
                    </div>
                  ) : (
                    <>
@@ -3877,7 +3555,7 @@ index 3061a2e4..86bddbfa 100644
                            <div
                              key={repo.name}
                              className={`group flex items-center gap-2 px-4 py-2 transition-colors ${
-@@ -236,6 +306,102 @@ export const Header = ({
+@@ -236,6 +316,102 @@ export const Header = ({
                                  </span>
                                )}
                              </button>
@@ -3980,7 +3658,7 @@ index 3061a2e4..86bddbfa 100644
                              {/* Re-analyze */}
                              <button
                                onClick={async (e) => {
-@@ -278,7 +444,7 @@ export const Header = ({
+@@ -278,7 +454,7 @@ export const Header = ({
                                className={`cursor-pointer rounded p-1 transition-all ${
                                  reanalyzing === repo.name
                                    ? 'text-accent'
@@ -3989,7 +3667,7 @@ index 3061a2e4..86bddbfa 100644
                                }`}
                                title={
                                  reanalyzing === repo.name
-@@ -316,16 +482,42 @@ export const Header = ({
+@@ -316,16 +492,42 @@ export const Header = ({
                                    console.error('Failed to delete repo:', err);
                                  }
                                }}
@@ -4012,7 +3690,7 @@ index 3061a2e4..86bddbfa 100644
 +                        entry from the main list (filter above) and show
 +                        them here in a dedicated, chronologically-sorted
 +                        section. */}
-+                    {projectName && !projectName.includes('@') && (
++                    {projectName && !projectName.includes('@') && !isGovernanceLens && (
 +                      <div className="border-t border-border-subtle">
 +                        <SnapshotsPanel
 +                          repoName={projectName}
@@ -4033,7 +3711,7 @@ index 3061a2e4..86bddbfa 100644
                      {/* Re-analyze progress bar */}
                      {reanalyzing && reanalyzeProgress && (
                        <div className="border-t border-border-subtle bg-accent/5 px-4 py-2.5">
-@@ -458,6 +650,34 @@ export const Header = ({
+@@ -458,6 +660,34 @@ export const Header = ({
          <EmbeddingStatus />
  
          {/* Icon buttons */}
@@ -4996,10 +4674,20 @@ index 5781d262..ad64bcfa 100644
        {phase === 'error' && (
          <div className="flex items-center gap-3">
 diff --git a/gitnexus-web/src/config/ui-constants.ts b/gitnexus-web/src/config/ui-constants.ts
-index c0a2b488..3a6d31f9 100644
+index c0a2b488..1b1ba3eb 100644
 --- a/gitnexus-web/src/config/ui-constants.ts
 +++ b/gitnexus-web/src/config/ui-constants.ts
-@@ -9,3 +9,10 @@ export const DEFAULT_OPENROUTER_BASE_URL = 'https://openrouter.ai/api/v1';
+@@ -2,10 +2,19 @@
+ export const ERROR_RESET_DELAY_MS = 3000;
+ export const BACKEND_URL_DEBOUNCE_MS = 500;
+ 
+-export const DEFAULT_BACKEND_URL = 'http://localhost:4747';
++// LOCAL-DEV ONLY (do NOT commit / do NOT rebuild the container with this): same-origin
++// so /api/* goes through the Vite dev proxy for LENS mode. Docker keeps :4747.
++export const DEFAULT_BACKEND_URL = 'http://localhost:5173';
+ export const DEFAULT_OLLAMA_BASE_URL = 'http://localhost:11434';
+ export const DEFAULT_OPENROUTER_BASE_URL = 'https://openrouter.ai/api/v1';
+ 
  /** Minimum Node.js version required by the gitnexus CLI (injected by Vite from package.json engines). */
  declare const __REQUIRED_NODE_VERSION__: string;
  export const REQUIRED_NODE_VERSION = __REQUIRED_NODE_VERSION__;
@@ -7421,7 +7109,7 @@ index 25c57767..310692db 100644
  
    return <AppStateContext.Provider value={value}>{children}</AppStateContext.Provider>;
 diff --git a/gitnexus-web/src/hooks/useSigma.ts b/gitnexus-web/src/hooks/useSigma.ts
-index 461de0f5..3e0fe078 100644
+index 461de0f5..9fae408d 100644
 --- a/gitnexus-web/src/hooks/useSigma.ts
 +++ b/gitnexus-web/src/hooks/useSigma.ts
 @@ -8,6 +8,34 @@ import EdgeCurveProgram from '@sigma/edge-curve';
@@ -7618,7 +7306,106 @@ index 461de0f5..3e0fe078 100644
  // Noverlap for final cleanup - minimal since it starts with good positions
  const NOVERLAP_SETTINGS = {
    maxIterations: 20, // Reduced - less cleanup needed
-@@ -138,6 +302,39 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
+@@ -128,16 +292,138 @@ const getLayoutDuration = (nodeCount: number): number => {
+   return 20000; // 20s for small graphs
+ };
+ 
++/**
++ * Fit the camera so the WHOLE current (visible) node set frames the viewport —
++ * for ANY node count. Unlike `camera.animatedReset()`, which snaps to the fixed
++ * default {x:0.5, y:0.5, ratio:1, angle:0} and only *looks* fitted when the
++ * graph's framed aspect matches the viewport, this measures the nodes' rendered
++ * bounding box in viewport pixels and derives the exact ratio + center — so a
++ * tiny/asymmetric FA2 graph (e.g. the 13-node master inter_graph) no longer
++ * renders as a small, off-centre blob. Reimplements @sigma/utils.fitViewportToNodes
++ * (not vendored here) from Sigma-core primitives. Call AFTER refresh().
++ */
++const fitCameraToNodes = (
++  sigma: Sigma,
++  opts: { padding?: number; duration?: number } = {},
++): void => {
++  const { padding = 0.1, duration = 500 } = opts;
++
++  // Defer one frame. `getNodeDisplayData` is only populated after Sigma's next
++  // render pass, which refresh() schedules (rAF) — measuring synchronously right
++  // after setGraph()/refresh() yields no data, so the fit would silently no-op
++  // and leave the camera at its default (small, off-centre). Running inside rAF
++  // guarantees the display coords exist for the mount-time fits too.
++  requestAnimationFrame(() => {
++    const graph = sigma.getGraph();
++    if (graph.order === 0) return;
++
++    let minX = Infinity;
++    let maxX = -Infinity;
++    let minY = Infinity;
++    let maxY = -Infinity;
++    graph.forEachNode((node) => {
++      const data = sigma.getNodeDisplayData(node);
++      if (!data || data.hidden) return; // ignore filtered/hidden nodes
++      minX = Math.min(minX, data.x);
++      maxX = Math.max(maxX, data.x);
++      minY = Math.min(minY, data.y);
++      maxY = Math.max(maxY, data.y);
++    });
++    if (!Number.isFinite(minX) || !Number.isFinite(minY)) return; // no visible nodes
++
++    const camera = sigma.getCamera();
++    // Bounding-box corners → viewport pixels (under the CURRENT camera state).
++    const minVp = sigma.framedGraphToViewport({ x: minX, y: minY });
++    const maxVp = sigma.framedGraphToViewport({ x: maxX, y: maxY });
++    const bboxW = Math.abs(maxVp.x - minVp.x);
++    const bboxH = Math.abs(maxVp.y - minVp.y);
++    const { width, height } = sigma.getDimensions();
++
++    // Bbox centre (viewport px) → framed graph space to drive camera x/y.
++    const center = sigma.viewportToFramedGraph({
++      x: (minVp.x + maxVp.x) / 2,
++      y: (minVp.y + maxVp.y) / 2,
++    });
++
++    // Ratio that makes the bbox fill the viewport (larger axis wins so both fit),
++    // then a (1 + padding) breathing margin. `|| 1` guards the single-node /
++    // zero-extent case (keep current zoom instead of ratio 0).
++    const fitRatio = Math.max(bboxW / width, bboxH / height) || 1;
++    const ratio = camera.getBoundedRatio(fitRatio * (1 + padding) * camera.ratio);
++
++    camera.animate({ x: center.x, y: center.y, ratio, angle: 0 }, { duration });
++  });
++};
++
++/**
++ * Deterministic circular layout for tiny graphs. FA2 (a worker tuned for large
++ * organic graphs) flings weakly-connected nodes into outliers that dominate the
++ * bounding box and squash the rest into a small, unreadable cluster (observed on
++ * the 13-node master inter_graph). A circle spreads N nodes evenly — no outlier,
++ * a square centred bbox that autoRescale/fit frames to fill the viewport.
++ */
++const assignCircularLayout = (
++  graph: Graph<SigmaNodeAttributes, SigmaEdgeAttributes>,
++): void => {
++  const n = graph.order;
++  if (n === 0) return;
++  // Radius grows with N so node spacing stays roughly constant.
++  const radius = Math.max(1, n / (2 * Math.PI));
++  let i = 0;
++  graph.forEachNode((node) => {
++    const angle = (2 * Math.PI * i) / n;
++    graph.setNodeAttribute(node, 'x', radius * Math.cos(angle));
++    graph.setNodeAttribute(node, 'y', radius * Math.sin(angle));
++    i += 1;
++  });
++};
++
+ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
+   const containerRef = useRef<HTMLDivElement>(null);
+   const sigmaRef = useRef<Sigma | null>(null);
+   const graphRef = useRef<Graph<SigmaNodeAttributes, SigmaEdgeAttributes> | null>(null);
+   const layoutRef = useRef<FA2Layout | null>(null);
++  // True while the mounted graph uses the deterministic circular layout (tiny
++  // governance lens) so "Recompute layout" re-circles instead of FA2-ing it.
++  const circularActiveRef = useRef(false);
+   const selectedNodeRef = useRef<string | null>(null);
+   const highlightedRef = useRef<Set<string>>(new Set());
    const blastRadiusRef = useRef<Set<string>>(new Set());
    const animatedNodesRef = useRef<Map<string, NodeAnimation>>(new Map());
    const visibleEdgeTypesRef = useRef<EdgeType[] | null>(null);
@@ -7658,7 +7445,7 @@ index 461de0f5..3e0fe078 100644
    const layoutTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
    const animationFrameRef = useRef<number | null>(null);
    const [isLayoutRunning, setIsLayoutRunning] = useState(false);
-@@ -148,12 +345,20 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
+@@ -148,12 +434,20 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
      blastRadiusRef.current = options.blastRadiusNodeIds || new Set();
      animatedNodesRef.current = options.animatedNodes || new Map();
      visibleEdgeTypesRef.current = options.visibleEdgeTypes || null;
@@ -7679,7 +7466,7 @@ index 461de0f5..3e0fe078 100644
    ]);
  
    // Animation loop for node effects
-@@ -222,6 +427,13 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
+@@ -222,6 +516,13 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
          curved: EdgeCurveProgram,
        },
  
@@ -7693,7 +7480,7 @@ index 461de0f5..3e0fe078 100644
        // Custom hover renderer - dark background instead of white
        defaultDrawNodeHover: (context, data, settings) => {
          const label = data.label;
-@@ -283,6 +495,87 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
+@@ -283,6 +584,87 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
            return res;
          }
  
@@ -7781,7 +7568,7 @@ index 461de0f5..3e0fe078 100644
          const currentSelected = selectedNodeRef.current;
          const highlighted = highlightedRef.current;
          const blastRadius = blastRadiusRef.current;
-@@ -393,6 +686,17 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
+@@ -393,6 +775,17 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
        edgeReducer: (edge, data) => {
          const res = { ...data };
  
@@ -7799,7 +7586,7 @@ index 461de0f5..3e0fe078 100644
          // Check edge type visibility first
          const visibleTypes = visibleEdgeTypesRef.current;
          if (visibleTypes && data.relationType) {
-@@ -402,6 +706,23 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
+@@ -402,6 +795,23 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
            }
          }
  
@@ -7823,7 +7610,7 @@ index 461de0f5..3e0fe078 100644
          const currentSelected = selectedNodeRef.current;
          const highlighted = highlightedRef.current;
          const blastRadius = blastRadiusRef.current;
-@@ -500,50 +821,71 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
+@@ -500,50 +910,70 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
      };
    }, []);
  
@@ -7895,11 +7682,10 @@ index 461de0f5..3e0fe078 100644
 +          // Light noverlap cleanup
 +          noverlap.assign(graph, NOVERLAP_SETTINGS);
 +          sigmaRef.current?.refresh();
-+          // Re-fit the camera to the settled force-layout positions (parity with
-+          // the cached-position paths above) so the graph fills the viewport
-+          // instead of rendering off-centre. Ported from f8c9eb91 (which targeted
-+          // a later `stopAllLayouts`) to the v1.6.5 FA2 convergence path.
-+          sigmaRef.current?.getCamera().animatedReset({ duration: 600 });
++          // Fit the camera to the settled FA2 node bounding box so ANY node count
++          // fills the viewport (a fixed animatedReset left small/asymmetric graphs
++          // — e.g. the 13-node master inter_graph — tiny + off-centre).
++          if (sigmaRef.current) fitCameraToNodes(sigmaRef.current, { duration: 600 });
  
 -        // Light noverlap cleanup
 -        noverlap.assign(graph, NOVERLAP_SETTINGS);
@@ -7924,12 +7710,12 @@ index 461de0f5..3e0fe078 100644
 -    (newGraph: Graph<SigmaNodeAttributes, SigmaEdgeAttributes>) => {
 +    (
 +      newGraph: Graph<SigmaNodeAttributes, SigmaEdgeAttributes>,
-+      opts: { cacheKey?: string; skipLayout?: boolean } = {},
++      opts: { cacheKey?: string; skipLayout?: boolean; circular?: boolean } = {},
 +    ) => {
        const sigma = sigmaRef.current;
        if (!sigma) return;
  
-@@ -555,17 +897,55 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
+@@ -555,17 +985,96 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
          clearTimeout(layoutTimeoutRef.current);
          layoutTimeoutRef.current = null;
        }
@@ -7937,17 +7723,48 @@ index 461de0f5..3e0fe078 100644
 +      // The paths that skip runLayout (skipLayout / cache-restore) leave it false;
 +      // runLayout below re-sets it true when FA2 actually starts.
 +      setIsLayoutRunning(false);
++      circularActiveRef.current = false;
  
        graphRef.current = newGraph;
        sigma.setGraph(newGraph);
        setSelectedNode(null);
  
 -      runLayout(newGraph);
+-      sigma.getCamera().animatedReset({ duration: 500 });
++      // Label visibility is scoped to graph size. Sigma is initialised with
++      // declutter-tuned label settings (labelRenderedSizeThreshold 8, labelDensity
++      // 0.1) that keep the ~1009-node lens readable, but those same thresholds hide
++      // EVERY label on a small governance graph (the 13-node master inter_graph):
++      // a fit-to-viewport camera renders its nodes below the 8px threshold and
++      // density 0.1 caps one label per grid cell. For small graphs drop the size
++      // threshold to 0 and raise the density so every node keeps its label; restore
++      // the declutter values for large graphs (lens parity, no flooding).
++      const SMALL_GRAPH_LABEL_LIMIT = 60;
++      const isSmallGraph = newGraph.order <= SMALL_GRAPH_LABEL_LIMIT;
++      sigma.setSetting('labelRenderedSizeThreshold', isSmallGraph ? 0 : 8);
++      sigma.setSetting('labelDensity', isSmallGraph ? 5 : 0.1);
++
 +      // P3.1: hierarchical/circular layouts carry FINAL positions from the adapter —
 +      // use them as-is (no FA2, no layout cache).
 +      if (opts.skipLayout) {
 +        sigma.refresh();
-+        sigma.getCamera().animatedReset({ duration: 200 });
++        fitCameraToNodes(sigma, { duration: 200 });
++        return;
++      }
++
++      // Tiny governance lenses (e.g. the 13-node master inter_graph): skip FA2 and
++      // lay the nodes on a deterministic circle. FA2 on a handful of nodes flings a
++      // weakly-connected one into an outlier that dominates the bbox and squashes
++      // the rest; a circle spreads them evenly and fills the viewport. Gated on the
++      // caller's `circular` opt (set only for governance lenses) so ordinary small
++      // real repos keep FA2 + their position cache; skipLayout (adapter-provided
++      // non-force positions) is honoured above and wins.
++      const SMALL_GRAPH_CIRCULAR_LIMIT = 30;
++      if (opts.circular && newGraph.order > 0 && newGraph.order <= SMALL_GRAPH_CIRCULAR_LIMIT) {
++        assignCircularLayout(newGraph);
++        circularActiveRef.current = true;
++        sigma.refresh();
++        fitCameraToNodes(sigma, { duration: 200 });
 +        return;
 +      }
 +
@@ -7959,14 +7776,15 @@ index 461de0f5..3e0fe078 100644
 +          const { applied } = applyLayoutToGraph(cached, newGraph);
 +          if (applied / newGraph.order >= 0.8) {
 +            sigma.refresh();
-+            sigma.getCamera().animatedReset({ duration: 200 });
++            fitCameraToNodes(sigma, { duration: 200 });
 +            return;
 +          }
 +        }
 +      }
 +
 +      runLayout(newGraph, { cacheKey: opts.cacheKey });
-       sigma.getCamera().animatedReset({ duration: 500 });
++      // Initial frame; runLayout re-fits on FA2 convergence.
++      fitCameraToNodes(sigma, { duration: 500 });
      },
      [runLayout, setSelectedNode],
    );
@@ -7976,7 +7794,17 @@ index 461de0f5..3e0fe078 100644
 +  const recomputeLayout = useCallback(
 +    (cacheKey?: string) => {
 +      const graph = graphRef.current;
++      const sigma = sigmaRef.current;
 +      if (!graph || graph.order === 0) return;
++      // A circular (tiny-lens) graph has no FA2 to recompute — re-lay the
++      // deterministic circle so the button doesn't fling it into the FA2 outlier
++      // the circle exists to avoid.
++      if (circularActiveRef.current && sigma) {
++        assignCircularLayout(graph);
++        sigma.refresh();
++        fitCameraToNodes(sigma, { duration: 300 });
++        return;
++      }
 +      if (cacheKey) clearLayout(cacheKey);
 +      runLayout(graph, { cacheKey });
 +    },
@@ -7986,7 +7814,17 @@ index 461de0f5..3e0fe078 100644
    const focusNode = useCallback((nodeId: string) => {
      const sigma = sigmaRef.current;
      const graph = graphRef.current;
-@@ -629,10 +1009,313 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
+@@ -596,7 +1105,8 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
+   }, []);
+ 
+   const resetZoom = useCallback(() => {
+-    sigmaRef.current?.getCamera().animatedReset({ duration: 300 });
++    // "Fit to Screen" toolbar button — same true fit as the mount paths.
++    if (sigmaRef.current) fitCameraToNodes(sigmaRef.current, { duration: 300 });
+     setSelectedNode(null);
+   }, [setSelectedNode]);
+ 
+@@ -629,10 +1139,313 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
      sigmaRef.current?.refresh();
    }, []);
  
@@ -8300,7 +8138,7 @@ index 461de0f5..3e0fe078 100644
      zoomIn,
      zoomOut,
      resetZoom,
-@@ -643,5 +1326,18 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
+@@ -643,5 +1456,18 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
      selectedNode,
      setSelectedNode,
      refreshHighlights,
@@ -8526,6 +8364,23 @@ index e887e390..82eb4c45 100644
  const parseNdjsonGraphResponse = async (
    response: Response,
    onProgress?: (downloaded: number, total: number | null) => void,
+diff --git a/gitnexus-web/vite.config.ts b/gitnexus-web/vite.config.ts
+index a62b9e58..46f7be42 100644
+--- a/gitnexus-web/vite.config.ts
++++ b/gitnexus-web/vite.config.ts
+@@ -31,5 +31,12 @@ export default defineConfig({
+     fs: {
+       allow: ['..'],
+     },
++    // LOCAL-DEV ONLY (do NOT commit to the fork). LENS mode: /api/graph + /api/repo
++    // → sovereign gateway :4750 (renders inter_graph/sigil/workflow), rest → :4747.
++    proxy: {
++      '/api/graph': { target: 'http://localhost:4750', changeOrigin: true },
++      '/api/repo': { target: 'http://localhost:4750', changeOrigin: true },
++      '/api': { target: 'http://localhost:4747', changeOrigin: true },
++    },
+   },
+ });
 diff --git a/gitnexus/src/core/wiki/generator.ts b/gitnexus/src/core/wiki/generator.ts
 index dc9c2e74..7e891e85 100644
 --- a/gitnexus/src/core/wiki/generator.ts
