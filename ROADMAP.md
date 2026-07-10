@@ -1,7 +1,10 @@
 # GitNexus — Roadmap
 
 État vivant des fonctionnalités déjà livrées et des prochaines pistes.
-Dernière mise à jour : 2026-06-14 (bump upstream v1.6.5 → v1.6.7 + cohabitation diff resync — v1.6.6 mega-release ~190 PRs (Scope-resolution RFC #909, Linux-kernel-scale parallel indexing, cross-service API graphs, legacy resolution engine deleted, web Tree/Circles views, .gitnexusrc), v1.6.7 patch (vendored tree-sitter prebuilds, MCP list_repos pagination, C++ inheritance-lattice fixes, taint/PDG substrate M0). Patches lbug-staleness + incremental-dump réappliqués. Avant : Multi-repo unified graph livré (#65) — `GET /graph/merged?group=` fusionne les graphes per-repo au niveau fichier + arêtes cross-repo des contrats ; groupe synchronisé via `gitnexus group` (endpoints worker + `docker-server-group.mjs`) ; mode "Group graph" dans le canvas (`GroupGraphPanel` + `group-graph-adapter.ts`). **4/8 items enterprise couverts** (Code Wiki, Auto-reindexing, Regression forensics, Multi-repo support ✅). Avant : Regression forensics polish (#62) — coupling 6e métrique watchable/auto-forensiquable + "Locate regression" dans EntropyCommitTimeline. Aussi : Commit-level time-travel A+B+C COMPLET — mode Commits timeline (#60) + baseline auto-seed caché/promote (#61) + pré-chauffage des diffs (#63). Avant : "Auto" regression forensics (#59), Regression Phase 2 (#58), MVP (#57), Auto-reindexing (#56), Code Wiki UI (#55).).
+Dernière mise à jour : **2026-07-10** — voir « Update 2026-07-10 — Cap re-séquencé » ci-dessous
+(⚠️ le bump v1.6.7 décrit dans l'ancienne ligne de date a été **reverté** le 2026-07-07 après
+l'incident de gutting des patches ; sources+patches = v1.6.5, image CLI = 1.6.7, réconciliation
+planifiée — phase (i) ci-dessous). Ancienne entrée : 2026-06-14 (bump upstream v1.6.5 → v1.6.7 + cohabitation diff resync — v1.6.6 mega-release ~190 PRs (Scope-resolution RFC #909, Linux-kernel-scale parallel indexing, cross-service API graphs, legacy resolution engine deleted, web Tree/Circles views, .gitnexusrc), v1.6.7 patch (vendored tree-sitter prebuilds, MCP list_repos pagination, C++ inheritance-lattice fixes, taint/PDG substrate M0). Patches lbug-staleness + incremental-dump réappliqués. Avant : Multi-repo unified graph livré (#65) — `GET /graph/merged?group=` fusionne les graphes per-repo au niveau fichier + arêtes cross-repo des contrats ; groupe synchronisé via `gitnexus group` (endpoints worker + `docker-server-group.mjs`) ; mode "Group graph" dans le canvas (`GroupGraphPanel` + `group-graph-adapter.ts`). **4/8 items enterprise couverts** (Code Wiki, Auto-reindexing, Regression forensics, Multi-repo support ✅). Avant : Regression forensics polish (#62) — coupling 6e métrique watchable/auto-forensiquable + "Locate regression" dans EntropyCommitTimeline. Aussi : Commit-level time-travel A+B+C COMPLET — mode Commits timeline (#60) + baseline auto-seed caché/promote (#61) + pré-chauffage des diffs (#63). Avant : "Auto" regression forensics (#59), Regression Phase 2 (#58), MVP (#57), Auto-reindexing (#56), Code Wiki UI (#55).).
 
 > 📋 **Voir aussi** [INVENTORY.md](INVENTORY.md) — état des lieux complet :
 > features upstream + nos ajouts + distance avec upstream. À utiliser
@@ -11,6 +14,92 @@ L'objectif global : transformer GitNexus en **outil d'archéologie + de
 diagnostic structurel** pour un écosystème de dépôts, pas juste un
 visualiseur de code. Chaque ligne ici décrit une promesse précise — pas
 un nom marketing — et son premier pas concret.
+
+---
+
+## Update 2026-07-10 — Cap re-séquencé (audit + brainstorm panel, critiques adversariales intégrées)
+
+Séquencement décidé : **(i) Consolidation → (ii) Chantiers en vol → (iii) Tier 3 trié**. Rien n'est
+supprimé — les items non retenus sont **gelés avec trigger de dégel écrit**. Licence
+PolyForm-Noncommercial-1.0.0 = filtre dur : usage interne/personnel, jamais de commercialisation telle
+quelle, pas de publication marketplace/.vsix.
+
+### Phase (i) — Consolidation (le harnais d'abord, la version ensuite)
+
+0. **Probes jour-0 (mesurer avant de planifier)** : `node mcp-server/smoke.mjs` sur la branche courante —
+   `server.mjs` importe statiquement 4 modules copilot absents du clone actuel
+   (`docker-server-copilot-{core,blt,cluster,forge}.mjs`) → le sidecar MCP est probablement **boot-dead
+   entier** (33 tools), pas « 4 tools en 404 ». + probe du delta branches/patch-lines
+   (`git log deployment..HEAD`, diff des paires de `.diff`, fichiers copilot côté deployment) + trancher le
+   remote autoritaire (origin vs sovereign).
+1. **Hotfix MCP boot** (si le probe confirme) : imports dynamiques gardés / stub fail-loud le temps de la
+   réconciliation — un outillage agent annoncé actif qui crashe au boot n'attend pas la phase (ii).
+2. **Passe doc-honnêteté (jour 1, un commit)** : headers ROADMAP/INVENTORY/CLAUDE disent la vérité mesurée
+   (sources v1.6.5 / image CLI 1.6.7 / réconciliation planifiée — grep mécanique : toute mention `1.6.7`
+   porte une chaîne canonique) ; contradiction INVENTORY §B.4 purgée ; verdict **tour narratif Copilot**
+   (jamais construit — purger `gitnexus_tour` de la spec, ROADMAP, et des 2 READMEs SDK) ; verdicts des
+   2 incomplets restants (co-commits même bracket, cluster-id instable → DEFERRED documenté) ;
+   housekeeping (fichier `nul` = disque seulement, PAS commité — `rm` + `.gitignore` ; purge
+   `.tmp_bump_workspace/`) ; `patches/README.md` à jour (différés re-posés a383535..f43241f3, multigraph
+   abandonné). Hygiène ghosts après chaque passe d'édition ROADMAP : `POST /ghosts/sync` + `/ghosts/cleanup-prompt`.
+3. **CI durcie** : trigger sur toutes les branches + PRs (mitigation coût : `concurrency`+`cancel-in-progress`,
+   filtre `paths`, jobs légers sur feature / suite complète sur PR+deployment) ; **preuve empirique
+   red-on-gutting** (2 canaries : diff tronqué → build-gate ROUGE ; fichier additif retiré → boot-smoke
+   ROUGE ; URLs archivées en spec) ; **enforce des 4 jobs `continue-on-error`** (unit + inventory-check
+   immédiat ; integration + e2e datés, au plus tard avant les preuves de phase ii) ; quarantaine EXPLICITE
+   des ~24 tests Timeline (`tests/quarantine.json` committé + plafond anti-croissance) avec **cible de
+   résorption chiffrée datée** (≤8 fin (i), 0 fin (ii) — sinon suppression assumée avec verdict, jamais de
+   quarantaine permanente).
+4. **Séquence de réconciliation UNIQUE** (finding critical du panel — 3 opérations régénéraient les mêmes
+   diffs depuis 3 bases différentes = 3e gutting garanti) :
+   a. merge `feat/classdiagram-export-and-class-lens` → `deployment` (c'est le code v7 live ; extraire
+      d'abord les 4 fichiers copilot de l'historique deployment vers un staging — le merge ne doit pas les
+      re-perdre) ;
+   b. **[RATIFICATION USER REQUISE]** re-bump sources+patches → v1.6.7 (RECOMMANDÉ : l'image CLI tourne en
+      1.6.7 depuis un mois, v1.6.6 mega-release rend le downgrade d'image risqué ; fallback re-pin 1.6.5
+      documenté = réindexation complète) — gated par la CI durcie (3), dry-run frais obligatoire (le
+      rapport existant est antérieur au revert), **check licence upstream au bump** ;
+   c. re-pose copilot AU rebump (les diffs copilot sont 1.6.7-based : application naturelle, pas de
+      portage v1.6.5 jeté ensuite).
+5. **Compteurs docs autogénérés** (`scripts/check-doc-counters.mjs` --write/--check, marqueurs AUTOGEN,
+   étape CI) — réconcilier une fois à la main les comptages divergents (33 vs 34 tools), puis le drift
+   devient impossible. Après le bump (les compteurs patches bougent).
+
+### Phase (ii) — Preuve + finitions des chantiers en vol
+
+1. **Copilot Phase D : de « scaffolded » à PROUVÉ** — e2e `copilot-panel.spec.ts` 8/8 exécutés réellement
+   (avec le job e2e enforced), `/copilot/metrics` Prometheus vérifié monotone, smoke MCP 4 tools verts.
+2. **class-diagram export / class-lens** : spec + DoD d'abord (mesurer ce que la symbol-graph lens rend
+   DÉJÀ ; scope-cut : lens dérivée + export via `docker-server-sysml-export-core.mjs` étendu
+   `format=mermaid-class` ; si le gate conclut à l'abandon → **escalade user**, pas de kill auto) → build.
+3. **Timeline Task 11** : câbler `graphMode='diff'` au canvas (util `graph-diff.ts` + spec e2e existants)
+   OU retirer le bouton menteur ; dé-quarantiner spécifiquement les tests Timeline touchés.
+4. **Regression coupling < 30s** : cache série coupling par snapshotId (clé = hash repoId+snapshotId+route+
+   **params normalisés** ; LIVE jamais caché) → le webhook watch porte enfin son culprit.
+5. **Extension VSCode** : packager le `.vsix` v0.1 + **observable d'usage défini AVANT le probe 7j**
+   (log local ou verdict structuré) → go/no-go v0.2 gravé. Pas de v0.2 sans preuve d'usage.
+6. **ghost placementAccuracy** : DEFERRED-documenté par défaut ; build seulement si le ghost-audit est
+   réellement consulté (gate mesurable via `/metrics`).
+
+### Phase (iii) — Tier 3 trié (prune avant de construire)
+
+**Verdicts gravés** (triggers de dégel falsifiables, items conservés sur la roadmap) :
+3.1 dead-code runtime **GELÉ** (dégel : un repo indexé émet réellement des spans) · 3.4 auto-PR refacto
+**GELÉ** (aucune capacité d'écriture de PR ; le consommateur agent passe par MCP) · 3.5 prédiction bugs
+**GELÉ** (zéro label disponible) · 3.8 AST extractors **GELÉ** (dépend 3.10, aucun consommateur committé) ·
+3.9 dataset public **GELÉ** (note licence : publication noncommerciale possible mais raison d'être
+stratégique morte) · 3.10 plugin architecture **GELÉ** (dégel : ≥2 nouvelles analytics committées —
+n'enable PAS le chemin lentilles, qui passe par la gateway BrainGraph du monorepo hôte) ·
+**3.6 CI architectural : décision A (GEL)** — le judge 2026-06-14 a déjà préféré le Copilot (26/30 vs
+20.5/30) et la licence rend la bataille commerciale sans objet ; option B interne-only réévaluable après (i).
+
+**Cueillette gated** : sonde measure-first des triggers d'optimisation (snapshots cumulés, cold start,
+label-cache, clones multiples) → ETag/304 sur analytics de snapshots figés (seul consommateur LIVE ;
+clé complète avec params) → index inversé repoId (si trigger worktrees confirmé) → round-trip
+export/import versionné (fail-loud préventif, exemption de trigger écrite) →
+**3.2 profils d'auteurs git-only** : gate measure-first PROPRE (≥2 identités actives 90j OU parsing des
+trailers `Co-Authored-By` gravé comme prérequis — l'identité de commit est unique par doctrine) →
+**3.3 Conway-lite** : gated sur le signal de 3.2 (« insufficient authors » assumé, jamais de score fabriqué).
 
 ---
 
