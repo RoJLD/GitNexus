@@ -75,9 +75,13 @@ quelle, pas de publication marketplace/.vsix.
    metrics) **quarantinés `test.describe.fixme` avec verdict** (`tests/quarantine.json`, condition de dé-quarantaine
    falsifiable) → l'e2e est **vert** (8 skipped / 1 passed), enforçable sans rouge menteur. Le vrai gate copilot =
    le smoke MCP. Dé-quarantaine future si le panel web est câblé (routes + COPY + panel React).
-2. **class-diagram export / class-lens** : spec + DoD d'abord (mesurer ce que la symbol-graph lens rend
-   DÉJÀ ; scope-cut : lens dérivée + export via `docker-server-sysml-export-core.mjs` étendu
-   `format=mermaid-class` ; si le gate conclut à l'abandon → **escalade user**, pas de kill auto) → build.
+2. **class-diagram export / class-lens** — **SPEC+DoD LIVRÉE 2026-07-11** ([spec](docs/superpowers/specs/2026-07-11-classdiagram-export-and-class-lens.md)),
+   verdict du gate = **BUILD** (pas d'abandon → pas d'escalade). Mesuré sur `HMMstudio` live : le KnowledgeGraph
+   A la donnée (Class ×60, Interface ×92, HAS_METHOD/HAS_PROPERTY/MEMBER_OF/CALLS) mais **PAS d'arête
+   d'héritage** (EXTENDS/IMPLEMENTS non émises) → scope-cut v1 honnête = classes + membres + associations,
+   **héritage DIFFÉRÉ** (`meta.inheritance:'unavailable'`). Plan : `projectClassDiagram` (graph-lens-core) +
+   `renderMermaidClass` (sysml-export-core) + `format=mermaid-class` (route). **Reste = build** (Docker requis
+   pour la vérif live : build order §5 de la spec).
 3. **Timeline Task 11** : câbler `graphMode='diff'` au canvas (util `graph-diff.ts` + spec e2e existants)
    OU retirer le bouton menteur ; dé-quarantiner spécifiquement les tests Timeline touchés.
 4. **Regression coupling < 30s** : cache série coupling par snapshotId (clé = hash repoId+snapshotId+route+
