@@ -4,9 +4,12 @@ name: tests
 # - triggers on ALL branches + PRs — the feature branches carried a month of
 #   work with literally zero CI (the 2026-06-15 deployment runs were the last
 #   ones, and they were all red);
-# - upstream image tags have NO 'v' prefix (measured: `1.6.5` exists,
-#   `v1.6.5` is manifest-unknown) — the old 'v1.6.5' default broke every
-#   docker job (build-gate/boot-smoke/integration) since 2026-06-15;
+# - upstream uses TWO tag namespaces (measured): git tags are 'v'-prefixed
+#   (v1.6.5 — what apply-upstream-patches.mjs clones) while DOCKER image tags
+#   are not (1.6.5 exists, v1.6.5 is manifest-unknown). The old pre-pull used
+#   the git-tag form → manifest unknown → broke every docker job since
+#   2026-06-15. The pre-pull now derives the image tag from Dockerfile.cli
+#   (the file that actually pins it) instead of guessing;
 # - cost guards: one run per ref (cancel-in-progress) and the heavy docker
 #   jobs only run on deployment / PRs / manual dispatch — feature branches
 #   get the fast gates (build-gate, unit, inventory-check).
@@ -21,8 +24,9 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  # Keep in sync with Dockerfile.cli (no 'v' prefix in upstream tags).
-  GITNEXUS_VERSION: ${{ vars.GITNEXUS_VERSION || '1.6.5' }}
+  # GIT tag form ('v' prefix) — consumed by scripts/apply-upstream-patches.mjs.
+  # The docker IMAGE tag is derived from Dockerfile.cli in the pre-pull steps.
+  GITNEXUS_VERSION: ${{ vars.GITNEXUS_VERSION || 'v1.6.5' }}
   NODE_VERSION: '22.11.0'
 
 jobs:
@@ -43,8 +47,8 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
       - name: Apply upstream patches to a fresh clone
         run: node scripts/apply-upstream-patches.mjs
-      - name: Pre-pull upstream image
-        run: docker pull ghcr.io/abhigyanpatwari/gitnexus:${{ env.GITNEXUS_VERSION }}
+      - name: Pre-pull upstream image (tag derived from Dockerfile.cli — docker tags have no 'v' prefix)
+        run: docker pull "$(grep -oE 'ghcr\.io/abhigyanpatwari/gitnexus:[0-9][0-9.]*' Dockerfile.cli | head -1)"
       - name: Build derived images (FAILS if patches don't produce a building image)
         run: docker compose -f docker-compose.test.yml build
 
@@ -68,8 +72,8 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
       - name: Apply upstream patches to a fresh clone
         run: node scripts/apply-upstream-patches.mjs
-      - name: Pre-pull upstream image
-        run: docker pull ghcr.io/abhigyanpatwari/gitnexus:${{ env.GITNEXUS_VERSION }}
+      - name: Pre-pull upstream image (tag derived from Dockerfile.cli — docker tags have no 'v' prefix)
+        run: docker pull "$(grep -oE 'ghcr\.io/abhigyanpatwari/gitnexus:[0-9][0-9.]*' Dockerfile.cli | head -1)"
       - name: Build derived images
         run: docker compose -f docker-compose.test.yml build
       - name: Extract a projects root for the mount
@@ -160,8 +164,8 @@ jobs:
       - run: cd tests && npm ci
       - name: Apply upstream patches
         run: node scripts/apply-upstream-patches.mjs
-      - name: Pre-pull upstream image
-        run: docker pull ghcr.io/abhigyanpatwari/gitnexus:${{ env.GITNEXUS_VERSION }}
+      - name: Pre-pull upstream image (tag derived from Dockerfile.cli — docker tags have no 'v' prefix)
+        run: docker pull "$(grep -oE 'ghcr\.io/abhigyanpatwari/gitnexus:[0-9][0-9.]*' Dockerfile.cli | head -1)"
       - name: Build derived images
         run: docker compose -f docker-compose.test.yml build
       - name: Run integration tests
