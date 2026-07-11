@@ -55,9 +55,9 @@ quelle, pas de publication marketplace/.vsix.
    a. merge `feat/classdiagram-export-and-class-lens` → `deployment` (c'est le code v7 live ; extraire
       d'abord les 4 fichiers copilot de l'historique deployment vers un staging — le merge ne doit pas les
       re-perdre) ;
-   b. **[RATIFICATION USER REQUISE]** re-bump sources+patches → v1.6.7 (RECOMMANDÉ : l'image CLI tourne en
-      1.6.7 depuis un mois, v1.6.6 mega-release rend le downgrade d'image risqué ; fallback re-pin 1.6.5
-      documenté = réindexation complète) — gated par la CI durcie (3), dry-run frais obligatoire (le
+   b. **[RATIFIÉ 2026-07-11]** re-bump sources+patches → v1.6.7 (l'image CLI tourne en 1.6.7 depuis un
+      mois, v1.6.6 mega-release rend le downgrade d'image risqué ; fallback re-pin 1.6.5 documenté =
+      réindexation complète) — reste **gated par la CI durcie (3)**, dry-run frais obligatoire (le
       rapport existant est antérieur au revert), **check licence upstream au bump** ;
    c. re-pose copilot AU rebump (les diffs copilot sont 1.6.7-based : application naturelle, pas de
       portage v1.6.5 jeté ensuite).

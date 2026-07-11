@@ -25211,6 +25211,42 @@ index 00000000..c6e6433c
 +  if (!node) return null;
 +  return { id: node.id, type: node.type, label: node.label, path: node.path, metrics: metricsById?.get(selectedId) ?? null };
 +}
+diff --git a/gitnexus-web/src/lib/panel-groups.ts b/gitnexus-web/src/lib/panel-groups.ts
+new file mode 100644
+index 00000000..2358c300
+--- /dev/null
++++ b/gitnexus-web/src/lib/panel-groups.ts
+@@ -0,0 +1,30 @@
++export type PanelGroup = 'health' | 'social' | 'cross-repo';
++export type AnalyticsMode =
++  | 'churn'
++  | 'coupling'
++  | 'growth'
++  | 'dissonance'
++  | 'whatif'
++  | 'entropyCommits'
++  | 'ownership'
++  | 'lifespan'
++  | 'similarity';
++export const PANEL_GROUP_OF: Record<AnalyticsMode, PanelGroup> = {
++  churn: 'health',
++  coupling: 'health',
++  growth: 'health',
++  dissonance: 'health',
++  whatif: 'health',
++  entropyCommits: 'health',
++  ownership: 'social',
++  lifespan: 'social',
++  similarity: 'cross-repo',
++};
++export const PANEL_GROUPS: { id: PanelGroup; label: string }[] = [
++  { id: 'health', label: 'Health' },
++  { id: 'social', label: 'Social' },
++  { id: 'cross-repo', label: 'Cross-repo' },
++];
++export function modesInGroup(g: PanelGroup): AnalyticsMode[] {
++  return (Object.keys(PANEL_GROUP_OF) as AnalyticsMode[]).filter((m) => PANEL_GROUP_OF[m] === g);
++}
 diff --git a/gitnexus-web/src/lib/research-colors.ts b/gitnexus-web/src/lib/research-colors.ts
 new file mode 100644
 index 00000000..29d9f355

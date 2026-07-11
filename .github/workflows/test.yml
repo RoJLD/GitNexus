@@ -1,12 +1,28 @@
 name: tests
 
+# Hardened 2026-07-11 (ROADMAP § "Update 2026-07-10", phase (i) CI durcie):
+# - triggers on ALL branches + PRs — the feature branches carried a month of
+#   work with literally zero CI (the 2026-06-15 deployment runs were the last
+#   ones, and they were all red);
+# - upstream image tags have NO 'v' prefix (measured: `1.6.5` exists,
+#   `v1.6.5` is manifest-unknown) — the old 'v1.6.5' default broke every
+#   docker job (build-gate/boot-smoke/integration) since 2026-06-15;
+# - cost guards: one run per ref (cancel-in-progress) and the heavy docker
+#   jobs only run on deployment / PRs / manual dispatch — feature branches
+#   get the fast gates (build-gate, unit, inventory-check).
 on:
   push:
-    branches: [deployment]
+    branches: ['**']
+  pull_request:
   workflow_dispatch:
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
-  GITNEXUS_VERSION: ${{ vars.GITNEXUS_VERSION || 'v1.6.5' }}
+  # Keep in sync with Dockerfile.cli (no 'v' prefix in upstream tags).
+  GITNEXUS_VERSION: ${{ vars.GITNEXUS_VERSION || '1.6.5' }}
   NODE_VERSION: '22.11.0'
 
 jobs:
@@ -43,6 +59,8 @@ jobs:
   boot-smoke:
     runs-on: ubuntu-latest
     timeout-minutes: 25
+    # Heavy docker job — deployment / PR / dispatch only (cost guard).
+    if: github.ref == 'refs/heads/deployment' || github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -90,9 +108,11 @@ jobs:
         if: always()
         run: docker compose -f docker-compose.test.yml down -v
 
+  # Enforced 2026-07-11 — continue-on-error on this job (and unit) masked the
+  # two patch-gutting incidents (2026-05-31, 2026-07-07): the workflow stayed
+  # green while the committed diffs no longer produced a working frontend.
   inventory-check:
     runs-on: ubuntu-latest
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -101,9 +121,12 @@ jobs:
       - name: Verify test inventory
         run: node scripts/check-test-inventory.mjs
 
+  # Enforced 2026-07-11 — suite measured fully green (718/718) after the
+  # environment fixes (localStorage stub for Node>=22 native webstorage,
+  # rolldown shebang strip, Windows path normalize, panel-groups.ts recovered
+  # from be99d6dd). No quarantine needed. A red unit job now BLOCKS.
   unit:
     runs-on: ubuntu-latest
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -116,10 +139,17 @@ jobs:
         run: node scripts/apply-upstream-patches.mjs
       - run: cd tests && npm run test:unit -- --reporter=verbose
 
+  # Still continue-on-error on 2026-07-11 — needs a full docker stack in CI
+  # and has no green-run baseline yet. DATED ENFORCEMENT (ROADMAP § Update
+  # 2026-07-10): flip after 2 observed green runs on PR, and AT THE LATEST
+  # before the phase (ii) proofs (copilot-phase-d-prove / classdiagram-build)
+  # land — those proofs are worthless inside an always-green job.
   integration:
     runs-on: ubuntu-latest
     continue-on-error: true
     timeout-minutes: 20
+    # Heavy docker job — deployment / PR / dispatch only (cost guard).
+    if: github.ref == 'refs/heads/deployment' || github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -148,11 +178,13 @@ jobs:
         if: always()
         run: docker compose -f docker-compose.test.yml down -v
 
+  # Same dated-enforcement contract as `integration` (see comment there).
   e2e:
     runs-on: ubuntu-latest
     needs: integration
     continue-on-error: true
     timeout-minutes: 20
+    if: github.ref == 'refs/heads/deployment' || github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
