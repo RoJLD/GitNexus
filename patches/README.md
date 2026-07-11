@@ -4,10 +4,11 @@ Two diff files capture every modification we apply to the
 [gitnexus/gitnexus](https://github.com/abhigyanpatwari/gitnexus)
 repository (tag `v1.6.5`) for this deployment:
 
-- **`additive-files.diff`** — ~99 new files we own entirely. These never
-  conflict with upstream changes because they are new files, not edits.
-- **`inplace-edits.diff`** — 17 modified upstream files. This is the
-  real conflict surface when bumping upstream.
+- **`additive-files.diff`** — ~132 new files we own entirely (measured
+  2026-07-11). These never conflict with upstream changes because they are
+  new files, not edits.
+- **`inplace-edits.diff`** — 21 modified upstream files (measured 2026-07-11).
+  This is the real conflict surface when bumping upstream.
 
 We don't track `upstream/` itself in this repo — it's a working clone we
 modify in place and use as the Docker build context. Tracking it would
@@ -33,7 +34,7 @@ manually re-applying the changes — see "Regenerate the diffs" below.
 
 ## What's inside
 
-~99 additive files (new files we own, in `additive-files.diff`) + 17
+~132 additive files (new files we own, in `additive-files.diff`) + 21
 in-place edits to upstream files (the real conflict surface, in
 `inplace-edits.diff`); zero deletions.
 
@@ -140,16 +141,26 @@ building tree. Restored 2026-07-07 by reverting the clone to `v1.6.5` and
 re-applying the last complete diffs from **`2ed93b73`** (17→18 in-place files,
 8480 lines), then re-layering `graph-adapter` domainType colouring + the
 `BackendRepo.family` field. The `gitnexus-web` image builds again.
-**Deferred (re-apply against this v1.6.5 base in a follow-up):** the auto-fit
-camera edit (`f8c9eb91` — targeted a `stopAllLayouts` that doesn't exist in
-v1.6.5), the P0-5 wiki prompt-injection guard (`fa647b88` — targeted v1.6.7
-wiki files), and the Header family-grouping presentation. The multigraph
-layout (`e3337fd2`) was intentionally dropped (abandoned UX).
+**Re-applied against this v1.6.5 base (measured 2026-07-11):** the P0-5 wiki
+prompt-injection guard landed — the original `fa647b88` targeted v1.6.7 wiki
+files, so it was re-posed and its unit test repaired against v1.6.5 in
+`16d9bfec` (`tests/unit/wiki-prompt-injection-guard.test.mjs`, green 3/3; the
+guard ships inside `additive-files.diff`).
+**Still deferred (re-pose at the v1.6.7 re-bump — verified absent from the
+current diffs by grep):** the auto-fit camera edit (`f8c9eb91` — targeted a
+`stopAllLayouts` that doesn't exist in v1.6.5) and the Header family-grouping
+presentation. The multigraph layout (`e3337fd2`) was intentionally dropped
+(abandoned UX).
 
-**The 2026-07-07 recurrence proves the two guards below were not enforced
+**The 2026-07-07 recurrence proved the two guards below were not enforced
 during the bump** — the local drift-guard passes when clone AND diffs are
-gutted consistently, and the CI `build-gate` either didn't run or is still
-`continue-on-error`. Verify `build-gate` is red-on-gutting before the next bump.
+gutted consistently, and the CI `build-gate` either didn't run or was still
+`continue-on-error`. **Resolved 2026-07-11:** `build-gate` is now proven
+red-on-gutting by two falsification canaries (a truncated `inplace-edits.diff`
+turns `build-gate` red; a missing `Dockerfile.web` COPY turns `boot-smoke`
+red), and `unit` + `inventory-check` are no longer `continue-on-error`. Proof
+archived in
+[`docs/superpowers/specs/2026-07-11-build-gate-falsification.md`](../docs/superpowers/specs/2026-07-11-build-gate-falsification.md).
 
 To stop this recurring:
 

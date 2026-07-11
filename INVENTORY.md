@@ -1,8 +1,11 @@
 # GitNexus — État des lieux
 
-**Snapshot daté : 2026-06-15 (post-Tier-3.7 Phase D Hardening scaffold)**
-**Base upstream : `v1.6.7`** (latest stable, bumped from v1.6.5 — v1.6.6 mega-release ~190 PRs + v1.6.7 patch fixes)
-**Fork interne : [github.com/RoJLD/GitNexus](https://github.com/RoJLD/GitNexus) → branche `deployment`**
+**Snapshot daté : 2026-06-15 (post-Tier-3.7 Phase D Hardening scaffold)** — entête corrigée **2026-07-11** (passe doc-honnêteté)
+
+> ⚠️ **Split-brain version (mesuré 2026-07-11)** — le bump v1.6.7 décrit dans l'entête d'origine a été **reverté** le 2026-07-07 (gutting des patches). État réel : **sources+patches = `v1.6.5` ; image CLI = `1.6.7` ; réconciliation planifiée — phase (i), cf. ROADMAP § Update 2026-07-10**. Toute mention `1.6.7` plus bas se lit sous ce caveat (elle décrit l'image CLI et la cible de re-bump, pas les sources actuelles).
+
+**Base upstream (sources+patches) : `v1.6.5`** — l'ancienne entête disait `v1.6.7` (v1.6.6 mega-release ~190 PRs + v1.6.7 patch fixes) ; c'est la cible de re-bump, pas les sources courantes.
+**Fork interne : [github.com/RoJLD/GitNexus](https://github.com/RoJLD/GitNexus) → branche active `feat/classdiagram-export-and-class-lens`** (le code v7 live ; `deployment` = base de réconciliation).
 
 Document figé dans le temps, vocation : servir de base de brainstorming
 pour les évolutions futures. À ré-éditer quand on bump la version
@@ -323,7 +326,7 @@ Pure frontend extension de la Timeline existante — aucune route serveur, réut
 - 4 surfaces UI : `ClusterTooltip` popup (Augmented), `GanttPanel.swimlanes='cluster'` mode (3-state radio + showOnlyClusterBars option), `audit/ClustersCard` + `audit/ClusterDrillModal` (7ème card AuditSummary), `GhostFiltersSection` (3 nouveaux toggles hiérarchiques).
 - MCP tool `gitnexus_clusters` (20ème) avec `formatClustersSummary`.
 - Status synthétisé : `shipped` (all-terminal + ≥1 materialized), `cancelled` (all cancelled), `expired` (cluster expectedBy + grace dépassé), `planned` (sinon). `declaredStatus` override.
-- Auto-cluster id = `auto-cluster-<sha256(sorted-memberIds)[:8]>` — instable si membres changent (limitation documentée).
+- Auto-cluster id = `auto-cluster-<sha256(sorted-memberIds)[:8]>` — instable si les membres changent. **Verdict DEFERRED (2026-07-11)** : le fix stable-id (ancrage sur un membre-pivot invariant) est repoussé ; trigger de reprise = premier cas réel où un changement de membres casse un drill-down cluster.
 
 #### Dépendances ajoutées
 - `react-force-graph-3d`, `three` (pour le mode 3D) — déclarées dans `gitnexus-web/package.json`
@@ -337,8 +340,8 @@ Pure frontend extension de la Timeline existante — aucune route serveur, réut
 | [CLAUDE.md](CLAUDE.md) | Règles pour l'agent : maintenir ROADMAP + INVENTORY à chaque feature, rebuild after upstream edits |
 | [../CLAUDE.md](../CLAUDE.md) | Règle workspace : tests CI/CD si module en a déjà |
 | [patches/README.md](patches/README.md) | Comment ré-appliquer les patches sur un clone frais + procédure de bump dry-run |
-| [patches/additive-files.diff](patches/additive-files.diff) | 135 fichiers neufs que nous possédons (risque de conflit nul) |
-| [patches/inplace-edits.diff](patches/inplace-edits.diff) | 17 édits in-place de fichiers upstream (vraie surface de conflit au bump) |
+| [patches/additive-files.diff](patches/additive-files.diff) | 132 fichiers neufs que nous possédons (risque de conflit nul) — mesuré 2026-07-11 |
+| [patches/inplace-edits.diff](patches/inplace-edits.diff) | 21 édits in-place de fichiers upstream (vraie surface de conflit au bump) — mesuré 2026-07-11 |
 | [patches/bump-dry-run-main.md](patches/bump-dry-run-main.md) | Rapport du premier dry-run de bump contre `main` (107 clean / 0 conflict / 9 fail) |
 | [scripts/bump-upstream.mjs](scripts/bump-upstream.mjs) | Outil de bump dry-run : clone la cible, applique les deux diffs, écrit le rapport |
 | [patches/example-gitnexus-domains.json](patches/example-gitnexus-domains.json) | Template pour la feature Dissonance |
@@ -378,17 +381,12 @@ Pure frontend extension de la Timeline existante — aucune route serveur, réut
 - ✅ 2bis.1 MCP analytics sidecar — [`mcp-server/`](mcp-server/) — serveur stdio JSON-RPC 2.0 pure Node zéro-dep, 13 tools (12 endpoints + `gitnexus_repo_by_id`). Coexiste avec `npx gitnexus mcp` upstream (pas de patch dans `upstream/`). Smoke 6/6 ✓ (`mcp-server/smoke.mjs`).
 - ✅ 2bis.4 Unified `.gitnexus.json` — parser [`upstream/docker-server-config.mjs`](upstream/docker-server-config.mjs) avec sections `domains` / `policy` / `budgets` (réservé 3.6) / `watches` (réservé 2bis.3). Backward-compat sur `.gitnexus-domains.json` + `.gitnexus-policy.json` avec deprecation warning stderr (one-shot par `repoPath:fichier`). JSON et pas YAML (pas de YAML stdlib Node, déjà tranché à 2.2). Exemple canonique [`patches/example-gitnexus.json`](patches/example-gitnexus.json).
 - ✅ 2bis.5 Stable repoId — [`upstream/docker-server-repo-id.mjs`](upstream/docker-server-repo-id.mjs) — `sha256(firstCommitSha + normalizedRemote)[:16]`, cache `<repoPath>/.gitnexus/repo-id.json`. Endpoint `GET /repos/by-id/:repoId` résout vers les `<base>`. Surface dans `/similarity > response.repos[].repoId`. MCP tool `gitnexus_repo_by_id`. **MVP scope** : pas encore consommé par les endpoints cross-repo (refactor à `2bis.5b` quand un re-clone cassera la similarité).
-- ✅ 2bis.2 Commit-level entropy delta — backend [`upstream/docker-server-entropy-commits.mjs`](upstream/docker-server-entropy-commits.mjs) + UI [`components/EntropyCommitTimeline.tsx`](upstream/gitnexus-web/src/components/EntropyCommitTimeline.tsx). `GET /entropy/commits?repo=&days=N` (ou `from/to` = SHA ou ISO). Attribue à chaque commit sa part proportionnelle (filesTouched) du delta entropy observé entre snapshots bracketants. Stragglers (hors-fenêtre snapshot) ressortent avec `attributedDensityDelta: null`. CSV export via `?format=csv`. MCP tool `gitnexus_entropy_commits`. UI : sparkline SVG au-dessus de la Timeline, toggle "Commit Δ" (Activity icon), bars rouge/vert/gris, boundaries snapshot dashed amber, drill-down par commit avec copy-SHA + snippet git-show, switch density/modularity, window input. Live test : hmm_studio sur 180j → 99 commits, 66 attribués, 33 stragglers, 4 windows.
+- ✅ 2bis.2 Commit-level entropy delta — backend [`upstream/docker-server-entropy-commits.mjs`](upstream/docker-server-entropy-commits.mjs) + UI [`components/EntropyCommitTimeline.tsx`](upstream/gitnexus-web/src/components/EntropyCommitTimeline.tsx). `GET /entropy/commits?repo=&days=N` (ou `from/to` = SHA ou ISO). Attribue à chaque commit sa part proportionnelle (filesTouched) du delta entropy observé entre snapshots bracketants. Stragglers (hors-fenêtre snapshot) ressortent avec `attributedDensityDelta: null`. CSV export via `?format=csv`. MCP tool `gitnexus_entropy_commits`. UI : sparkline SVG au-dessus de la Timeline, toggle "Commit Δ" (Activity icon), bars rouge/vert/gris, boundaries snapshot dashed amber, drill-down par commit avec copy-SHA + snippet git-show, switch density/modularity, window input. Live test : hmm_studio sur 180j → 99 commits, 66 attribués, 33 stragglers, 4 windows. **Verdict DEFERRED (2026-07-11)** : les co-commits tombant dans le MÊME bracket de snapshot partagent l'attribution au prorata (filesTouched) sans désambiguïsation par-commit ; la résolution fine (un snapshot par commit) est repoussée, trigger = besoin explicite d'attribution exacte intra-bracket.
 - ✅ 2bis.3 Alerting continu (MVP) — [`upstream/docker-server-watches.mjs`](upstream/docker-server-watches.mjs) — cron interne démarré au boot par `startWatchesCron()` dans `docker-server.mjs`. Interval `WATCH_INTERVAL_MS` (default 5min), debounce `WATCH_DEBOUNCE_MS` (default 1h), désactivable via `WATCHES_ENABLED=false`. Source des watches = `.gitnexus.json > watches` (parsé par 2bis.4). 5 métriques évaluables : entropy.{density,modularity}, ownership.{busFactor,topAuthorShare}, dissonance.purity. Webhook payload Slack-compatible (champ `text` pré-formaté + champs structurés). `GET /watches[?repo=]` liste + dernier état. MCP tool `gitnexus_watches`. **Limitation MVP** : seuils statiques (apprentissage = Tier 3 ML), state in-memory (perd l'historique au restart).
 - ✅ Phase A incremental-snapshots — [`upstream/docker-server-snapshot-auto.mjs`](upstream/docker-server-snapshot-auto.mjs) — `POST /snapshot/auto?repo=` qui détecte les commits aux pics d'entropy (top-P% par \|attributedDelta\|, réutilise l'algo de /entropy/commits), filtre merges + minDelta + debounce, cap maxToCreate ≤ 5 (HARD_CAP env-overrideable), et appelle `createSnapshot` séquentiellement. `dryRun: true` retourne le plan sans rien créer (recommandé d'abord — chaque snapshot = ~3-5 min compute). Config par-repo via `.gitnexus.json > auto_snapshot` (section parsée par `docker-server-config.mjs`). MCP tool `gitnexus_snapshot_auto`. Live test : 1 snapshot créé end-to-end en 55s sur hmm_studio. Couvre UC1/UC2/Q1/Q3/Q5 du brainstorm doc.
 - ✅ Phase B incremental-snapshots — [`upstream/docker-server-snapshot-from-pr.mjs`](upstream/docker-server-snapshot-from-pr.mjs) — `POST /snapshot/from-pr?repo=&base=&head=` résout les 2 refs via `git rev-parse` (branches/tags/SHAs/HEAD~N supportés), snapshotte les 2 si pas déjà, retourne `{ base, head, diffUrl }`. Agnostique de la forge — pas de dépendance GitHub API. `dryRun: true` valide les refs sans payer le coût. Degenerate case (base==head) géré avec `warning` + `diffUrl: null`. MCP tool `gitnexus_snapshot_from_pr`. Couvre UC3/UC4/Q4/Q8 du brainstorm doc. **Tier 2bis Phase B = complet** ; Phase C (true incremental) parquée jusqu'à signal explicite après 3 mois d'usage.
 
-**Pending — Tier 2bis (plate-forme, ~3 semaines cumulées, à livrer avant le reste)** :
-- ⏳ 2bis.1 MCP exposure des analytics time-travel (3-5j)
-- ⏳ 2bis.2 Commit-level entropy delta (1 semaine)
-- ⏳ 2bis.3 Alerting continu (watch + webhook) (1-2 semaines)
-- ⏳ 2bis.4 Unified `.gitnexus.yaml` (2-3j)
-- ⏳ 2bis.5 Repo ID stable (3-5j)
+**Pending — Tier 2bis** : aucun. **Contradiction purgée 2026-07-11** — ce bloc marquait 2bis.1–2bis.5 comme `⏳ Pending (~3 semaines, à livrer avant le reste)` alors que la section « Livré (Tier 2bis — plate-forme) » ci-dessus les liste toutes `✅ Livré` (endpoints + tests + MCP tools). Les 5 items **sont livrés** ; l'ancien bloc était un résidu du plan initial jamais retiré.
 
 **Tier 2 résiduel** : aucun. Tout livré.
 

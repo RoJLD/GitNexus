@@ -5,8 +5,11 @@ Python client SDK for the **GitNexus Architect's Copilot AI** REST surface
 
 > Status: **MVP scaffold + B'5 auth + B'6 publish-prep**. Bearer auth
 > (Task B'5) and tag-driven PyPI publish CI (Task B'6) **SCAFFOLDED 2026-06-15**.
-> `gitnexus_tour` SSE streaming wrapper (Task B3) remains open. The package
-> is still consumed in-tree only until the first `sdk-py-v*` tag is pushed.
+> The `gitnexus_tour` SSE wrapper (Task B3) is **ABANDONED** — the tour-worker it
+> would wrap was never built (verdict 2026-07-11; see the Tier 3.7 spec Update).
+> The package is still consumed in-tree only until the first `sdk-py-v*` tag is
+> pushed, and the `/copilot/*` endpoints it targets are pending re-pose at the
+> v1.6.7 re-bump (sources are currently `v1.6.5`).
 
 ## Why this SDK exists
 

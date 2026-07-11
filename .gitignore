@@ -22,3 +22,14 @@ Thumbs.db
 
 # Graphs sidecar deps (installed in the image / locally; never committed)
 graphs-sidecar/node_modules/
+
+# Windows 'nul' device leaks as a LITERAL file when a POSIX shell (Git Bash)
+# redirects to it (`cmd > nul`). It has held an internal IP before — never track it.
+nul
+NUL
+
+# Batcave-local infra notes (IPs / hostnames / K8s namespaces) — this is a PUBLIC
+# fork; infra detail must never land here. Convention: name any infra-bearing note
+# `*.batcave.md` so it is auto-ignored. The existing cluster follow-up is covered by name.
+*.batcave.md
+docs/CLUSTER-TIMELINE-FOLLOWUP-*.md

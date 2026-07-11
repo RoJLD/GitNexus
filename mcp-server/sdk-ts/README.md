@@ -5,17 +5,20 @@ TypeScript client SDK for the **GitNexus Architect's Copilot AI** REST surface
 
 > Status: **MVP scaffold + B'5 auth + B'6 publish-prep**. Bearer auth
 > (Task B'5) and tag-driven npm publish CI (Task B'6) **SCAFFOLDED 2026-06-15**.
-> `gitnexus_tour` SSE streaming wrapper (Task B3) remains open. The package
-> is still consumed in-tree only until the first `sdk-ts-v*` tag is pushed.
+> The `gitnexus_tour` SSE wrapper (Task B3) is **ABANDONED** — the tour-worker it
+> would wrap was never built (verdict 2026-07-11; see the Tier 3.7 spec Update).
+> The package is still consumed in-tree only until the first `sdk-ts-v*` tag is
+> pushed, and the `/copilot/*` endpoints it targets are pending re-pose at the
+> v1.6.7 re-bump (sources are currently `v1.6.5`).
 
 ## Why this SDK exists
 
 The four `/copilot/*` endpoints (`mcp-inventory`, `blt-context`,
 `cluster-context`, `forge-context`) are the **stable consumption surface**
-the future tour-worker (Phase A Task A2) and any external agent (Claude
-Code skills, Cursor, Windsurf, OpenCode) will call. Hand-rolling
-`fetch + JSON.parse + types` in every consumer rots fast - this SDK
-freezes the shapes.
+any external agent (Claude Code skills, Cursor, Windsurf, OpenCode) calls.
+Hand-rolling `fetch + JSON.parse + types` in every consumer rots fast - this
+SDK freezes the shapes. (An earlier draft named a "tour-worker" as the first
+consumer; it was never built — verdict 2026-07-11.)
 
 Cross-link : Iron Rule **COPILOT-1** (synthesis pure) - the SDK is also a
 synthesis-pure transport layer ; it adds no analytics, no caching, no
@@ -146,8 +149,8 @@ Plan : [Tier 3.7 Implementation Plan](../../docs/superpowers/plans/2026-06-14-Ti
 - **B'5 Auth pattern** — DONE 2026-06-15 (Bearer + `CopilotAuthError`).
 - **B'6 Publish prep** — DONE 2026-06-15 (CI workflow + `CHANGELOG.md` +
   `PUBLISH.md`). First real publish gated on Architecte sign-off.
-- **B3 - `gitnexus_tour` SSE wrapper** : streaming tour transcript. Still
-  open ; depends on tour-worker shape stabilisation.
+- **B3 - `gitnexus_tour` SSE wrapper** — **ABANDONED** (verdict 2026-07-11) :
+  the tour-worker it would stream was never built.
 
 ## License
 
