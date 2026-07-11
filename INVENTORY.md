@@ -7,6 +7,9 @@
 **Base upstream (sources+patches) : `v1.6.7`** (re-bump exécuté 2026-07-11, aligné sur l'image CLI).
 **Fork interne : [github.com/RoJLD/GitNexus](https://github.com/RoJLD/GitNexus) → branche active `feat/classdiagram-export-and-class-lens`** (le code v7 live ; `deployment` = base de réconciliation, fast-forwardée sur cette branche).
 
+<!-- Compteurs autogénérés (source de vérité = le code). `node scripts/check-doc-counters.mjs --write` régénère ; `--check` échoue en CI si un compteur dérive. NE PAS éditer les nombres à la main entre les marqueurs COUNTER. -->
+**Compteurs (autogénérés)** : MCP tools = <!-- COUNTER:mcp-tools -->36<!-- /COUNTER --> · additive-files = <!-- COUNTER:additive-files -->136<!-- /COUNTER --> · inplace-files = <!-- COUNTER:inplace-files -->21<!-- /COUNTER -->.
+
 Document figé dans le temps, vocation : servir de base de brainstorming
 pour les évolutions futures. À ré-éditer quand on bump la version
 upstream ou qu'on livre un nouveau Tier de la roadmap.
@@ -347,7 +350,7 @@ Pure frontend extension de la Timeline existante — aucune route serveur, réut
 | [patches/example-gitnexus-domains.json](patches/example-gitnexus-domains.json) | Template pour la feature Dissonance |
 | [patches/example-gitnexus-policy.json](patches/example-gitnexus-policy.json) | Template policy par-repo pour la feature Cross-repo similarity (isolation_required, allow_merge_with) |
 | [vscode-extension/README.md](vscode-extension/README.md) | Setup + scope de l'extension VSCode (Tier 2.4) |
-| [mcp-server/README.md](mcp-server/README.md) | Setup + protocole du sidecar MCP analytics (Tier 2bis.1) — 12 tools stdio JSON-RPC 2.0 zéro-dep, à brancher dans `~/.claude.json > mcpServers` |
+| [mcp-server/README.md](mcp-server/README.md) | Setup + protocole du sidecar MCP analytics (Tier 2bis.1) — <!-- COUNTER:mcp-tools -->36<!-- /COUNTER --> tools stdio JSON-RPC 2.0 zéro-dep, à brancher dans `~/.claude.json > mcpServers` |
 | [INVENTORY.md](INVENTORY.md) | Ce document |
 
 ### B.4 Mapping ROADMAP ↔ État de livraison
@@ -378,7 +381,7 @@ Pure frontend extension de la Timeline existante — aucune route serveur, réut
 - ✅ 2.6.bis Galaxy UMAP — toggle PCA/UMAP dans le GalaxyView, calcul client-side (dynamic import `umap-js` → out-of-bundle pour les users qui n'ouvrent pas la galaxy), seed mulberry32 keyé sur le repo-set pour stabilité au refetch, nNeighbors adaptatif min(15, N-1). Tier 2 100% complet.
 
 **Livré (Tier 2bis — plate-forme)** :
-- ✅ 2bis.1 MCP analytics sidecar — [`mcp-server/`](mcp-server/) — serveur stdio JSON-RPC 2.0 pure Node zéro-dep, 13 tools (12 endpoints + `gitnexus_repo_by_id`). Coexiste avec `npx gitnexus mcp` upstream (pas de patch dans `upstream/`). Smoke 6/6 ✓ (`mcp-server/smoke.mjs`).
+- ✅ 2bis.1 MCP analytics sidecar — [`mcp-server/`](mcp-server/) — serveur stdio JSON-RPC 2.0 pure Node zéro-dep, 13 tools à la livraison 2bis.1 (12 endpoints + `gitnexus_repo_by_id`) → <!-- COUNTER:mcp-tools -->36<!-- /COUNTER --> tools aujourd'hui (analytics + copilot + lens + query_meta_graph). Coexiste avec `npx gitnexus mcp` upstream (pas de patch dans `upstream/`). Smoke ✓ (`mcp-server/smoke.mjs`).
 - ✅ 2bis.4 Unified `.gitnexus.json` — parser [`upstream/docker-server-config.mjs`](upstream/docker-server-config.mjs) avec sections `domains` / `policy` / `budgets` (réservé 3.6) / `watches` (réservé 2bis.3). Backward-compat sur `.gitnexus-domains.json` + `.gitnexus-policy.json` avec deprecation warning stderr (one-shot par `repoPath:fichier`). JSON et pas YAML (pas de YAML stdlib Node, déjà tranché à 2.2). Exemple canonique [`patches/example-gitnexus.json`](patches/example-gitnexus.json).
 - ✅ 2bis.5 Stable repoId — [`upstream/docker-server-repo-id.mjs`](upstream/docker-server-repo-id.mjs) — `sha256(firstCommitSha + normalizedRemote)[:16]`, cache `<repoPath>/.gitnexus/repo-id.json`. Endpoint `GET /repos/by-id/:repoId` résout vers les `<base>`. Surface dans `/similarity > response.repos[].repoId`. MCP tool `gitnexus_repo_by_id`. **MVP scope** : pas encore consommé par les endpoints cross-repo (refactor à `2bis.5b` quand un re-clone cassera la similarité).
 - ✅ 2bis.2 Commit-level entropy delta — backend [`upstream/docker-server-entropy-commits.mjs`](upstream/docker-server-entropy-commits.mjs) + UI [`components/EntropyCommitTimeline.tsx`](upstream/gitnexus-web/src/components/EntropyCommitTimeline.tsx). `GET /entropy/commits?repo=&days=N` (ou `from/to` = SHA ou ISO). Attribue à chaque commit sa part proportionnelle (filesTouched) du delta entropy observé entre snapshots bracketants. Stragglers (hors-fenêtre snapshot) ressortent avec `attributedDensityDelta: null`. CSV export via `?format=csv`. MCP tool `gitnexus_entropy_commits`. UI : sparkline SVG au-dessus de la Timeline, toggle "Commit Δ" (Activity icon), bars rouge/vert/gris, boundaries snapshot dashed amber, drill-down par commit avec copy-SHA + snippet git-show, switch density/modularity, window input. Live test : hmm_studio sur 180j → 99 commits, 66 attribués, 33 stragglers, 4 windows. **Verdict DEFERRED (2026-07-11)** : les co-commits tombant dans le MÊME bracket de snapshot partagent l'attribution au prorata (filesTouched) sans désambiguïsation par-commit ; la résolution fine (un snapshot par commit) est repoussée, trigger = besoin explicite d'attribution exacte intra-bracket.

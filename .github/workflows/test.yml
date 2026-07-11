@@ -132,6 +132,8 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
       - name: Verify test inventory
         run: node scripts/check-test-inventory.mjs
+      - name: Verify doc counters (tool count + patch file counts, source-of-truth = the code)
+        run: node scripts/check-doc-counters.mjs
 
   # Enforced 2026-07-11 — suite measured fully green (718/718) after the
   # environment fixes (localStorage stub for Node>=22 native webstorage,

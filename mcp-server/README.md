@@ -44,8 +44,8 @@ project-scoped `.claude/mcp.json`):
 }
 ```
 
-Restart Claude Code; the 12 tools above will show up in the model's
-tool list. Try:
+Restart Claude Code; the tools above (<!-- COUNTER:mcp-tools -->36<!-- /COUNTER --> in
+total) will show up in the model's tool list. Try:
 
 > "Use gitnexus to list my repos, then show me the entropy timeline
 > of hmm_studio and tell me whether it's drifting."
