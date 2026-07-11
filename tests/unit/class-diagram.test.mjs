@@ -58,11 +58,37 @@ describe('projectClassDiagram', () => {
     expect(cd.associations[0].target).toBe(walker.id);
   });
 
-  it('declares inheritance unavailable (no EXTENDS/IMPLEMENTS in the graph) — Zero Masking', () => {
+  it('reports inheritance none-in-graph when no INHERITS between in-graph classes — Zero Masking', () => {
     const cd = projectClassDiagram(GRAPH);
-    expect(cd.meta.inheritance).toBe('unavailable');
+    expect(cd.meta.inheritance).toBe('none-in-graph');
+    expect(cd.inheritances).toEqual([]);
     expect(cd.meta.total_classes).toBe(2);
     expect(cd.meta.truncated_from).toBeNull();
+  });
+
+  it('renders inheritance when INHERITS connects two in-graph classes (v2)', () => {
+    const g = {
+      nodes: [
+        { id: 'C:Animal', label: 'Class', properties: { name: 'Animal' } },
+        { id: 'C:Dog', label: 'Class', properties: { name: 'Dog' } },
+      ],
+      // Python/cpp emit INHERITS source=subclass → target=base.
+      relationships: [{ type: 'INHERITS', sourceId: 'C:Dog', targetId: 'C:Animal' }],
+    };
+    const cd = projectClassDiagram(g);
+    expect(cd.inheritances).toEqual([{ child: 'C:Dog', parent: 'C:Animal' }]);
+    expect(cd.meta.inheritance).toBe('rendered');
+    expect(cd.meta.inheritance_count).toBe(1);
+  });
+
+  it('drops inheritance whose base is external/unindexed (not in the graph)', () => {
+    const g = {
+      nodes: [{ id: 'C:Dog', label: 'Class', properties: { name: 'Dog' } }],
+      relationships: [{ type: 'INHERITS', sourceId: 'C:Dog', targetId: 'External:Protocol' }],
+    };
+    const cd = projectClassDiagram(g);
+    expect(cd.inheritances).toEqual([]);
+    expect(cd.meta.inheritance).toBe('none-in-graph');
   });
 
   it('caps rendering by member count and reports truncation', () => {
@@ -105,8 +131,21 @@ describe('renderMermaidClass', () => {
     expect(out).toContain('+name');
     expect(out).toContain('<<interface>>');
     expect(out).toMatch(/Animal \.\.> Walker : calls/);
-    // Zero Masking : the diagram states what it does NOT show.
-    expect(out).toMatch(/inheritance: unavailable/);
+    // Zero Masking : the diagram states WHY there are no arrows (no in-graph inheritance).
+    expect(out).toMatch(/inheritance: none in-graph/);
+  });
+
+  it('renders a mermaid inheritance arrow (parent <|-- child) from INHERITS', () => {
+    const g = {
+      nodes: [
+        { id: 'C:Animal', label: 'Class', properties: { name: 'Animal' } },
+        { id: 'C:Dog', label: 'Class', properties: { name: 'Dog' } },
+      ],
+      relationships: [{ type: 'INHERITS', sourceId: 'C:Dog', targetId: 'C:Animal' }],
+    };
+    const out = renderMermaidClass({ ...projectClassDiagram(g), repoName: 'demo' });
+    expect(out).toMatch(/Animal <\|-- Dog/); // parent <|-- child
+    expect(out).toMatch(/inheritance: 1 relation/);
   });
 
   it('disambiguates same-named classes with a suffix (mermaid ids must be unique)', () => {

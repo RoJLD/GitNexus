@@ -5745,10 +5745,10 @@ index 00000000..f30716c8
 +}
 diff --git a/docker-server-graph-lens-core.mjs b/docker-server-graph-lens-core.mjs
 new file mode 100644
-index 00000000..2d154de4
+index 00000000..099f2695
 --- /dev/null
 +++ b/docker-server-graph-lens-core.mjs
-@@ -0,0 +1,194 @@
+@@ -0,0 +1,221 @@
 +/**
 + * Lens projections over a /api/graph KnowledgeGraph JSON. Pure, no I/O.
 + * Output is shaped like a research render ({nodes:[{id,type,label,path,stage}],
@@ -5932,12 +5932,39 @@ index 00000000..2d154de4
 +    associations.push({ source: s, target: t, kind: 'calls' });
 +  }
 +
++  // Inheritance : the ingestion DOES emit INHERITS edges (Python synthesizes them
++  // from class `superclasses`, cpp from base clauses, etc. → mapKindToType 'inherits'
++  // → INHERITS). We keep only edges whose child AND parent are BOTH rendered classes;
++  // a base outside the repo (e.g. Protocol, ABC, an unindexed lib class) is not in the
++  // graph, so that inheritance is legitimately absent — reported honestly via meta.
++  const seenInh = new Set();
++  const inheritances = [];
++  for (const r of rels) {
++    if (r?.type !== 'INHERITS') continue;
++    const child = r.sourceId, parent = r.targetId; // Python/cpp: source=subclass → target=base
++    if (!kept.has(child) || !kept.has(parent) || child === parent) continue;
++    const key = `${child}\0${parent}`;
++    if (seenInh.has(key)) continue;
++    seenInh.add(key);
++    inheritances.push({ child, parent });
++  }
++
 +  return {
 +    schema_type: 'class-diagram',
 +    classes,
 +    associations,
-+    meta: { inheritance: 'unavailable', total_classes: total, rendered: classes.length, truncated_from: truncated ? total : null },
-+    report: { classes: classes.length, associations: associations.length },
++    inheritances,
++    meta: {
++      // 'rendered' when in-graph inheritance exists ; 'none-in-graph' when the repo's
++      // classes inherit only from external/unindexed bases (Zero Masking: the diagram
++      // says WHY there are no arrows, it no longer claims inheritance is 'unavailable').
++      inheritance: inheritances.length > 0 ? 'rendered' : 'none-in-graph',
++      inheritance_count: inheritances.length,
++      total_classes: total,
++      rendered: classes.length,
++      truncated_from: truncated ? total : null,
++    },
++    report: { classes: classes.length, associations: associations.length, inheritances: inheritances.length },
 +  };
 +}
 +
@@ -13827,10 +13854,10 @@ index 00000000..c20c6e42
 +}
 diff --git a/docker-server-sysml-export-core.mjs b/docker-server-sysml-export-core.mjs
 new file mode 100644
-index 00000000..88f5f16e
+index 00000000..6ff1857e
 --- /dev/null
 +++ b/docker-server-sysml-export-core.mjs
-@@ -0,0 +1,204 @@
+@@ -0,0 +1,218 @@
 +// upstream/docker-server-sysml-export-core.mjs
 +//
 +// Pure renderers for SysML export. No I/O. Consumes runtime ghosts (from
@@ -13992,12 +14019,16 @@ index 00000000..88f5f16e
 + * get a numeric suffix. Inheritance is surfaced as a comment when unavailable
 + * (Zero Masking: the diagram states what it does not show).
 + */
-+export function renderMermaidClass({ classes, associations, meta, repoName }) {
++export function renderMermaidClass({ classes, associations, inheritances, meta, repoName }) {
 +  const list = Array.isArray(classes) ? classes : [];
 +  const lines = ['classDiagram'];
 +  lines.push(`%% gitnexus — Class diagram (${repoName || 'unknown'})`);
-+  if (!meta || meta.inheritance === 'unavailable') {
-+    lines.push('%% inheritance: unavailable (EXTENDS/IMPLEMENTS not emitted by ingestion)');
++  if (meta && meta.inheritance === 'rendered') {
++    lines.push(`%% inheritance: ${meta.inheritance_count} relation(s) (INHERITS)`);
++  } else {
++    // Zero Masking : dire POURQUOI il n'y a pas de flèches (pas « unavailable »
++    // faux — l'ingestion émet INHERITS ; ce repo hérite de bases externes/non-indexées).
++    lines.push('%% inheritance: none in-graph (classes inherit only from external/unindexed bases)');
 +  }
 +  if (meta && meta.truncated_from) {
 +    lines.push(`%% truncated: showing ${list.length}/${meta.truncated_from} classes (by member count)`);
@@ -14032,6 +14063,16 @@ index 00000000..88f5f16e
 +    if (seen.has(key)) continue;
 +    seen.add(key);
 +    lines.push(`${s} ..> ${t} : ${a.kind || 'calls'}`);
++  }
++  // Inheritance arrows — mermaid `Parent <|-- Child` (Child is the subclass).
++  const seenInh = new Set();
++  for (const h of (inheritances || [])) {
++    const p = idOf.get(h.parent), c = idOf.get(h.child);
++    if (!p || !c) continue;
++    const key = `${p}\0${c}`;
++    if (seenInh.has(key)) continue;
++    seenInh.add(key);
++    lines.push(`${p} <|-- ${c}`);
 +  }
 +  return lines.join('\n') + '\n';
 +}

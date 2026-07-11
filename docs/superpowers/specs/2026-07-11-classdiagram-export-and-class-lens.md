@@ -92,3 +92,20 @@ compromis (héritage différé) est un scope-cut honnête imposé par la donnée
   (pas d'arête d'héritage) — mesurer le graphe AVANT d'écrire le DoD a évité un livrable qui ment sur l'héritage.
 - **Σ-DERIVED-LENS-EXTENDS-THE-EXISTING-EXPORT-SEAM** : réutiliser `sysml-export-core` + `graph-lens-core`
   (un nouveau format + une nouvelle projection) plutôt qu'un pipeline parallèle.
+
+## Update 2026-07-11 — v2 HÉRITAGE : la prémisse « non émis » était FAUSSE (mesure corrigée)
+
+Le §1 disait « aucune arête d'héritage (EXTENDS/IMPLEMENTS non émises par l'ingestion) ». **Re-mesure :
+c'était faux.** L'ingestion émet bien l'héritage sous le type **`INHERITS`** (`emit-references.ts` :
+`mapKindToType('inherits') → 'INHERITS'` ; Python le synthétise depuis `superclasses` — `python/captures.ts` ;
+cpp/csharp/... depuis leurs clauses de base). J'avais conclu « non émis » en mesurant le GRAPHE HMMstudio
+(0 arête d'héritage) — mais HMMstudio hérite de bases **externes** (Protocol/ABC hors-graphe), donc ses arêtes
+INHERITS pointent vers des cibles non-indexées et sont légitimement absentes.
+
+**v2 livrée** : `projectClassDiagram` consomme les `INHERITS` dont enfant ET parent sont deux classes
+rendues → `inheritances:[{child,parent}]` + `meta.inheritance = 'rendered'|'none-in-graph'` (+ `inheritance_count`) ;
+`renderMermaidClass` émet `Parent <|-- Child` + un commentaire qui dit **pourquoi** il n'y a pas de flèches
+(`none in-graph` = bases externes), au lieu du faux `unavailable`. Tests : 3 nouveaux unit (INHERITS in-graph →
+flèche ; base externe → droppée ; commentaire dynamique). Vérifié sur HMMstudio réel : `none-in-graph` (correct,
+0 héritage interne). Iron : **Σ-ABSENT-IN-THIS-GRAPH-IS-NOT-ABSENT-FROM-THE-PIPELINE** (mesurer le graphe d'UN
+repo ne prouve pas que la feature n'existe pas — le repo peut juste ne pas l'exercer).

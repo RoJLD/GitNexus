@@ -85,6 +85,11 @@ quelle, pas de publication marketplace/.vsix.
    vérifié sur le graphe HMMstudio réel (150/152 classes cap, 7 associations, classDiagram valide, accolades
    équilibrées, inheritance-unavailable + truncation déclarés). Route HTTP couverte par le test integration
    (CI docker build). `GET /sysml-export?repo=X&format=mermaid-class`.
+   **v2 héritage 2026-07-11** : la prémisse « ingestion n'émet pas EXTENDS » était FAUSSE — elle émet `INHERITS`
+   (Python `superclasses`, cpp/csharp bases → `mapKindToType`). v2 consomme les INHERITS entre classes rendues →
+   flèches `Parent <|-- Child` + `meta.inheritance='rendered'|'none-in-graph'` (dit POURQUOI pas de flèches :
+   bases externes, pas « unavailable »). HMMstudio réel = `none-in-graph`. +3 unit (12/12). Iron
+   **Σ-ABSENT-IN-THIS-GRAPH-IS-NOT-ABSENT-FROM-THE-PIPELINE**. Reste : un repo à héritage interne pour la démo live.
 3. **Timeline Task 11** — **MESURÉ 2026-07-11 : DÉJÀ CÂBLÉ** (ni « câbler » ni « retirer le bouton » — les deux
    auraient été faux). Trace de code complète : `enterCursorDiff` (useAppState) → `computeGraphDiff` →
    `setDiffData` → `diffData.nodeStatus` → GraphCanvas `diffNodeStatus` → le nodeReducer/edgeReducer de
