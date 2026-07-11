@@ -66,10 +66,37 @@
 
 import { createInterface } from 'node:readline';
 import process from 'node:process';
-import { inventoryMCPTools } from '../upstream/docker-server-copilot-core.mjs';
-import { readBLTLedger, _internals as _bltInternals } from '../upstream/docker-server-copilot-blt.mjs';
-import { readClusterOpsLedger, _internals as _clusterInternals } from '../upstream/docker-server-copilot-cluster.mjs';
-import { readForgeContext } from '../upstream/docker-server-copilot-forge.mjs';
+
+// HOTFIX 2026-07-11 — a static import of a missing module kills the WHOLE
+// sidecar at boot (measured: ERR_MODULE_NOT_FOUND took all 33 tools down, not
+// just the 4 copilot ones). The 4 copilot modules were dropped from the current
+// patch-line by the 2026-07-07 revert; they live in the deployment branch's
+// patch history and will be re-posed at the v1.6.7 reconciliation
+// (ROADMAP.md § "Update 2026-07-10", phase (i)). Until then: load them
+// dynamically — if absent, ONLY the 4 copilot tools fail (loudly, per call),
+// the rest of the sidecar keeps working.
+let inventoryMCPTools, readBLTLedger, _bltInternals, readClusterOpsLedger, _clusterInternals, readForgeContext;
+let copilotLoadError = null;
+try {
+  ({ inventoryMCPTools } = await import('../upstream/docker-server-copilot-core.mjs'));
+  ({ readBLTLedger, _internals: _bltInternals } = await import('../upstream/docker-server-copilot-blt.mjs'));
+  ({ readClusterOpsLedger, _internals: _clusterInternals } = await import('../upstream/docker-server-copilot-cluster.mjs'));
+  ({ readForgeContext } = await import('../upstream/docker-server-copilot-forge.mjs'));
+} catch (err) {
+  copilotLoadError = err?.message || String(err);
+  // stderr only — stdout is the JSON-RPC channel.
+  console.error(`[gitnexus-mcp] copilot modules unavailable — the 4 copilot tools are degraded (fail-loud per call): ${copilotLoadError}`);
+}
+/** Fail-loud guard for the 4 copilot handlers while the modules are absent. */
+function requireCopilot(toolName) {
+  if (copilotLoadError) {
+    throw new Error(
+      `${toolName} unavailable: copilot modules are absent from the current patch-line ` +
+      `(pending v1.6.7 reconciliation — see ROADMAP.md § "Update 2026-07-10" phase (i)). ` +
+      `Other tools are unaffected. Loader error: ${copilotLoadError}`
+    );
+  }
+}
 
 const API_URL = (process.env.GITNEXUS_API || 'http://localhost:4747').replace(/\/+$/, '');
 const WEB_URL = (process.env.GITNEXUS_WEB || 'http://localhost:4173').replace(/\/+$/, '');
@@ -660,7 +687,7 @@ const TOOLS = [
     name: 'gitnexus_copilot_inventory',
     description: 'Tier 3.7 Architect\'s Copilot — inventory gate. Returns the list of MCP analytics tools available + mapping to the 9 endpoints the Copilot requires (entropy, churn, coupling, growth, lifespan, ownership, dissonance, semantic_labels, similarity) + gate verdict (GREEN = unblock Phase A, RED = block). Pure synthesis tool (Iron Rule COPILOT-1) ; introduces zero new analytics.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
-    handler: async () => inventoryMCPTools(),
+    handler: async () => { requireCopilot('gitnexus_copilot_inventory'); return inventoryMCPTools(); },
   },
   {
     name: 'gitnexus_copilot_blt_context',
@@ -674,6 +701,7 @@ const TOOLS = [
       additionalProperties: false,
     },
     handler: async ({ repo, limit }) => {
+      requireCopilot('gitnexus_copilot_blt_context');
       const ledgerPath = _bltInternals.resolveLedgerPath();
       return await readBLTLedger(ledgerPath, { repoId: repo || null, limit: limit || 50 });
     },
@@ -690,6 +718,7 @@ const TOOLS = [
       additionalProperties: false,
     },
     handler: async ({ actions, limit }) => {
+      requireCopilot('gitnexus_copilot_cluster_context');
       const ledgerPath = _clusterInternals.resolveLedgerPath();
       const list = actions ? actions.split(',').map((a) => a.trim()).filter(Boolean) : null;
       return await readClusterOpsLedger(ledgerPath, { actions: list, limit: limit || 50 });
@@ -707,6 +736,7 @@ const TOOLS = [
       additionalProperties: false,
     },
     handler: async ({ concept, depth }) => {
+      requireCopilot('gitnexus_copilot_forge_context');
       return await readForgeContext({ concept: concept || null, depth: depth || 1 });
     },
   },
