@@ -147,7 +147,10 @@ jobs:
       - name: Apply upstream patches (for components paths)
         run: node scripts/apply-upstream-patches.mjs
       - name: Install gitnexus-web deps (component tests import web sources whose deps — graphology, @langchain/core — resolve from upstream/gitnexus-web/node_modules)
-        run: npm ci --prefix upstream/gitnexus-web
+        # `npm install` (not `npm ci`) — same rationale as Dockerfile.web: the
+        # web package-lock drifts on platform-specific optionals (@emnapi/*,
+        # Σ-EMNAPI-LOCKFILE-DRIFT) and npm ci hard-fails on the mismatch.
+        run: npm install --prefix upstream/gitnexus-web --no-audit --no-fund
       - run: cd tests && npm run test:unit -- --reporter=verbose
 
   # Still continue-on-error on 2026-07-11 — needs a full docker stack in CI
