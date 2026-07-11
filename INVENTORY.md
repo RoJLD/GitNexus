@@ -305,7 +305,8 @@ Pure frontend overlay — aucune route serveur, consomme `/ghosts?repo=` du CORE
 - `upstream/docker-server-sysml-export.mjs` — I/O wrapper qui lit `.gitnexus/ghosts.json` via `readLatestGhosts`, agrège les fichiers référencés par `ghost.links[]`, appelle le renderer choisi.
 - Endpoint : `GET /sysml-export?repo=<name>&format=plantuml|mermaid&tier=<n>`. Renvoie `text/plain`. 200 / 400 (missing/bad params) / 404 (no sync) / 500 (errors).
 - **Mapping SysML** : File → block, Ghost planned/expired → requirement, ghost.links → `<<satisfy>>`, dependsOn → `<<deriveReqt>>`, Tier major → package.
-- **Out** : XMI, SysML v2, CALLS/IMPORTS edges, rendering PNG/SVG (le user rend chez lui), composant frontend.
+- **Out** : XMI, SysML v2, rendering PNG/SVG (le user rend chez lui), composant frontend.
+- **Class diagram (Tier 3, 2026-07-11)** : `GET /sysml-export?repo=<name>&format=mermaid-class` — rend un mermaid `classDiagram` du **graphe de symboles réel** (pas des ghosts). Lit `/api/graph` (comme la lens route), projette via `projectClassDiagram` (`docker-server-graph-lens-core.mjs` : Class/Interface + membres HAS_METHOD/HAS_PROPERTY/MEMBER_OF + associations CALLS remontées) puis `renderMermaidClass` (`docker-server-sysml-export-core.mjs`). Cap 150 classes (par nb de membres, `%% truncated`). **Héritage DIFFÉRÉ** (`%% inheritance: unavailable` — l'ingestion n'émet pas EXTENDS/IMPLEMENTS ; Zero Masking). Tests : `tests/unit/class-diagram.test.mjs` (9) + `tests/integration/endpoints/sysml-export-class.test.mjs`. Spec `docs/superpowers/specs/2026-07-11-classdiagram-export-and-class-lens.md`.
 - **Usage** : `curl :4173/sysml-export?repo=hmm_studio > diagram.puml` puis ouvrir dans PlantUML server / VSCode extension.
 
 #### Roadmap-predictive Augmented Timeline (Tier 3.x, 2026-05-27)

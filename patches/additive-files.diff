@@ -5745,10 +5745,10 @@ index 00000000..f30716c8
 +}
 diff --git a/docker-server-graph-lens-core.mjs b/docker-server-graph-lens-core.mjs
 new file mode 100644
-index 00000000..98cf9081
+index 00000000..2d154de4
 --- /dev/null
 +++ b/docker-server-graph-lens-core.mjs
-@@ -0,0 +1,107 @@
+@@ -0,0 +1,194 @@
 +/**
 + * Lens projections over a /api/graph KnowledgeGraph JSON. Pure, no I/O.
 + * Output is shaped like a research render ({nodes:[{id,type,label,path,stage}],
@@ -5851,6 +5851,93 @@ index 00000000..98cf9081
 +  return {
 +    schema_type: 'symbol-graph', template: 'symbol-graph', name: null, source: null,
 +    nodes, edges, report: { nodes: nodes.length, edges: edges.length },
++  };
++}
++
++const _CLASS_LABELS = new Set(['Class', 'Interface']);
++const _METHOD_LABELS = new Set(['Method', 'Function']);
++const _FIELD_LABELS = new Set(['Property', 'Field', 'Const', 'Variable']);
++
++/**
++ * Project a KnowledgeGraph to a CLASS-LEVEL structure for a mermaid `classDiagram`
++ * export. Classes = nodes with label Class|Interface. Members resolved via
++ * HAS_METHOD/HAS_PROPERTY (class->member) + MEMBER_OF (member->class). Associations
++ * from CALLS rolled up to owning classes (self + intra-class dropped, deduped).
++ *
++ * Inheritance is DECLARED `unavailable` — the ingestion emits no EXTENDS/IMPLEMENTS
++ * edge (measured on the live graph 2026-07-11), so the diagram is honest about what
++ * it cannot show (Zero Masking). Output is class-structured (NOT the flat
++ * research-render shape) → consumed by renderMermaidClass, hence NOT in LENSES.
++ *
++ * `cap` bounds the number of rendered classes (richest-by-member-count first) to
++ * avoid a massive raw render; `meta.truncated_from` reports the original count.
++ */
++export function projectClassDiagram(graph, { cap = 150 } = {}) {
++  const nodes = Array.isArray(graph?.nodes) ? graph.nodes : [];
++  const rels = Array.isArray(graph?.relationships) ? graph.relationships : [];
++  const byId = new Map();
++  for (const n of nodes) if (n?.id != null) byId.set(n.id, n);
++  const isClass = (n) => !!n && _CLASS_LABELS.has(n.label);
++
++  const membersOf = new Map(); // classId -> [{kind,name}]
++  const ownerOf = new Map();   // memberId -> classId (for CALLS roll-up)
++  const seenMember = new Set();
++  const addMember = (classId, member) => {
++    if (!member) return;
++    const kind = _METHOD_LABELS.has(member.label) ? 'method'
++      : _FIELD_LABELS.has(member.label) ? 'field' : null;
++    if (!kind) return;
++    const name = (member.properties || {}).name || String(member.id);
++    ownerOf.set(member.id, classId);
++    const key = `${classId}\0${kind}\0${name}`;
++    if (seenMember.has(key)) return;
++    seenMember.add(key);
++    if (!membersOf.has(classId)) membersOf.set(classId, []);
++    membersOf.get(classId).push({ kind, name });
++  };
++  for (const r of rels) {
++    if (r?.type === 'HAS_METHOD' || r?.type === 'HAS_PROPERTY') {
++      if (isClass(byId.get(r.sourceId))) addMember(r.sourceId, byId.get(r.targetId));
++    } else if (r?.type === 'MEMBER_OF') {
++      if (isClass(byId.get(r.targetId))) addMember(r.targetId, byId.get(r.sourceId));
++    }
++  }
++
++  let classNodes = nodes.filter(isClass);
++  const total = classNodes.length;
++  classNodes = classNodes.slice().sort((a, b) =>
++    ((membersOf.get(b.id)?.length || 0) - (membersOf.get(a.id)?.length || 0))
++    || String(a.id).localeCompare(String(b.id)));
++  const truncated = total > cap;
++  if (truncated) classNodes = classNodes.slice(0, cap);
++  const kept = new Set(classNodes.map((n) => n.id));
++
++  const classes = classNodes.map((n) => ({
++    id: n.id,
++    name: (n.properties || {}).name || String(n.id),
++    path: (n.properties || {}).filePath || '',
++    stereotype: n.label === 'Interface' ? 'interface' : 'class',
++    members: membersOf.get(n.id) || [],
++  }));
++
++  const seenAssoc = new Set();
++  const associations = [];
++  for (const r of rels) {
++    if (r?.type !== 'CALLS') continue;
++    const s = ownerOf.get(r.sourceId), t = ownerOf.get(r.targetId);
++    if (!s || !t || s === t || !kept.has(s) || !kept.has(t)) continue;
++    const key = `${s}\0${t}`;
++    if (seenAssoc.has(key)) continue;
++    seenAssoc.add(key);
++    associations.push({ source: s, target: t, kind: 'calls' });
++  }
++
++  return {
++    schema_type: 'class-diagram',
++    classes,
++    associations,
++    meta: { inheritance: 'unavailable', total_classes: total, rendered: classes.length, truncated_from: truncated ? total : null },
++    report: { classes: classes.length, associations: associations.length },
 +  };
 +}
 +
@@ -13740,10 +13827,10 @@ index 00000000..c20c6e42
 +}
 diff --git a/docker-server-sysml-export-core.mjs b/docker-server-sysml-export-core.mjs
 new file mode 100644
-index 00000000..65f5880a
+index 00000000..88f5f16e
 --- /dev/null
 +++ b/docker-server-sysml-export-core.mjs
-@@ -0,0 +1,145 @@
+@@ -0,0 +1,204 @@
 +// upstream/docker-server-sysml-export-core.mjs
 +//
 +// Pure renderers for SysML export. No I/O. Consumes runtime ghosts (from
@@ -13889,16 +13976,97 @@ index 00000000..65f5880a
 +  }
 +  return lines.join('\n') + '\n';
 +}
++
++// Member-name sanitizer for mermaid class bodies. Unlike safeId it does NOT trim
++// leading/trailing underscores (dunders like __init__ are meaningful). The wiki
++// TS mermaid-sanitizer is not runtime-importable from this .mjs, so we sanitize inline.
++function memberLabel(s) {
++  const out = String(s == null ? '' : s).replace(/[^A-Za-z0-9_$]/g, '_');
++  return out.length ? out : 'x';
++}
++
++/**
++ * Render a class-diagram projection (projectClassDiagram output) as mermaid
++ * `classDiagram` text. Consumes { classes, associations, meta, repoName }.
++ * Class ids are de-duplicated (mermaid ids must be unique) — same-named classes
++ * get a numeric suffix. Inheritance is surfaced as a comment when unavailable
++ * (Zero Masking: the diagram states what it does not show).
++ */
++export function renderMermaidClass({ classes, associations, meta, repoName }) {
++  const list = Array.isArray(classes) ? classes : [];
++  const lines = ['classDiagram'];
++  lines.push(`%% gitnexus — Class diagram (${repoName || 'unknown'})`);
++  if (!meta || meta.inheritance === 'unavailable') {
++    lines.push('%% inheritance: unavailable (EXTENDS/IMPLEMENTS not emitted by ingestion)');
++  }
++  if (meta && meta.truncated_from) {
++    lines.push(`%% truncated: showing ${list.length}/${meta.truncated_from} classes (by member count)`);
++  }
++
++  // Unique mermaid id per class id (dedupe same display names).
++  const idOf = new Map();
++  const used = new Map();
++  for (const c of list) {
++    let base = safeId(c.name);
++    if (used.has(base)) { const n = used.get(base) + 1; used.set(base, n); base = `${base}_${n}`; }
++    else used.set(base, 0);
++    idOf.set(c.id, base);
++  }
++
++  for (const c of list) {
++    const cid = idOf.get(c.id);
++    lines.push(`class ${cid} {`);
++    if (c.stereotype === 'interface') lines.push('  <<interface>>');
++    for (const m of (c.members || [])) {
++      const nm = memberLabel(m.name);
++      lines.push(m.kind === 'method' ? `  +${nm}()` : `  +${nm}`);
++    }
++    lines.push('}');
++  }
++
++  const seen = new Set();
++  for (const a of (associations || [])) {
++    const s = idOf.get(a.source), t = idOf.get(a.target);
++    if (!s || !t) continue;
++    const key = `${s}\0${t}`;
++    if (seen.has(key)) continue;
++    seen.add(key);
++    lines.push(`${s} ..> ${t} : ${a.kind || 'calls'}`);
++  }
++  return lines.join('\n') + '\n';
++}
 diff --git a/docker-server-sysml-export.mjs b/docker-server-sysml-export.mjs
 new file mode 100644
-index 00000000..e0647c02
+index 00000000..4dace0a3
 --- /dev/null
 +++ b/docker-server-sysml-export.mjs
-@@ -0,0 +1,60 @@
+@@ -0,0 +1,85 @@
 +// upstream/docker-server-sysml-export.mjs
-+import { renderPlantUml, renderMermaid } from './docker-server-sysml-export-core.mjs';
++import { renderPlantUml, renderMermaid, renderMermaidClass } from './docker-server-sysml-export-core.mjs';
++import { projectClassDiagram } from './docker-server-graph-lens-core.mjs';
 +import { readLatestGhosts } from './docker-server-ghosts.mjs';
 +import { findRepoByName } from './docker-server-snapshots.mjs';
++
++const GITNEXUS_API = process.env.GITNEXUS_API || 'http://gitnexus:4747';
++
++// Class-diagram export reads the KnowledgeGraph (/api/graph) directly — no ghosts,
++// no repoPath — like the lens route (docker-server-graph-lens.mjs).
++async function handleClassDiagram(repoName, res) {
++  try {
++    const r = await fetch(`${GITNEXUS_API}/api/graph?repo=${encodeURIComponent(repoName)}`);
++    if (!r.ok) {
++      res.writeHead(502, { 'Content-Type': 'application/json' });
++      return res.end(JSON.stringify({ error: `upstream /api/graph ${r.status}` }));
++    }
++    const graph = await r.json();
++    const cd = projectClassDiagram(graph);
++    res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
++    res.end(renderMermaidClass({ ...cd, repoName }));
++  } catch (err) {
++    res.writeHead(500, { 'Content-Type': 'application/json' });
++    res.end(JSON.stringify({ error: err.message }));
++  }
++}
 +
 +async function buildSysmlExport(repoPath, { format = 'plantuml', tierFilter, repoName }) {
 +  const runtime = await readLatestGhosts(repoPath);
@@ -13923,6 +14091,9 @@ index 00000000..e0647c02
 +  if (!repoName) {
 +    res.writeHead(400, { 'Content-Type': 'application/json' });
 +    return res.end(JSON.stringify({ error: 'missing repo' }));
++  }
++  if (format === 'mermaid-class') {
++    return handleClassDiagram(repoName, res);
 +  }
 +  if (format !== 'plantuml' && format !== 'mermaid') {
 +    res.writeHead(400, { 'Content-Type': 'application/json' });

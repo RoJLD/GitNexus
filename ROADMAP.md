@@ -80,8 +80,11 @@ quelle, pas de publication marketplace/.vsix.
    A la donnée (Class ×60, Interface ×92, HAS_METHOD/HAS_PROPERTY/MEMBER_OF/CALLS) mais **PAS d'arête
    d'héritage** (EXTENDS/IMPLEMENTS non émises) → scope-cut v1 honnête = classes + membres + associations,
    **héritage DIFFÉRÉ** (`meta.inheritance:'unavailable'`). Plan : `projectClassDiagram` (graph-lens-core) +
-   `renderMermaidClass` (sysml-export-core) + `format=mermaid-class` (route). **Reste = build** (Docker requis
-   pour la vérif live : build order §5 de la spec).
+   `renderMermaidClass` (sysml-export-core) + `format=mermaid-class` (route). **✅ BUILT 2026-07-11** :
+   `projectClassDiagram`+`renderMermaidClass`+route livrés, **9 unit goldens + 1 integration** (16/16 verts) ;
+   vérifié sur le graphe HMMstudio réel (150/152 classes cap, 7 associations, classDiagram valide, accolades
+   équilibrées, inheritance-unavailable + truncation déclarés). Route HTTP couverte par le test integration
+   (CI docker build). `GET /sysml-export?repo=X&format=mermaid-class`.
 3. **Timeline Task 11** : câbler `graphMode='diff'` au canvas (util `graph-diff.ts` + spec e2e existants)
    OU retirer le bouton menteur ; dé-quarantiner spécifiquement les tests Timeline touchés.
 4. **Regression coupling < 30s** : cache série coupling par snapshotId (clé = hash repoId+snapshotId+route+
