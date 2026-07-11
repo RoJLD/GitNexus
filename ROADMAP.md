@@ -85,8 +85,16 @@ quelle, pas de publication marketplace/.vsix.
    vérifié sur le graphe HMMstudio réel (150/152 classes cap, 7 associations, classDiagram valide, accolades
    équilibrées, inheritance-unavailable + truncation déclarés). Route HTTP couverte par le test integration
    (CI docker build). `GET /sysml-export?repo=X&format=mermaid-class`.
-3. **Timeline Task 11** : câbler `graphMode='diff'` au canvas (util `graph-diff.ts` + spec e2e existants)
-   OU retirer le bouton menteur ; dé-quarantiner spécifiquement les tests Timeline touchés.
+3. **Timeline Task 11** — **MESURÉ 2026-07-11 : DÉJÀ CÂBLÉ** (ni « câbler » ni « retirer le bouton » — les deux
+   auraient été faux). Trace de code complète : `enterCursorDiff` (useAppState) → `computeGraphDiff` →
+   `setDiffData` → `diffData.nodeStatus` → GraphCanvas `diffNodeStatus` → le nodeReducer/edgeReducer de
+   `useSigma` applique `DIFF_COLORS` (rouge/émeraude/gris). Le « bouton menteur » **ne ment pas — il colore**.
+   Ce qui mentait = le **commentaire e2e** (`timeline-zoom-and-diff.spec.ts`, « Task 11 DEFERRED »), **périmé**
+   (le câblage a été posé après) → **corrigé**. `computeGraphDiff`/`diffBetweenSnapshots` est unit-testé
+   (`unit/graph-diff-between-snapshots.test.mjs`). Aucun test Timeline n'était quarantiné (rien à dé-quarantiner).
+   Coloration = pixel canvas Sigma, non pixel-assertable en Playwright (pas de légende DOM pour le cursor-diff).
+   **Reste (enhancement optionnel)** : une légende DOM cursor-diff (comme `diff-legend` du model-compare Task 2)
+   rendrait la coloration e2e-assertable + donnerait un feedback visuel — needs rebuild web pour vérif.
 4. **Regression coupling < 30s** : cache série coupling par snapshotId (clé = hash repoId+snapshotId+route+
    **params normalisés** ; LIVE jamais caché) → le webhook watch porte enfin son culprit.
 5. **Extension VSCode** : packager le `.vsix` v0.1 + **observable d'usage défini AVANT le probe 7j**

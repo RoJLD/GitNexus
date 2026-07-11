@@ -6,11 +6,19 @@ import { test, expect } from '@playwright/test';
  *
  * Coverage as of commits 9ec002e8...40594689 :
  *   - Tasks 1-9 + Task 10 button + Task 12 keyboard shortcuts
- *   - Task 11 (wire graphMode='diff' to fetch + Sigma coloring) is DEFERRED
- *     in this iteration. The "Compare A↔B" button toggles graphMode state
- *     correctly but the canvas does not yet render the diff colors. This
- *     spec validates the button label transition but does NOT assert on
- *     red/green/gray graph coloring.
+ *   - Task 11 (graphMode='diff' → Sigma coloring) — CORRIGÉ 2026-07-11 : le
+ *     commentaire « DEFERRED » ci-devant était PÉRIMÉ. Mesure du code : la chaîne
+ *     est CÂBLÉE de bout en bout — enterCursorDiff (useAppState) → computeGraphDiff
+ *     → setDiffData → diffData.nodeStatus → GraphCanvas diffNodeStatus → le
+ *     nodeReducer/edgeReducer de useSigma applique DIFF_COLORS (rouge onlyInA /
+ *     émeraude onlyInB / gris inBoth). Le "Compare A↔B" ne ment PAS : il colore.
+ *     L'util computeGraphDiff/diffBetweenSnapshots est unit-testé
+ *     (unit/graph-diff-between-snapshots.test.mjs). Ce spec valide la transition
+ *     bouton/état ; la coloration est du PIXEL CANVAS Sigma, non pixel-assertable
+ *     de façon robuste en Playwright (pas de légende DOM pour le cursor-diff —
+ *     contrairement au model-compare Task 2 `diff-legend`) → couverture = util
+ *     unit + trace de câblage. Une vérif visuelle end-to-end nécessite le stack
+ *     web rebuild (session Docker dédiée) ; NE PAS re-graver « deferred ».
  *
  * Spec source: docs/superpowers/specs/2026-05-27-timeline-zoom-cursors-design.md
  */
