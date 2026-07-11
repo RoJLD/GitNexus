@@ -93,8 +93,13 @@ quelle, pas de publication marketplace/.vsix.
    (le câblage a été posé après) → **corrigé**. `computeGraphDiff`/`diffBetweenSnapshots` est unit-testé
    (`unit/graph-diff-between-snapshots.test.mjs`). Aucun test Timeline n'était quarantiné (rien à dé-quarantiner).
    Coloration = pixel canvas Sigma, non pixel-assertable en Playwright (pas de légende DOM pour le cursor-diff).
-   **Reste (enhancement optionnel)** : une légende DOM cursor-diff (comme `diff-legend` du model-compare Task 2)
-   rendrait la coloration e2e-assertable + donnerait un feedback visuel — needs rebuild web pour vérif.
+   **Légende cursor-diff LIVRÉE 2026-07-11** (`data-testid="cursor-diff-legend"`, GraphCanvas, mêmes DIFF_COLORS
+   exportés de useSigma) : feedback visuel + counts A/B/both quand un snapshot-diff est actif. tsc vert, image web
+   rebuild. **Finding measure-first (Playwright MCP)** : le diff (donc la légende) ne s'active QUE si les 2 cursors
+   résolvent vers des snapshots DIFFÉRENTS (garde useAppState `if (nameA===nameB) return`) → c'est LA vraie raison
+   du « deferred » d'origine (forcer 2 snapshots distincts de façon fiable, pas l'absence de rendu). Test e2e rendu
+   **conditionnel** (zéro faux rouge). Vérif visuelle live tentée (browser) : la légende n'apparaît pas avec des
+   cursors au même snapshot — comportement CORRECT. Reste : un fixture e2e à 2 snapshots garantis distincts.
 4. **Regression coupling < 30s** : cache série coupling par snapshotId (clé = hash repoId+snapshotId+route+
    **params normalisés** ; LIVE jamais caché) → le webhook watch porte enfin son culprit.
 5. **Extension VSCode** : packager le `.vsix` v0.1 + **observable d'usage défini AVANT le probe 7j**

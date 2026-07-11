@@ -5218,7 +5218,7 @@ index a3c7487a..0415e978 100644
            <div className="mt-6 border-t border-border-subtle pt-4">
              <h3 className="mb-3 text-xs font-medium tracking-wide text-text-secondary uppercase">
 diff --git a/gitnexus-web/src/components/GraphCanvas.tsx b/gitnexus-web/src/components/GraphCanvas.tsx
-index d0880dbe..0ff3d150 100644
+index d0880dbe..12d04a4b 100644
 --- a/gitnexus-web/src/components/GraphCanvas.tsx
 +++ b/gitnexus-web/src/components/GraphCanvas.tsx
 @@ -1,4 +1,4 @@
@@ -5227,14 +5227,17 @@ index d0880dbe..0ff3d150 100644
  import {
    ZoomIn,
    ZoomOut,
-@@ -12,6 +12,7 @@ import {
+@@ -12,8 +12,9 @@ import {
    Network,
    GitBranch,
    Target,
 +  Box,
  } from '@/lib/lucide-icons';
- import { useSigma } from '../hooks/useSigma';
+-import { useSigma } from '../hooks/useSigma';
++import { useSigma, DIFF_COLORS } from '../hooks/useSigma';
  import { useAppState } from '../hooks/useAppState';
+ import {
+   knowledgeGraphToGraphology,
 @@ -23,10 +24,42 @@ import {
    SigmaNodeAttributes,
    SigmaEdgeAttributes,
@@ -6390,7 +6393,7 @@ index d0880dbe..0ff3d150 100644
          <button
            onClick={handleToggleAIHighlights}
            className={
-@@ -448,6 +1488,67 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -448,6 +1488,94 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
            )}
          </button>
        </div>
@@ -6452,6 +6455,33 @@ index d0880dbe..0ff3d150 100644
 +          </div>
 +          <div className="mt-2 border-t border-border-subtle pt-1.5 text-text-muted">
 +            edges +{diffView.summary.addedEdges ?? 0} / −{diffView.summary.removedEdges ?? 0} · drift {diffView.summary.drift ?? 0}
++          </div>
++        </div>
++      )}
++
++      {/* Cursor/snapshot diff legend (Timeline Task 11) — same DIFF_COLORS the
++          Sigma reducers paint (red only-in-A / emerald only-in-B / gray in-both).
++          Shown while a snapshot diff (graphMode='diff', cursorA↔cursorB) is active.
++          Distinct from the model-compare `diff-legend` (diffView) above. */}
++      {diffData && !diffView && (
++        <div className="absolute left-3 bottom-3 z-20 rounded-lg border border-border-subtle bg-elevated/95 p-3 font-mono text-xs text-text-secondary shadow-lg" data-testid="cursor-diff-legend">
++          <div className="mb-2 font-semibold text-text-primary">Snapshot diff A ↔ B</div>
++          <div className="space-y-1">
++            <div className="flex items-center gap-1.5">
++              <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ backgroundColor: DIFF_COLORS.onlyInA }} />
++              <span>only in A ({diffData.counts.nodes.onlyInA})</span>
++            </div>
++            <div className="flex items-center gap-1.5">
++              <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ backgroundColor: DIFF_COLORS.onlyInB }} />
++              <span>only in B ({diffData.counts.nodes.onlyInB})</span>
++            </div>
++            <div className="flex items-center gap-1.5">
++              <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ backgroundColor: DIFF_COLORS.inBoth }} />
++              <span>in both ({diffData.counts.nodes.inBoth})</span>
++            </div>
++          </div>
++          <div className="mt-2 border-t border-border-subtle pt-1.5 text-text-muted">
++            edges A {diffData.counts.edges.onlyInA} / B {diffData.counts.edges.onlyInB} / both {diffData.counts.edges.inBoth}
 +          </div>
 +        </div>
 +      )}
@@ -10165,7 +10195,7 @@ index 5c118450..010c0da5 100644
  
    return <AppStateContext.Provider value={value}>{children}</AppStateContext.Provider>;
 diff --git a/gitnexus-web/src/hooks/useSigma.ts b/gitnexus-web/src/hooks/useSigma.ts
-index a2121dad..4eb3ccce 100644
+index a2121dad..b32bc50e 100644
 --- a/gitnexus-web/src/hooks/useSigma.ts
 +++ b/gitnexus-web/src/hooks/useSigma.ts
 @@ -8,6 +8,34 @@ import EdgeCurveProgram from '@sigma/edge-curve';
@@ -10203,7 +10233,7 @@ index a2121dad..4eb3ccce 100644
  // Helper: Parse hex color to RGB
  const hexToRgb = (hex: string): { r: number; g: number; b: number } => {
    const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
-@@ -63,12 +91,65 @@ interface UseSigmaOptions {
+@@ -63,12 +91,67 @@ interface UseSigmaOptions {
    animatedNodes?: Map<string, NodeAnimation>;
    visibleEdgeTypes?: EdgeType[];
    layoutMode?: 'force' | 'tree' | 'circles';
@@ -10226,8 +10256,10 @@ index a2121dad..4eb3ccce 100644
 +}
 +
 +// Diff palette. Tuned to be readable on the dark background and to coexist
-+// with the existing selection / highlight / blast-radius accents.
-+const DIFF_COLORS: Record<'onlyInA' | 'onlyInB' | 'inBoth', string> = {
++// with the existing selection / highlight / blast-radius accents. Exported so the
++// cursor-diff legend (GraphCanvas) renders the SAME swatches the reducers paint —
++// single source of truth for the snapshot-diff colors.
++export const DIFF_COLORS: Record<'onlyInA' | 'onlyInB' | 'inBoth', string> = {
 +  onlyInA: '#ef4444', // red — present locally, not in the imported one
 +  onlyInB: '#10b981', // emerald — present in the imported one, not locally
 +  inBoth: '#4b5563', // gray-600 — common to both, deliberately desaturated
@@ -10270,7 +10302,7 @@ index a2121dad..4eb3ccce 100644
    zoomIn: () => void;
    zoomOut: () => void;
    resetZoom: () => void;
-@@ -79,8 +160,91 @@ interface UseSigmaReturn {
+@@ -79,8 +162,91 @@ interface UseSigmaReturn {
    selectedNode: string | null;
    setSelectedNode: (nodeId: string | null) => void;
    refreshHighlights: () => void;
@@ -10362,7 +10394,7 @@ index a2121dad..4eb3ccce 100644
  // Noverlap for final cleanup - minimal since it starts with good positions
  const NOVERLAP_SETTINGS = {
    maxIterations: 20, // Reduced - less cleanup needed
-@@ -228,11 +392,100 @@ const clamp = (value: number, min: number, max: number): number => {
+@@ -228,11 +394,100 @@ const clamp = (value: number, min: number, max: number): number => {
    return Math.min(max, Math.max(min, value));
  };
  
@@ -10463,7 +10495,7 @@ index a2121dad..4eb3ccce 100644
    const selectedNodeRef = useRef<string | null>(null);
    const highlightedRef = useRef<Set<string>>(new Set());
    const blastRadiusRef = useRef<Set<string>>(new Set());
-@@ -247,6 +500,39 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
+@@ -247,6 +502,39 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
    onNodeClickRef.current = options.onNodeClick;
    onNodeHoverRef.current = options.onNodeHover;
    onStageClickRef.current = options.onStageClick;
@@ -10503,7 +10535,7 @@ index a2121dad..4eb3ccce 100644
    const layoutTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
    const effectsAnimationFrameRef = useRef<number | null>(null);
    const treeLayoutFrameRef = useRef<number | null>(null);
-@@ -273,12 +559,20 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
+@@ -273,12 +561,20 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
      blastRadiusRef.current = options.blastRadiusNodeIds || new Set();
      animatedNodesRef.current = options.animatedNodes || new Map();
      visibleEdgeTypesRef.current = options.visibleEdgeTypes || null;
@@ -10524,7 +10556,7 @@ index a2121dad..4eb3ccce 100644
    ]);
  
    // Animation loop for node effects
-@@ -415,6 +709,13 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
+@@ -415,6 +711,13 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
          curved: EdgeCurveProgram,
        },
  
@@ -10538,7 +10570,7 @@ index a2121dad..4eb3ccce 100644
        // Custom hover renderer - dark background instead of white
        defaultDrawNodeHover: (context, data, settings) => {
          const label = data.label;
-@@ -476,6 +777,87 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
+@@ -476,6 +779,87 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
            return res;
          }
  
@@ -10626,7 +10658,7 @@ index a2121dad..4eb3ccce 100644
          const currentSelected = selectedNodeRef.current;
          const highlighted = highlightedRef.current;
          const blastRadius = blastRadiusRef.current;
-@@ -586,6 +968,17 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
+@@ -586,6 +970,17 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
        edgeReducer: (edge, data) => {
          const res = { ...data };
  
@@ -10644,7 +10676,7 @@ index a2121dad..4eb3ccce 100644
          // Check edge type visibility first.
          // HAS_METHOD / HAS_PROPERTY are Kotlin/Java hierarchy edges not in the
          // EdgeType union — normalize them so they follow DEFINES / CONTAINS
-@@ -604,6 +997,23 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
+@@ -604,6 +999,23 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
            }
          }
  
@@ -10668,7 +10700,7 @@ index a2121dad..4eb3ccce 100644
          // Tree view: hierarchy edges are subtle, cross-cutting edges are more visible
          const isHierarchyEdge = (data as any).isHierarchyEdge;
          if (isHierarchyEdge !== undefined) {
-@@ -1435,12 +1845,18 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
+@@ -1435,12 +1847,18 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
      [stopAllLayouts, stopCirclesLayout],
    );
  
@@ -10689,7 +10721,7 @@ index a2121dad..4eb3ccce 100644
        stopAllLayouts(false);
  
        // Get settings
-@@ -1464,8 +1880,17 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
+@@ -1464,8 +1882,17 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
            // Light noverlap cleanup
            noverlap.assign(graph, NOVERLAP_SETTINGS);
            sigmaRef.current?.refresh();
@@ -10707,7 +10739,7 @@ index a2121dad..4eb3ccce 100644
          }
        }, duration);
      },
-@@ -1473,25 +1898,92 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
+@@ -1473,25 +1900,92 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
    );
  
    const setGraph = useCallback(
@@ -10805,7 +10837,7 @@ index a2121dad..4eb3ccce 100644
      },
      [
        options.layoutMode,
-@@ -1503,6 +1995,28 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
+@@ -1503,6 +1997,28 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
      ],
    );
  
@@ -10834,7 +10866,7 @@ index a2121dad..4eb3ccce 100644
    const focusNode = useCallback((nodeId: string) => {
      const sigma = sigmaRef.current;
      const graph = graphRef.current;
-@@ -1533,7 +2047,8 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
+@@ -1533,7 +2049,8 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
    }, []);
  
    const resetZoom = useCallback(() => {
@@ -10844,7 +10876,7 @@ index a2121dad..4eb3ccce 100644
      setSelectedNode(null);
    }, [setSelectedNode]);
  
-@@ -1557,10 +2072,313 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
+@@ -1557,10 +2074,313 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
      sigmaRef.current?.refresh();
    }, []);
  
@@ -11158,7 +11190,7 @@ index a2121dad..4eb3ccce 100644
      zoomIn,
      zoomOut,
      resetZoom,
-@@ -1571,5 +2389,18 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
+@@ -1571,5 +2391,18 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
      selectedNode,
      setSelectedNode,
      refreshHighlights,

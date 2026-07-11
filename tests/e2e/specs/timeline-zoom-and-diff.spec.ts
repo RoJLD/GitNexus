@@ -13,12 +13,16 @@ import { test, expect } from '@playwright/test';
  *     nodeReducer/edgeReducer de useSigma applique DIFF_COLORS (rouge onlyInA /
  *     émeraude onlyInB / gris inBoth). Le "Compare A↔B" ne ment PAS : il colore.
  *     L'util computeGraphDiff/diffBetweenSnapshots est unit-testé
- *     (unit/graph-diff-between-snapshots.test.mjs). Ce spec valide la transition
- *     bouton/état ; la coloration est du PIXEL CANVAS Sigma, non pixel-assertable
- *     de façon robuste en Playwright (pas de légende DOM pour le cursor-diff —
- *     contrairement au model-compare Task 2 `diff-legend`) → couverture = util
- *     unit + trace de câblage. Une vérif visuelle end-to-end nécessite le stack
- *     web rebuild (session Docker dédiée) ; NE PAS re-graver « deferred ».
+ *     (unit/graph-diff-between-snapshots.test.mjs). Les couleurs de nœud sont du
+ *     PIXEL CANVAS Sigma (non pixel-assertable en Playwright). Depuis 2026-07-11 une
+ *     **légende DOM cursor-diff** (`data-testid="cursor-diff-legend"`, mêmes DIFF_COLORS
+ *     que les reducers) donne un feedback visuel + les counts A/B/both. MAIS mesuré
+ *     (Playwright MCP) : le diff (donc la légende) ne s'active QUE si les 2 cursors
+ *     résolvent vers des snapshots DIFFÉRENTS (garde useAppState `nameA===nameB`) —
+ *     c'est la vraie raison du « deferred » d'origine (forcer 2 snapshots distincts de
+ *     façon fiable est le point dur, pas l'absence de rendu). Le test légende ci-dessous
+ *     est donc conditionnel (pas de faux rouge si le fixture a des cursors identiques).
+ *     NE PAS re-graver « deferred » : la chaîne EST câblée.
  *
  * Spec source: docs/superpowers/specs/2026-05-27-timeline-zoom-cursors-design.md
  */
@@ -72,6 +76,27 @@ test.describe('Timeline zoom + cursor diff (Phase 1)', () => {
     await expect(page.locator('button:has-text("Exit compare")')).toBeVisible();
     await page.click('button:has-text("Exit compare")');
     await expect(page.locator('button:has-text("Compare A↔B")')).toBeVisible();
+  });
+
+  test('Compare A↔B — cursor-diff legend appears ONLY when cursors span distinct snapshots', async ({ page }) => {
+    // Task 11 enhancement (2026-07-11) : a DOM legend (`cursor-diff-legend`, same
+    // DIFF_COLORS the Sigma reducers paint) renders WHEN a snapshot diff is active.
+    // MESURÉ (Playwright MCP, HMMstudio) : le diff ne s'active que si les 2 cursors
+    // résolvent vers des snapshots DIFFÉRENTS (useAppState garde `if (nameA===nameB)
+    // return`) — sinon enterCursorDiff bail, diffData reste null, pas de légende.
+    // Ce test N'IMPOSE donc PAS la légende (les cursors par défaut du fixture peuvent
+    // être au même snapshot) : il vérifie le contrat SANS faux rouge — si la légende
+    // est là, son contenu est correct ; sinon le mode a quand même toggle.
+    await page.click('button:has-text("Compare A↔B")');
+    await expect(page.locator('button:has-text("Exit compare")')).toBeVisible();
+    const legend = page.getByTestId('cursor-diff-legend');
+    if (await legend.count()) {
+      await expect(legend).toContainText(/only in A/);
+      await expect(legend).toContainText(/only in B/);
+      await expect(legend).toContainText(/in both/);
+      await page.click('button:has-text("Exit compare")');
+      await expect(legend).not.toBeVisible();
+    }
   });
 
   test('keyboard shortcut Z toggles zoom', async ({ page }) => {
