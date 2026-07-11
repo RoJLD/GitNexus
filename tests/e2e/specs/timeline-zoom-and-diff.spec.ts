@@ -81,12 +81,19 @@ test.describe('Timeline zoom + cursor diff (Phase 1)', () => {
   test('Compare A↔B — cursor-diff legend appears ONLY when cursors span distinct snapshots', async ({ page }) => {
     // Task 11 enhancement (2026-07-11) : a DOM legend (`cursor-diff-legend`, same
     // DIFF_COLORS the Sigma reducers paint) renders WHEN a snapshot diff is active.
-    // MESURÉ (Playwright MCP, HMMstudio) : le diff ne s'active que si les 2 cursors
-    // résolvent vers des snapshots DIFFÉRENTS (useAppState garde `if (nameA===nameB)
-    // return`) — sinon enterCursorDiff bail, diffData reste null, pas de légende.
-    // Ce test N'IMPOSE donc PAS la légende (les cursors par défaut du fixture peuvent
-    // être au même snapshot) : il vérifie le contrat SANS faux rouge — si la légende
-    // est là, son contenu est correct ; sinon le mode a quand même toggle.
+    // MESURÉ (Playwright MCP) : le diff ne s'active que si les 2 cursors résolvent vers
+    // des snapshots DIFFÉRENTS (useAppState garde `if (nameA===nameB) return`) — sinon
+    // enterCursorDiff bail, diffData reste null, pas de légende.
+    // 2026-07-12 : rendre ce test DÉTERMINISTE est gaté par 3 trous d'infra e2e (voir
+    // docs/superpowers/specs/2026-05-27-timeline-zoom-cursors-design.md § Update 2026-07-12) :
+    //   (1) tests/e2e/playwright.config.ts ABSENT → ces specs ne s'exécutent JAMAIS (job
+    //       CI e2e = continue-on-error, échec avalé) ;
+    //   (2) l'auto-connect exige ?project=X&server=<api-url> ; `goto('/')` nu ne connecte rien ;
+    //   (3) tlA/tlB (positionnement cursor→snapshot) racent le chargement async des snapshots
+    //       → cursors au défaut → cursorA=null → diff jamais déclenché.
+    // Le code de la légende est CORRECT ; c'est le harnais qui manque. Donc ce test reste
+    // CONDITIONNEL (aucun faux rouge) : si la légende est là, son contenu est vérifié ;
+    // sinon le mode a quand même toggle. NE PAS le rendre strict avant que (1)-(3) soient faits.
     await page.click('button:has-text("Compare A↔B")');
     await expect(page.locator('button:has-text("Exit compare")')).toBeVisible();
     const legend = page.getByTestId('cursor-diff-legend');

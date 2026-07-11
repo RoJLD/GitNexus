@@ -109,3 +109,25 @@ rendues → `inheritances:[{child,parent}]` + `meta.inheritance = 'rendered'|'no
 flèche ; base externe → droppée ; commentaire dynamique). Vérifié sur HMMstudio réel : `none-in-graph` (correct,
 0 héritage interne). Iron : **Σ-ABSENT-IN-THIS-GRAPH-IS-NOT-ABSENT-FROM-THE-PIPELINE** (mesurer le graphe d'UN
 repo ne prouve pas que la feature n'existe pas — le repo peut juste ne pas l'exercer).
+
+## Update 2026-07-12 — v3 HÉRITAGE : le type n'était PAS `INHERITS` mais `EXTENDS`/`IMPLEMENTS` (mesure LIVE)
+
+La v2 supposait le type `INHERITS` par **lecture de code** (`emit-references.ts`), jamais confirmée sur un
+graphe à héritage **interne** (HMMstudio n'en a pas). Cette session a construit une **sonde jetable** (repo TS +
+Python avec `class Dog extends Animal`, `class Circle(Shape)`, `class Bird implements Walker`), l'a **ingérée sur
+la stack live**, et mesuré `/api/graph` : les arêtes réelles sont **`EXTENDS`** (héritage de classe, ×4 internes)
+et **`IMPLEMENTS`** (réalisation d'interface, ×1) — **jamais `INHERITS`**. Donc la v2, keyée sur `INHERITS`,
+rendait **ZÉRO flèche sur données réelles** : chemin mort, masqué par des unit tests qui injectaient des graphes
+`INHERITS` synthétiques.
+
+**v3 livrée** : `projectClassDiagram` consomme `EXTENDS` + `IMPLEMENTS` (+ `INHERITS` en fallback générique),
+sortie `inheritances:[{child,parent,kind:'extends'|'implements'}]` ; `renderMermaidClass` émet `Parent <|-- Child`
+(extends, solide) et `Interface <|.. Class` (implements, pointillé) ; commentaire `(EXTENDS/IMPLEMENTS)`. Unit tests
+réécrits avec les VRAIS types (RED→GREEN, 15/15). **Preuves empiriques** : (a) modules sur le VRAI graphe sonde →
+5 flèches ; (b) route HTTP `/sysml-export?repo=_inherit_probe&format=mermaid-class` (image rebuild) → 200 + 5
+flèches ; (c) fixture `make-fixture.mjs` enrichi (commit 13 : `Store`/`UserStore`/`MemoryCache`/`Cache`) → route
+sample-repo rend `Store <|-- UserStore`, `Store <|-- MemoryCache`, `Cache <|.. MemoryCache` → test d'intégration
+**déterministe** (remplace le `inheritance: unavailable` périmé qui était RED depuis v2). Iron :
+**Σ-READ-THE-CODE-GUESSES-THE-TYPE-INGEST-A-PROBE-PROVES-IT** (lire l'émetteur donne une hypothèse ; seule
+l'ingestion d'un repo qui EXERCE la feature révèle le vrai type d'arête) ; **Σ-GREEN-UNITS-ON-SYNTHETIC-INPUT-CAN-MASK-A-DEAD-PIPELINE-PATH**
+(un fixture unitaire au mauvais type d'arête reste vert tout en cachant une feature morte en prod).

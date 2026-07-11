@@ -58,7 +58,7 @@ describe('projectClassDiagram', () => {
     expect(cd.associations[0].target).toBe(walker.id);
   });
 
-  it('reports inheritance none-in-graph when no INHERITS between in-graph classes — Zero Masking', () => {
+  it('reports inheritance none-in-graph when no inheritance edge between in-graph classes — Zero Masking', () => {
     const cd = projectClassDiagram(GRAPH);
     expect(cd.meta.inheritance).toBe('none-in-graph');
     expect(cd.inheritances).toEqual([]);
@@ -66,25 +66,57 @@ describe('projectClassDiagram', () => {
     expect(cd.meta.truncated_from).toBeNull();
   });
 
-  it('renders inheritance when INHERITS connects two in-graph classes (v2)', () => {
+  // MEASURED 2026-07-12 on a live probe (internal-inheritance repo, TS + Python):
+  // the ingestion emits inheritance as EXTENDS (class→superclass) and IMPLEMENTS
+  // (class→interface), NOT `INHERITS`. The v2 `INHERITS`-only projection rendered
+  // ZERO arrows on real data (dead path). These tests pin the REAL edge types.
+  it('renders inheritance from EXTENDS edges (real ingestion type) between two in-graph classes', () => {
     const g = {
       nodes: [
         { id: 'C:Animal', label: 'Class', properties: { name: 'Animal' } },
         { id: 'C:Dog', label: 'Class', properties: { name: 'Dog' } },
       ],
-      // Python/cpp emit INHERITS source=subclass → target=base.
-      relationships: [{ type: 'INHERITS', sourceId: 'C:Dog', targetId: 'C:Animal' }],
+      // Ingestion emits EXTENDS source=subclass → target=superclass.
+      relationships: [{ type: 'EXTENDS', sourceId: 'C:Dog', targetId: 'C:Animal' }],
     };
     const cd = projectClassDiagram(g);
-    expect(cd.inheritances).toEqual([{ child: 'C:Dog', parent: 'C:Animal' }]);
+    expect(cd.inheritances).toEqual([{ child: 'C:Dog', parent: 'C:Animal', kind: 'extends' }]);
     expect(cd.meta.inheritance).toBe('rendered');
     expect(cd.meta.inheritance_count).toBe(1);
+  });
+
+  it('renders realization from IMPLEMENTS edges (class → interface)', () => {
+    const g = {
+      nodes: [
+        { id: 'C:Bird', label: 'Class', properties: { name: 'Bird' } },
+        { id: 'I:Walker', label: 'Interface', properties: { name: 'Walker' } },
+      ],
+      // Ingestion emits IMPLEMENTS source=class → target=interface.
+      relationships: [{ type: 'IMPLEMENTS', sourceId: 'C:Bird', targetId: 'I:Walker' }],
+    };
+    const cd = projectClassDiagram(g);
+    expect(cd.inheritances).toEqual([{ child: 'C:Bird', parent: 'I:Walker', kind: 'implements' }]);
+    expect(cd.meta.inheritance).toBe('rendered');
+    expect(cd.meta.inheritance_count).toBe(1);
+  });
+
+  it('still accepts INHERITS as a generic-inheritance fallback (mapped to extends)', () => {
+    const g = {
+      nodes: [
+        { id: 'C:A', label: 'Class', properties: { name: 'A' } },
+        { id: 'C:B', label: 'Class', properties: { name: 'B' } },
+      ],
+      relationships: [{ type: 'INHERITS', sourceId: 'C:B', targetId: 'C:A' }],
+    };
+    const cd = projectClassDiagram(g);
+    expect(cd.inheritances).toEqual([{ child: 'C:B', parent: 'C:A', kind: 'extends' }]);
+    expect(cd.meta.inheritance).toBe('rendered');
   });
 
   it('drops inheritance whose base is external/unindexed (not in the graph)', () => {
     const g = {
       nodes: [{ id: 'C:Dog', label: 'Class', properties: { name: 'Dog' } }],
-      relationships: [{ type: 'INHERITS', sourceId: 'C:Dog', targetId: 'External:Protocol' }],
+      relationships: [{ type: 'EXTENDS', sourceId: 'C:Dog', targetId: 'External:Protocol' }],
     };
     const cd = projectClassDiagram(g);
     expect(cd.inheritances).toEqual([]);
@@ -135,17 +167,29 @@ describe('renderMermaidClass', () => {
     expect(out).toMatch(/inheritance: none in-graph/);
   });
 
-  it('renders a mermaid inheritance arrow (parent <|-- child) from INHERITS', () => {
+  it('renders a mermaid inheritance arrow (parent <|-- child) from EXTENDS', () => {
     const g = {
       nodes: [
         { id: 'C:Animal', label: 'Class', properties: { name: 'Animal' } },
         { id: 'C:Dog', label: 'Class', properties: { name: 'Dog' } },
       ],
-      relationships: [{ type: 'INHERITS', sourceId: 'C:Dog', targetId: 'C:Animal' }],
+      relationships: [{ type: 'EXTENDS', sourceId: 'C:Dog', targetId: 'C:Animal' }],
     };
     const out = renderMermaidClass({ ...projectClassDiagram(g), repoName: 'demo' });
-    expect(out).toMatch(/Animal <\|-- Dog/); // parent <|-- child
+    expect(out).toMatch(/Animal <\|-- Dog/); // parent <|-- child (solid inheritance)
     expect(out).toMatch(/inheritance: 1 relation/);
+  });
+
+  it('renders a mermaid realization arrow (interface <|.. class) from IMPLEMENTS', () => {
+    const g = {
+      nodes: [
+        { id: 'C:Bird', label: 'Class', properties: { name: 'Bird' } },
+        { id: 'I:Walker', label: 'Interface', properties: { name: 'Walker' } },
+      ],
+      relationships: [{ type: 'IMPLEMENTS', sourceId: 'C:Bird', targetId: 'I:Walker' }],
+    };
+    const out = renderMermaidClass({ ...projectClassDiagram(g), repoName: 'demo' });
+    expect(out).toMatch(/Walker <\|\.\. Bird/); // interface <|.. class (dashed realization)
   });
 
   it('disambiguates same-named classes with a suffix (mermaid ids must be unique)', () => {

@@ -5745,10 +5745,10 @@ index 00000000..f30716c8
 +}
 diff --git a/docker-server-graph-lens-core.mjs b/docker-server-graph-lens-core.mjs
 new file mode 100644
-index 00000000..099f2695
+index 00000000..2dce40bc
 --- /dev/null
 +++ b/docker-server-graph-lens-core.mjs
-@@ -0,0 +1,221 @@
+@@ -0,0 +1,230 @@
 +/**
 + * Lens projections over a /api/graph KnowledgeGraph JSON. Pure, no I/O.
 + * Output is shaped like a research render ({nodes:[{id,type,label,path,stage}],
@@ -5864,10 +5864,15 @@ index 00000000..099f2695
 + * HAS_METHOD/HAS_PROPERTY (class->member) + MEMBER_OF (member->class). Associations
 + * from CALLS rolled up to owning classes (self + intra-class dropped, deduped).
 + *
-+ * Inheritance is DECLARED `unavailable` — the ingestion emits no EXTENDS/IMPLEMENTS
-+ * edge (measured on the live graph 2026-07-11), so the diagram is honest about what
-+ * it cannot show (Zero Masking). Output is class-structured (NOT the flat
-+ * research-render shape) → consumed by renderMermaidClass, hence NOT in LENSES.
++ * Inheritance is derived from EXTENDS (class → superclass) and IMPLEMENTS
++ * (class → interface) edges — the REAL types the ingestion emits, measured
++ * 2026-07-12 on a live internal-inheritance probe (TS + Python). `INHERITS`
++ * is accepted as a generic fallback. An edge is kept only when child AND parent
++ * are both rendered classes; a base outside the repo (Protocol, ABC, an unindexed
++ * lib class) is absent from the graph, so that inheritance is legitimately dropped
++ * and reported honestly via meta (Zero Masking). Output is class-structured (NOT
++ * the flat research-render shape) → consumed by renderMermaidClass, hence NOT in
++ * LENSES.
 + *
 + * `cap` bounds the number of rendered classes (richest-by-member-count first) to
 + * avoid a massive raw render; `meta.truncated_from` reports the original count.
@@ -5932,21 +5937,25 @@ index 00000000..099f2695
 +    associations.push({ source: s, target: t, kind: 'calls' });
 +  }
 +
-+  // Inheritance : the ingestion DOES emit INHERITS edges (Python synthesizes them
-+  // from class `superclasses`, cpp from base clauses, etc. → mapKindToType 'inherits'
-+  // → INHERITS). We keep only edges whose child AND parent are BOTH rendered classes;
-+  // a base outside the repo (e.g. Protocol, ABC, an unindexed lib class) is not in the
-+  // graph, so that inheritance is legitimately absent — reported honestly via meta.
++  // Inheritance : the ingestion emits EXTENDS (class → superclass) and IMPLEMENTS
++  // (class → interface) edges — measured 2026-07-12 on a live internal-inheritance
++  // probe (source=subclass/impl → target=superclass/interface). `INHERITS` is kept as
++  // a generic fallback (mapped to 'extends'). We keep only edges whose child AND parent
++  // are BOTH rendered classes; a base outside the repo (Protocol, ABC, an unindexed lib
++  // class) is not in the graph, so that inheritance is legitimately absent — reported
++  // honestly via meta. `kind` drives the arrow style (extends → <|--, implements → <|..).
++  const _INHERIT_KIND = { EXTENDS: 'extends', INHERITS: 'extends', IMPLEMENTS: 'implements' };
 +  const seenInh = new Set();
 +  const inheritances = [];
 +  for (const r of rels) {
-+    if (r?.type !== 'INHERITS') continue;
-+    const child = r.sourceId, parent = r.targetId; // Python/cpp: source=subclass → target=base
++    const kind = _INHERIT_KIND[r?.type];
++    if (!kind) continue;
++    const child = r.sourceId, parent = r.targetId; // source=subclass/impl → target=super/iface
 +    if (!kept.has(child) || !kept.has(parent) || child === parent) continue;
-+    const key = `${child}\0${parent}`;
++    const key = `${child}\0${parent}\0${kind}`;
 +    if (seenInh.has(key)) continue;
 +    seenInh.add(key);
-+    inheritances.push({ child, parent });
++    inheritances.push({ child, parent, kind });
 +  }
 +
 +  return {
@@ -13854,10 +13863,10 @@ index 00000000..c20c6e42
 +}
 diff --git a/docker-server-sysml-export-core.mjs b/docker-server-sysml-export-core.mjs
 new file mode 100644
-index 00000000..6ff1857e
+index 00000000..f4c9258b
 --- /dev/null
 +++ b/docker-server-sysml-export-core.mjs
-@@ -0,0 +1,218 @@
+@@ -0,0 +1,221 @@
 +// upstream/docker-server-sysml-export-core.mjs
 +//
 +// Pure renderers for SysML export. No I/O. Consumes runtime ghosts (from
@@ -14024,10 +14033,10 @@ index 00000000..6ff1857e
 +  const lines = ['classDiagram'];
 +  lines.push(`%% gitnexus — Class diagram (${repoName || 'unknown'})`);
 +  if (meta && meta.inheritance === 'rendered') {
-+    lines.push(`%% inheritance: ${meta.inheritance_count} relation(s) (INHERITS)`);
++    lines.push(`%% inheritance: ${meta.inheritance_count} relation(s) (EXTENDS/IMPLEMENTS)`);
 +  } else {
 +    // Zero Masking : dire POURQUOI il n'y a pas de flèches (pas « unavailable »
-+    // faux — l'ingestion émet INHERITS ; ce repo hérite de bases externes/non-indexées).
++    // faux — l'ingestion émet EXTENDS/IMPLEMENTS ; ce repo hérite de bases externes/non-indexées).
 +    lines.push('%% inheritance: none in-graph (classes inherit only from external/unindexed bases)');
 +  }
 +  if (meta && meta.truncated_from) {
@@ -14064,15 +14073,18 @@ index 00000000..6ff1857e
 +    seen.add(key);
 +    lines.push(`${s} ..> ${t} : ${a.kind || 'calls'}`);
 +  }
-+  // Inheritance arrows — mermaid `Parent <|-- Child` (Child is the subclass).
++  // Inheritance/realization arrows — mermaid `Parent <|-- Child` for a class
++  // extending a superclass (solid), `Interface <|.. Class` for a class realizing
++  // an interface (dashed). Child/impl is always on the right of the arrowhead.
 +  const seenInh = new Set();
 +  for (const h of (inheritances || [])) {
 +    const p = idOf.get(h.parent), c = idOf.get(h.child);
 +    if (!p || !c) continue;
-+    const key = `${p}\0${c}`;
++    const arrow = h.kind === 'implements' ? '<|..' : '<|--';
++    const key = `${p}\0${c}\0${arrow}`;
 +    if (seenInh.has(key)) continue;
 +    seenInh.add(key);
-+    lines.push(`${p} <|-- ${c}`);
++    lines.push(`${p} ${arrow} ${c}`);
 +  }
 +  return lines.join('\n') + '\n';
 +}

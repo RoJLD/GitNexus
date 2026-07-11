@@ -85,11 +85,16 @@ quelle, pas de publication marketplace/.vsix.
    vérifié sur le graphe HMMstudio réel (150/152 classes cap, 7 associations, classDiagram valide, accolades
    équilibrées, inheritance-unavailable + truncation déclarés). Route HTTP couverte par le test integration
    (CI docker build). `GET /sysml-export?repo=X&format=mermaid-class`.
-   **v2 héritage 2026-07-11** : la prémisse « ingestion n'émet pas EXTENDS » était FAUSSE — elle émet `INHERITS`
-   (Python `superclasses`, cpp/csharp bases → `mapKindToType`). v2 consomme les INHERITS entre classes rendues →
-   flèches `Parent <|-- Child` + `meta.inheritance='rendered'|'none-in-graph'` (dit POURQUOI pas de flèches :
-   bases externes, pas « unavailable »). HMMstudio réel = `none-in-graph`. +3 unit (12/12). Iron
-   **Σ-ABSENT-IN-THIS-GRAPH-IS-NOT-ABSENT-FROM-THE-PIPELINE**. Reste : un repo à héritage interne pour la démo live.
+   **v3 héritage 2026-07-12 (mesure LIVE, corrige v2)** : v2 supposait le type `INHERITS` par lecture de code —
+   FAUX. Une **sonde jetable ingérée live** (TS+Python à héritage interne) prouve que l'ingestion émet **`EXTENDS`**
+   (classe→superclasse) + **`IMPLEMENTS`** (classe→interface), jamais `INHERITS`. La v2 keyée sur `INHERITS`
+   rendait **0 flèche sur données réelles** (chemin mort, masqué par des unit `INHERITS` synthétiques). v3 :
+   `projectClassDiagram` consomme EXTENDS/IMPLEMENTS (+INHERITS fallback), `kind:'extends'|'implements'` ;
+   `renderMermaidClass` émet `Parent <|-- Child` (solide) + `Interface <|.. Class` (pointillé). **Preuves** :
+   modules sur graphe sonde réel (5 flèches) + route HTTP (200, 5 flèches) + fixture enrichi (commit 13
+   Store/UserStore/MemoryCache/Cache) → intégration **déterministe** (remplace le `unavailable` périmé RED depuis v2).
+   Unit 15/15. Iron **Σ-READ-THE-CODE-GUESSES-THE-TYPE-INGEST-A-PROBE-PROVES-IT** +
+   **Σ-GREEN-UNITS-ON-SYNTHETIC-INPUT-CAN-MASK-A-DEAD-PIPELINE-PATH**.
 3. **Timeline Task 11** — **MESURÉ 2026-07-11 : DÉJÀ CÂBLÉ** (ni « câbler » ni « retirer le bouton » — les deux
    auraient été faux). Trace de code complète : `enterCursorDiff` (useAppState) → `computeGraphDiff` →
    `setDiffData` → `diffData.nodeStatus` → GraphCanvas `diffNodeStatus` → le nodeReducer/edgeReducer de

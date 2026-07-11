@@ -289,3 +289,42 @@ Les 3 questions UX laissées ouvertes lors de la rédaction initiale ont été t
 | Mini-map default | Visible uniquement quand `zoomWindow !== null` | En vue complète la timeline EST la mini-map. Collapsible via chevron, état persisté en localStorage pour les power users qui préfèrent + d'espace vertical. |
 
 Aucune autre question ouverte.
+
+## Update 2026-07-12 — La légende cursor-diff « déterministe » est gatée par 3 trous d'infra e2e (mesuré)
+
+Objectif de session : rendre l'assertion e2e de la **légende cursor-diff** (`data-testid="cursor-diff-legend"`)
+déterministe (au lieu du test conditionnel actuel). Measure-first a réfuté la prémisse « il suffit d'un
+fixture à 2 snapshots » : le blocage est un **empilement de 3 trous d'infra e2e**, chacun un projet en soi.
+Le code de la légende est CORRECT (chaîne causale vérifiée par lecture + `Compare A↔B` bascule bien
+`graphMode='diff'`) — rien à corriger côté rendu. Ce qui manque, c'est le harnais qui l'exercerait.
+
+1. **`tests/e2e/playwright.config.ts` est ABSENT** (jamais committé — `git log --all` vide, non-gitignored).
+   `npm run test:e2e` = `playwright test --config e2e/playwright.config.ts` → erreur « config not found » au
+   chargement. Le job CI `e2e` (`.github/workflows/test.yml`) est **`continue-on-error: true`** → l'échec est
+   avalé, CI reste verte. **Conséquence : AUCUNE spec e2e ne s'est jamais exécutée.** Un tier de test entier
+   mort-mais-d'apparence-présente (violation Zero-Masking). `Σ-A-CONTINUE-ON-ERROR-JOB-WITH-A-MISSING-CONFIG-IS-A-SILENTLY-DEAD-TEST-TIER`.
+2. **L'auto-connect exige le param `server=`**, pas seulement `project=`. Cliquer une carte repo navigue vers
+   `?project=<name>&server=http://localhost:4747` (l'API). Mesuré : `?project=X` seul → `connectToServer`
+   fetch le WEB (4173, default `window.location.origin`) au lieu de l'API → reçoit du HTML → `SyntaxError:
+   Unexpected token '<' ... is not valid JSON` → retombe sur le picker. Or **toutes les specs font `goto('/')`
+   nu** (aucun param) → elles ne connecteraient AUCUN repo même avec un config. `Σ-THE-SPECS-ASSUME-A-CONNECT-PATH-THAT-DOES-NOT-FIRE-ON-BARE-GOTO`.
+3. **Le positionnement cursor→snapshot est racy.** `tlA`/`tlB` (shortHashes) sont lus **one-shot** par
+   `useTimelineUrlSync` APRÈS chargement des snapshots dans `availableRepos` ; mesuré : naviguer vers
+   `?project=sample-repo&server=...&tlA=8e096d3&tlB=5c3bfb4&tlMode=diff` **ne positionne pas** les cursors
+   (race : le repo est là mais ses `snapshots` pas encore dans le state au moment du read). Cursors restent
+   au défaut → `cursorA=null` (start of window) → le garde `if (!cursorA || !cursorB) return` empêche le diff.
+   Les flèches clavier sur le slider ne snappent pas non plus sur une date de snapshot exacte. **Forcer 2
+   snapshots distincts de façon fiable EST le point dur** (confirme empiriquement la note « deferred » d'origine).
+   `Σ-A-ONE-SHOT-URL-READ-RACES-THE-ASYNC-SNAPSHOT-LOAD`.
+
+**Reproduction du chemin qui CONNECTE + a des snapshots** (pour la future session harnais) :
+`POST /snapshot/bulk?repo=<name>` (repo en QUERY) body `{count,sinceDays}` → crée N snapshots ;
+puis `?project=<name>&server=<api-url>` connecte. Le fixture `sample-repo` (commit 13, hiérarchie interne)
+sert déjà l'assertion **déterministe des flèches classdiagram côté INTÉGRATION** (qui, elle, tourne en CI).
+
+**Livrable e2e réel** = un projet dédié : (a) écrire `playwright.config.ts` (testDir specs, baseURL,
+webServer OU stack externe), (b) un `globalSetup`/helper qui connecte le repo (`project`+`server`) et pose
+2 cursors distincts de façon fiable (attendre les snapshots avant le read, OU driver de drag qui snappe),
+(c) retirer `continue-on-error` une fois vert. Tant que (a)-(c) ne sont pas faits, le test légende reste
+**conditionnel** (aucun faux rouge) — inchangé cette session, car ajouter une assertion « déterministe »
+dans un fichier qui ne s'exécute jamais serait cosmétique.
