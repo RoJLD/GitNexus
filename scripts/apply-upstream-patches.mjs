@@ -1,7 +1,15 @@
 #!/usr/bin/env node
 /**
- * Clone upstream gitnexus at $GITNEXUS_VERSION (default v1.6.3) and apply
- * patches/upstream-all.diff. Used both locally (one-time setup) and in CI.
+ * Clone upstream gitnexus at $GITNEXUS_VERSION (default v1.6.5) and apply the
+ * TWO canonical diffs: patches/additive-files.diff (new files we own, zero
+ * conflict risk) then patches/inplace-edits.diff (edits to upstream files).
+ * Used both locally (one-time setup) and in CI.
+ *
+ * History (2026-07-11): this script used to apply the legacy monolithic
+ * patches/upstream-all.diff — frozen at 2026-06-11 and silently a MONTH stale
+ * vs the canonical split diffs (drift-check only guards the split ones). CI
+ * was therefore testing an old snapshot of our edits while builds stayed
+ * green. The legacy file is deleted; the split diffs are the only truth.
  *
  * Safety: refuses to wipe an existing upstream/ unless FORCE_CLEAN_UPSTREAM=1.
  * Locally, upstream/ usually contains active edits — don't lose them.
@@ -38,6 +46,9 @@ if (existsSync(UPSTREAM)) {
 // across upstream versions. Shallow clones force a fallback to direct apply,
 // which fails noisily on every diverged file.
 sh(`git clone --branch ${TAG} https://github.com/abhigyanpatwari/gitnexus.git upstream`);
-sh(`git apply --3way --whitespace=fix ../patches/upstream-all.diff`, { cwd: UPSTREAM });
+// Additive first (new files, cannot conflict), then in-place (--3way needs
+// the full-history clone above for its blobs). Same order as patches/README.md.
+sh(`git apply --3way --whitespace=fix ../patches/additive-files.diff`, { cwd: UPSTREAM });
+sh(`git apply --3way --whitespace=fix ../patches/inplace-edits.diff`, { cwd: UPSTREAM });
 
 console.log(`\nupstream/ ready at ${TAG} with patches applied.`);
