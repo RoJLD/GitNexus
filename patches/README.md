@@ -2,11 +2,11 @@
 
 Two diff files capture every modification we apply to the
 [gitnexus/gitnexus](https://github.com/abhigyanpatwari/gitnexus)
-repository (tag `v1.6.5`) for this deployment:
+repository (tag `v1.6.7`) for this deployment:
 
-- **`additive-files.diff`** — ~132 new files we own entirely (measured
-  2026-07-11). These never conflict with upstream changes because they are
-  new files, not edits.
+- **`additive-files.diff`** — ~136 new files we own entirely (measured
+  2026-07-11, post re-bump v1.6.7 + 4 copilot modules re-posed). These never
+  conflict with upstream changes because they are new files, not edits.
 - **`inplace-edits.diff`** — 21 modified upstream files (measured 2026-07-11).
   This is the real conflict surface when bumping upstream.
 
@@ -19,7 +19,7 @@ deltas here so the work is reproducible and reviewable.
 
 ```powershell
 # From the repo root
-git clone --depth 1 --branch v1.6.5 https://github.com/abhigyanpatwari/gitnexus.git upstream
+git clone --depth 1 --branch v1.6.7 https://github.com/abhigyanpatwari/gitnexus.git upstream
 cd upstream
 git apply ../patches/additive-files.diff
 git apply ../patches/inplace-edits.diff
@@ -27,14 +27,14 @@ git apply ../patches/inplace-edits.diff
 git status
 ```
 
-`git apply` will fail loudly if upstream has drifted from the v1.6.5
+`git apply` will fail loudly if upstream has drifted from the v1.6.7
 baseline (e.g. you cloned a different tag, or upstream rewrote one of
 the files we patch). When that happens, regenerate the diffs after
 manually re-applying the changes — see "Regenerate the diffs" below.
 
 ## What's inside
 
-~132 additive files (new files we own, in `additive-files.diff`) + 21
+~136 additive files (new files we own, in `additive-files.diff`) + 21
 in-place edits to upstream files (the real conflict surface, in
 `inplace-edits.diff`); zero deletions.
 

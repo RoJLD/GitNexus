@@ -50,12 +50,12 @@ quelle, pas de publication marketplace/.vsix.
    des ~24 tests Timeline (`tests/quarantine.json` committé + plafond anti-croissance) avec **cible de
    résorption chiffrée datée** (≤8 fin (i), 0 fin (ii) — sinon suppression assumée avec verdict, jamais de
    quarantaine permanente).
-4. **Séquence de réconciliation UNIQUE** (finding critical du panel — 3 opérations régénéraient les mêmes
+4. **Séquence de réconciliation UNIQUE** ✅ **EXÉCUTÉE 2026-07-11** (re-bump v1.6.7 : 136 additive / 21 inplace, 12 conflits résolus à la main, copilot re-posé 4 modules sidecar ; vérifs Docker build-gate + boot-smoke + drift-check 0 + sidecar 34 tools VERTES. Note mesurée : le merge class-lens→deployment s'est avéré un **fast-forward** — deployment est un ancêtre — et copilot a été récupéré de `c560a852`, sans re-perte au merge.) (finding critical du panel — 3 opérations régénéraient les mêmes
    diffs depuis 3 bases différentes = 3e gutting garanti) :
    a. merge `feat/classdiagram-export-and-class-lens` → `deployment` (c'est le code v7 live ; extraire
       d'abord les 4 fichiers copilot de l'historique deployment vers un staging — le merge ne doit pas les
       re-perdre) ;
-   b. **[RATIFIÉ 2026-07-11]** re-bump sources+patches → v1.6.7 (l'image CLI tourne en 1.6.7 depuis un
+   b. **[EXÉCUTÉ 2026-07-11]** re-bump sources+patches → v1.6.7 (l'image CLI tourne en 1.6.7 depuis un
       mois, v1.6.6 mega-release rend le downgrade d'image risqué ; fallback re-pin 1.6.5 documenté =
       réindexation complète) — reste **gated par la CI durcie (3)**, dry-run frais obligatoire (le
       rapport existant est antérieur au revert), **check licence upstream au bump** ;

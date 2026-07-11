@@ -1,6 +1,6 @@
 # GitNexus — Sovereign Tracking
 
-- **upstream remote** : `origin` → `abhigyanpatwari/GitNexus` (drift baseline `v1.6.5`)
+- **upstream remote** : `origin` → `abhigyanpatwari/GitNexus` (drift baseline `v1.6.7`, re-bump 2026-07-11)
 - **sovereign remote** : `sovereign` → `RoJLD/GitNexus@deployment` (patches-only fork, branding "Elysium")
 - **current branch** : `sovereign-deployment` tracking `sovereign/deployment`
 - **pattern** : Σ-PATCH-ONLY (additive 914 KB + inplace 313 KB + `cohabitation.config.json`)

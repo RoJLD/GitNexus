@@ -1,11 +1,11 @@
 # GitNexus — État des lieux
 
-**Snapshot daté : 2026-06-15 (post-Tier-3.7 Phase D Hardening scaffold)** — entête corrigée **2026-07-11** (passe doc-honnêteté)
+**Snapshot daté : 2026-06-15 (post-Tier-3.7 Phase D Hardening scaffold)** — entête **réconciliée 2026-07-11** (re-bump v1.6.7 EXÉCUTÉ)
 
-> ⚠️ **Split-brain version (mesuré 2026-07-11)** — le bump v1.6.7 décrit dans l'entête d'origine a été **reverté** le 2026-07-07 (gutting des patches). État réel : **sources+patches = `v1.6.5` ; image CLI = `1.6.7` ; réconciliation planifiée — phase (i), cf. ROADMAP § Update 2026-07-10**. Toute mention `1.6.7` plus bas se lit sous ce caveat (elle décrit l'image CLI et la cible de re-bump, pas les sources actuelles).
+> ✅ **Split-brain RÉSOLU (2026-07-11)** — le re-bump a été ré-exécuté : **sources+patches = image CLI = `v1.6.7`**. 136 fichiers additifs + 21 in-place ré-appliqués sur un clone frais v1.6.7 (12 conflits résolus à la main, copilot re-posé — 4 modules sidecar). Vérifié empiriquement : Docker build-gate + boot-smoke verts, `check-patch-drift` 0, sidecar MCP 34 tools (copilot GREEN). Le caveat split-brain est **levé**.
 
-**Base upstream (sources+patches) : `v1.6.5`** — l'ancienne entête disait `v1.6.7` (v1.6.6 mega-release ~190 PRs + v1.6.7 patch fixes) ; c'est la cible de re-bump, pas les sources courantes.
-**Fork interne : [github.com/RoJLD/GitNexus](https://github.com/RoJLD/GitNexus) → branche active `feat/classdiagram-export-and-class-lens`** (le code v7 live ; `deployment` = base de réconciliation).
+**Base upstream (sources+patches) : `v1.6.7`** (re-bump exécuté 2026-07-11, aligné sur l'image CLI).
+**Fork interne : [github.com/RoJLD/GitNexus](https://github.com/RoJLD/GitNexus) → branche active `feat/classdiagram-export-and-class-lens`** (le code v7 live ; `deployment` = base de réconciliation, fast-forwardée sur cette branche).
 
 Document figé dans le temps, vocation : servir de base de brainstorming
 pour les évolutions futures. À ré-éditer quand on bump la version
@@ -340,7 +340,7 @@ Pure frontend extension de la Timeline existante — aucune route serveur, réut
 | [CLAUDE.md](CLAUDE.md) | Règles pour l'agent : maintenir ROADMAP + INVENTORY à chaque feature, rebuild after upstream edits |
 | [../CLAUDE.md](../CLAUDE.md) | Règle workspace : tests CI/CD si module en a déjà |
 | [patches/README.md](patches/README.md) | Comment ré-appliquer les patches sur un clone frais + procédure de bump dry-run |
-| [patches/additive-files.diff](patches/additive-files.diff) | 132 fichiers neufs que nous possédons (risque de conflit nul) — mesuré 2026-07-11 |
+| [patches/additive-files.diff](patches/additive-files.diff) | 136 fichiers neufs que nous possédons (risque de conflit nul) — mesuré 2026-07-11 (post re-bump v1.6.7 + 4 modules copilot re-posés) |
 | [patches/inplace-edits.diff](patches/inplace-edits.diff) | 21 édits in-place de fichiers upstream (vraie surface de conflit au bump) — mesuré 2026-07-11 |
 | [patches/bump-dry-run-main.md](patches/bump-dry-run-main.md) | Rapport du premier dry-run de bump contre `main` (107 clean / 0 conflict / 9 fail) |
 | [scripts/bump-upstream.mjs](scripts/bump-upstream.mjs) | Outil de bump dry-run : clone la cible, applique les deux diffs, écrit le rapport |

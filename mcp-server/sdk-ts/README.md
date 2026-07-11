@@ -8,8 +8,10 @@ TypeScript client SDK for the **GitNexus Architect's Copilot AI** REST surface
 > The `gitnexus_tour` SSE wrapper (Task B3) is **ABANDONED** — the tour-worker it
 > would wrap was never built (verdict 2026-07-11; see the Tier 3.7 spec Update).
 > The package is still consumed in-tree only until the first `sdk-ts-v*` tag is
-> pushed, and the `/copilot/*` endpoints it targets are pending re-pose at the
-> v1.6.7 re-bump (sources are currently `v1.6.5`).
+> pushed. After the 2026-07-11 v1.6.7 re-bump the 4 copilot context modules are
+> live via the MCP sidecar (`node mcp-server/smoke.mjs` green), but the
+> `/copilot/*` HTTP endpoints this SDK targets remain **not web-served**
+> (copilot is MCP-sidecar-only — see the Tier 3.7 spec Update).
 
 ## Why this SDK exists
 

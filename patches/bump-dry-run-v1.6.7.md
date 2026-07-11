@@ -1,27 +1,22 @@
 # Bump dry-run report — cible `v1.6.7`
 
-- clean: 131
+- clean: 141
 - conflict: 0
-- fail: 17
+- fail: 12
 
 ## Fichiers à reprendre à la main
-- [fail] (inplace) Dockerfile.web
 - [fail] (inplace) docker-server.mjs
 - [fail] (inplace) gitnexus-web/package-lock.json
 - [fail] (inplace) gitnexus-web/package.json
 - [fail] (inplace) gitnexus-web/src/App.tsx
 - [fail] (inplace) gitnexus-web/src/components/DropZone.tsx
-- [fail] (inplace) gitnexus-web/src/components/FileTreePanel.tsx
 - [fail] (inplace) gitnexus-web/src/components/GraphCanvas.tsx
 - [fail] (inplace) gitnexus-web/src/components/Header.tsx
 - [fail] (inplace) gitnexus-web/src/components/RepoAnalyzer.tsx
 - [fail] (inplace) gitnexus-web/src/config/ui-constants.ts
 - [fail] (inplace) gitnexus-web/src/core/llm/agent.ts
-- [fail] (inplace) gitnexus-web/src/hooks/useAppState.tsx
 - [fail] (inplace) gitnexus-web/src/hooks/useSigma.ts
-- [fail] (inplace) gitnexus-web/src/index.css
-- [fail] (inplace) gitnexus-web/src/lib/lucide-icons.tsx
-- [fail] (inplace) gitnexus-web/src/services/backend-client.ts
+- [fail] (inplace) gitnexus/src/core/wiki/generator.ts
 
 ## Détail
 - [clean] (additive) connectors/github.mjs
@@ -155,20 +150,25 @@
 - [clean] (additive) gitnexus-web/src/services/research-client.ts
 - [clean] (additive) gitnexus-web/src/services/semantic-labeler.ts
 - [clean] (additive) gitnexus-web/src/services/snapshot-ghosts-cache.ts
-- [fail] (inplace) Dockerfile.web
+- [clean] (additive) gitnexus/test/unit/wiki-prompt-injection-guard.test.ts
+- [clean] (inplace) Dockerfile.web
 - [fail] (inplace) docker-server.mjs
 - [fail] (inplace) gitnexus-web/package-lock.json
 - [fail] (inplace) gitnexus-web/package.json
 - [fail] (inplace) gitnexus-web/src/App.tsx
 - [fail] (inplace) gitnexus-web/src/components/DropZone.tsx
-- [fail] (inplace) gitnexus-web/src/components/FileTreePanel.tsx
+- [clean] (inplace) gitnexus-web/src/components/FileTreePanel.tsx
 - [fail] (inplace) gitnexus-web/src/components/GraphCanvas.tsx
 - [fail] (inplace) gitnexus-web/src/components/Header.tsx
 - [fail] (inplace) gitnexus-web/src/components/RepoAnalyzer.tsx
 - [fail] (inplace) gitnexus-web/src/config/ui-constants.ts
 - [fail] (inplace) gitnexus-web/src/core/llm/agent.ts
-- [fail] (inplace) gitnexus-web/src/hooks/useAppState.tsx
+- [clean] (inplace) gitnexus-web/src/hooks/useAppState.tsx
 - [fail] (inplace) gitnexus-web/src/hooks/useSigma.ts
-- [fail] (inplace) gitnexus-web/src/index.css
-- [fail] (inplace) gitnexus-web/src/lib/lucide-icons.tsx
-- [fail] (inplace) gitnexus-web/src/services/backend-client.ts
+- [clean] (inplace) gitnexus-web/src/index.css
+- [clean] (inplace) gitnexus-web/src/lib/graph-adapter.ts
+- [clean] (inplace) gitnexus-web/src/lib/lucide-icons.tsx
+- [clean] (inplace) gitnexus-web/src/services/backend-client.ts
+- [clean] (inplace) gitnexus-web/vite.config.ts
+- [fail] (inplace) gitnexus/src/core/wiki/generator.ts
+- [clean] (inplace) gitnexus/src/core/wiki/prompts.ts
