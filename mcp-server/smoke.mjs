@@ -266,6 +266,62 @@ try {
   if (noMethod.error?.code !== -32601) fail('Unknown method should return -32601');
   pass(`unknown method → -32601 method-not-found`);
 
+  // 7. --live-gateway (north-star Phase 1 item 8 — agent-symmetry-smoke).
+  //    Falsifiable assertions of the /lens agent path against a LIVE
+  //    Σ-BRAIN-GRAPH-GATEWAY (127.0.0.1:4750 + INTER_GRAPH_URL). Opt-in so the
+  //    default smoke stays stack-optional. This is the phase exit criterion.
+  if (process.argv.includes('--live-gateway')) {
+    if (!process.env.INTER_GRAPH_URL) {
+      fail('--live-gateway needs INTER_GRAPH_URL (start sigma_brain_graph_gateway.py --host 127.0.0.1 --port 4750)');
+    }
+    const callJson = async (name, args = {}) => {
+      const r = await send('tools/call', { name, arguments: args });
+      return JSON.parse(r.result.content[0].text);
+    };
+    // a. list_lenses advertises the registry incl. health::graph_registry (item 5).
+    const lenses = await callJson('gitnexus_list_lenses');
+    if (lenses.stub) fail(`live: gitnexus_list_lenses stub — gateway unreachable: ${lenses.concern}`);
+    const names = (lenses.lenses || []).map((l) => l.name);
+    for (const need of ['inter_graph', 'sigil', 'health::graph_registry']) {
+      if (!names.includes(need)) fail(`live: lens "${need}" absent from list_lenses (got: ${names.join(', ')})`);
+    }
+    pass(`live: list_lenses → ${names.length} lenses incl. health::graph_registry`);
+    // b. inter_graph coherent with query_meta_graph (both = the 19 InterGraphRel).
+    const ig = await callJson('gitnexus_get_lens_graph', { name: 'inter_graph' });
+    const qm = await callJson('query_meta_graph');
+    if (ig.stub || qm.stub) fail('live: inter_graph / query_meta_graph returned a stub');
+    if ((ig.relationships?.length ?? 0) !== (qm.relationships?.length ?? -1)) {
+      fail(`live: inter_graph rels (${ig.relationships?.length}) != query_meta_graph rels (${qm.relationships?.length})`);
+    }
+    pass(`live: inter_graph == query_meta_graph → ${ig.relationships.length} InterGraphRel`);
+    // c. STALE-count coherence: health::graph_registry is fetchable via the
+    //    generic /lens contract (item 5 unification) and carries content.
+    const hr = await callJson('gitnexus_get_lens_graph', { name: 'health::graph_registry' });
+    if (hr.stub || hr.error) fail(`live: health::graph_registry not served via /lens: ${hr.error || hr.concern}`);
+    if (!(hr.nodes?.length > 0)) fail('live: health::graph_registry has no nodes');
+    pass(`live: health::graph_registry via /lens → ${hr.nodes.length} nodes (item 5 unification)`);
+    // d. SIGIL-on-witness-file: the sigil graph is non-empty and its
+    //    meta.freshness verdict is present (item 6) — the agent can tell whether
+    //    it is trusting stale data.
+    const sig = await callJson('gitnexus_get_lens_graph', { name: 'sigil' });
+    if (sig.stub) fail('live: sigil lens stub');
+    const fr = sig.meta?.freshness;
+    if (!fr || typeof fr.stale !== 'boolean') fail(`live: sigil meta.freshness missing/invalid: ${JSON.stringify(fr)}`);
+    if (!(sig.nodes?.length > 0)) fail('live: sigil graph empty (regen the ground truth)');
+    pass(`live: sigil → ${sig.nodes.length} nodes, freshness.stale=${fr.stale} (item 6)`);
+    // e. contention proxy: two concurrent reads both succeed (gateway is
+    //    read-only, ThreadingHTTPServer). Full "read during a live sentinel-writer
+    //    run" is the graved human-test.
+    const [c1, c2] = await Promise.all([
+      callJson('gitnexus_get_lens_graph', { name: 'inter_graph' }),
+      callJson('gitnexus_get_lens_graph', { name: 'inter_graph' }),
+    ]);
+    if (c1.stub || c2.stub || !(c1.relationships?.length > 0) || !(c2.relationships?.length > 0)) {
+      fail('live: concurrent reads did not both succeed (contention)');
+    }
+    pass('live: 2 concurrent reads OK (read-only contention proxy)');
+  }
+
   console.log('\nAll smoke checks passed.');
   server.kill();
   process.exit(0);
