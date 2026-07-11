@@ -1,0 +1,20 @@
+{
+  "_doc": "Registre de quarantaine des tests e2e/integration (roadmap phase i.3 — 'quarantaine EXPLICITE avec verdict, jamais permanente'). Un test quarantiné est SKIPPÉ via test.describe.fixme dans son spec ET listé ici avec verdict + condition de dé-quarantaine falsifiable. Le plafond anti-croissance interdit d'ajouter une entrée sans re-ratifier `cap`. Un test qui teste une surface abandonnée par design n'est PAS un rouge à masquer : c'est une quarantaine-avec-verdict (le vrai gate est nommé dans real_proof).",
+  "cap": 8,
+  "quarantined": [
+    {
+      "spec": "e2e/specs/copilot-panel.spec.ts",
+      "describes": [
+        "Tier 3.7 — CopilotPanel E2E",
+        "Tier 3.7 — /copilot/metrics Prometheus endpoint"
+      ],
+      "count": 8,
+      "since": "2026-07-11",
+      "sigil": "Σ-COPILOT-IS-SIDECAR-ONLY",
+      "verdict": "Le copilot est 4 modules MCP sidecar, PAS web-servi. Confirmé 3× : routes /copilot/* non enregistrées dans upstream/docker-server-routes.mjs ; modules non COPY'd dans upstream/Dockerfile.web (rebuild sans effet) ; empirique 8/8 échouent, /copilot/metrics rend le shell HTML SPA. La réconciliation v1.6.7 a ratifié copilot = sidecar sans routes/COPY. Ratifié user 2026-07-11.",
+      "real_proof": "node mcp-server/smoke.mjs → gitnexus_copilot_{inventory,blt_context,cluster_context,forge_context} verts ; inventory gate=GREEN ; 9/9 endpoints mappés. C'est le vrai gate copilot-phase-d (pas la surface web).",
+      "dequarantine_when": "enregistrer les routes /copilot/* (docker-server-routes.mjs) + COPY les modules copilot (Dockerfile.web) + monter le panel React → retirer les .fixme + corriger le faux fallback (commentaire 'accept absence' mais assertion toContain qui échoue sur absence).",
+      "permanent": false
+    }
+  ]
+}

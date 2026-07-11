@@ -14,12 +14,36 @@
 // registry + GET /copilot/metrics handler). The metrics scrape assertions
 // match its `# TYPE` lines exactly.
 
+// ─────────────────────────────────────────────────────────────────────────
+// QUARANTINE VERDICT — 2026-07-11 (Σ-COPILOT-IS-SIDECAR-ONLY, ratifié user)
+// ─────────────────────────────────────────────────────────────────────────
+// Mesuré 3× : le copilot est SIDECAR-ONLY par construction, pas web-servi.
+//   1. routes /copilot/* NON enregistrées dans upstream/docker-server-routes.mjs ;
+//   2. modules copilot NON COPY'd dans upstream/Dockerfile.web (rebuild n'y change rien) ;
+//   3. empirique : 8/8 de ces tests échouent, /copilot/metrics rend le shell HTML SPA
+//      (pas du Prometheus text/plain v0.0.4).
+// La réconciliation v1.6.7 a ratifié le copilot = 4 modules MCP sidecar, SANS routes ni
+// COPY (re-poser les routes aurait *introduit* un crash-loop). Ces 2 describe testent donc
+// une SURFACE WEB ABANDONNÉE → `test.describe.fixme` (quarantaine, pas rouge menteur).
+//
+// PREUVE RÉELLE du copilot (ce qui EST vérifié) : `node mcp-server/smoke.mjs` →
+// gitnexus_copilot_{inventory,blt_context,cluster_context,forge_context} verts,
+// inventory gate=GREEN, 9/9 endpoints mappés. C'est le vrai gate copilot-phase-d.
+//
+// DÉ-QUARANTAINE (condition falsifiable) : enregistrer les routes /copilot/* dans
+// docker-server-routes.mjs + COPY dans Dockerfile.web + monter le panel React, PUIS
+// retirer les `.fixme`. NB : corriger aussi le faux fallback l.~176 (son commentaire dit
+// « accept absence » mais l'assertion `toContain('# TYPE …')` échoue sur absence).
+// Registre : tests/quarantine.json (verdict + plafond anti-croissance).
+// ─────────────────────────────────────────────────────────────────────────
+
 import { test, expect } from '@playwright/test';
 
 const BASE_URL = process.env.GITNEXUS_BASE_URL || 'http://localhost:4173';
 const FIXTURE_REPO = process.env.GITNEXUS_E2E_REPO || 'hmm_studio';
 
-test.describe('Tier 3.7 — CopilotPanel E2E', () => {
+// QUARANTINE (voir verdict en tête) : panel web copilot non servi (sidecar-only).
+test.describe.fixme('Tier 3.7 — CopilotPanel E2E', () => {
   test.beforeEach(async ({ page }) => {
     await page.goto(`${BASE_URL}/`);
     await page.waitForSelector('[data-cursor="A"]', { timeout: 30_000 });
@@ -132,7 +156,8 @@ test.describe('Tier 3.7 — CopilotPanel E2E', () => {
   });
 });
 
-test.describe('Tier 3.7 — /copilot/metrics Prometheus endpoint', () => {
+// QUARANTINE (voir verdict en tête) : /copilot/metrics non servi (rend le shell SPA).
+test.describe.fixme('Tier 3.7 — /copilot/metrics Prometheus endpoint', () => {
   test('responds with Prometheus text exposition v0.0.4', async ({ request }) => {
     const res = await request.get(`${BASE_URL}/copilot/metrics`);
     expect(res.status()).toBe(200);

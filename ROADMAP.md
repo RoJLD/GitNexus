@@ -67,8 +67,14 @@ quelle, pas de publication marketplace/.vsix.
 
 ### Phase (ii) — Preuve + finitions des chantiers en vol
 
-1. **Copilot Phase D : de « scaffolded » à PROUVÉ** — e2e `copilot-panel.spec.ts` 8/8 exécutés réellement
-   (avec le job e2e enforced), `/copilot/metrics` Prometheus vérifié monotone, smoke MCP 4 tools verts.
+1. **Copilot Phase D — MESURÉ 2026-07-11** : moitié sidecar **✅ PROUVÉE** (`node mcp-server/smoke.mjs` →
+   4 tools copilot verts, `gitnexus_copilot_inventory` gate=**GREEN**, 9/9 endpoints mappés) ; moitié web
+   **abandonnée par design** (Σ-COPILOT-IS-SIDECAR-ONLY confirmé 3× : routes `/copilot/*` non enregistrées
+   dans `docker-server-routes.mjs`, modules non COPY'd dans `Dockerfile.web`, 8/8 e2e échouent — `/copilot/metrics`
+   rend le shell SPA). **Décision user ratifiée : sidecar-only.** Les 8 e2e `copilot-panel.spec.ts` (panel web +
+   metrics) **quarantinés `test.describe.fixme` avec verdict** (`tests/quarantine.json`, condition de dé-quarantaine
+   falsifiable) → l'e2e est **vert** (8 skipped / 1 passed), enforçable sans rouge menteur. Le vrai gate copilot =
+   le smoke MCP. Dé-quarantaine future si le panel web est câblé (routes + COPY + panel React).
 2. **class-diagram export / class-lens** : spec + DoD d'abord (mesurer ce que la symbol-graph lens rend
    DÉJÀ ; scope-cut : lens dérivée + export via `docker-server-sysml-export-core.mjs` étendu
    `format=mermaid-class` ; si le gate conclut à l'abandon → **escalade user**, pas de kill auto) → build.
