@@ -66,6 +66,9 @@
 
 import { createInterface } from 'node:readline';
 import process from 'node:process';
+import { appendFileSync, statSync, renameSync } from 'node:fs';
+import { join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 // HOTFIX 2026-07-11 — a static import of a missing module kills the WHOLE
 // sidecar at boot (measured: ERR_MODULE_NOT_FOUND took all 33 tools down, not
@@ -100,6 +103,10 @@ function requireCopilot(toolName) {
 
 const API_URL = (process.env.GITNEXUS_API || 'http://localhost:4747').replace(/\/+$/, '');
 const WEB_URL = (process.env.GITNEXUS_WEB || 'http://localhost:4173').replace(/\/+$/, '');
+// Σ-BRAIN-GRAPH-GATEWAY (INTER_GRAPH_URL) — the ELYSIUM governance-graph gateway
+// that serves /inter-graph + /lens + /lens/<name>. Same bridge query_meta_graph
+// already targets. null → the lens tools return a documented stub (Zero Masking).
+const GATEWAY_URL = (process.env.INTER_GRAPH_URL || '').replace(/\/+$/, '') || null;
 const FETCH_TIMEOUT_MS = Number(process.env.GITNEXUS_TIMEOUT) || 30000;
 const PROTOCOL_VERSION = '2024-11-05';
 const SERVER_NAME = 'gitnexus-analytics';
@@ -529,6 +536,33 @@ const TOOLS = [
     },
   },
   {
+    name: 'gitnexus_list_lenses',
+    description:
+      'List the ELYSIUM governance-graph lenses served by the Σ-BRAIN-GRAPH-GATEWAY (INTER_GRAPH_URL). ' +
+      'Each lens is a named view over a sovereign graph (inter_graph, sigil, workflow, health::*, …) with its ' +
+      'family, graph_type, backend, snapshot TTL and NATIVE capabilities. Generic by construction: every future ' +
+      'lens appears here without a new tool. Pair with gitnexus_get_lens_graph to fetch one as a BrainGraph. ' +
+      'Requires env INTER_GRAPH_URL; returns a documented stub otherwise (Zero Masking).',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+    handler: async () => (GATEWAY_URL ? doCall(`${GATEWAY_URL}/lens`, '/lens') : lensStub('list')),
+  },
+  {
+    name: 'gitnexus_get_lens_graph',
+    description:
+      'Fetch one governance lens as a BrainGraph {nodes, relationships, meta} from the Σ-BRAIN-GRAPH-GATEWAY ' +
+      '(INTER_GRAPH_URL). `name` is a lens name from gitnexus_list_lenses (e.g. "inter_graph", "sigil", ' +
+      '"health::graph_registry"). meta.freshness / meta.truncated tell you how current and complete the view is. ' +
+      'Generic over the /lens contract — no per-lens tool needed. Requires env INTER_GRAPH_URL; stub otherwise.',
+    inputSchema: {
+      type: 'object',
+      properties: { name: { type: 'string', description: 'Lens name from gitnexus_list_lenses.' } },
+      required: ['name'],
+      additionalProperties: false,
+    },
+    handler: async ({ name }) =>
+      GATEWAY_URL ? doCall(`${GATEWAY_URL}/lens/${encodeURIComponent(name)}`, `/lens/${name}`) : lensStub('get', name),
+  },
+  {
     name: 'gitnexus_list_graph_templates',
     description: 'List available graph templates (id, label, schema_type, description). Use before create_graph_from_template to discover what kinds of graphs can be scaffolded (e.g. research-artifacts).',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
@@ -854,6 +888,37 @@ const ERR_METHOD_NOT_FOUND = -32601;
 const ERR_INVALID_PARAMS = -32602;
 const ERR_INTERNAL = -32603;
 
+// ── MCP call audit trail (Phase 1 item 3 — north-star § Update 2026-07-10) ──
+// Append-only {ts,tool,ok,duration} JSONL — the raw material the lens-liveness
+// sentinel needs ("3 lenses used/week" is unmeasurable without it). fail-open:
+// auditing must NEVER break a tool call. Σ-ROLLING-RETENTION from day 1: rotate
+// to .1 once past AUDIT_MAX_BYTES so the trail can't grow unbounded.
+const AUDIT_PATH = process.env.GITNEXUS_MCP_AUDIT
+  || join(dirname(fileURLToPath(import.meta.url)), 'gitnexus_mcp_calls.jsonl');
+const AUDIT_MAX_BYTES = Number(process.env.GITNEXUS_MCP_AUDIT_MAX_BYTES) || 5 * 1024 * 1024;
+function auditMcpCall(tool, ok, duration) {
+  try {
+    try {
+      if (statSync(AUDIT_PATH).size > AUDIT_MAX_BYTES) renameSync(AUDIT_PATH, `${AUDIT_PATH}.1`);
+    } catch { /* absent → first write, nothing to rotate */ }
+    appendFileSync(AUDIT_PATH, JSON.stringify({ ts: new Date().toISOString(), tool, ok, duration }) + '\n');
+  } catch { /* fail-open — never let auditing break a call */ }
+}
+
+// Stub for the lens tools when the gateway (INTER_GRAPH_URL) isn't wired.
+function lensStub(kind, name) {
+  const base = {
+    stub: true,
+    concern:
+      'INTER_GRAPH_URL is not set — the Σ-BRAIN-GRAPH-GATEWAY is not wired to this MCP client. ' +
+      'Start it (python scripts/governance/sigma_brain_graph_gateway.py --host 127.0.0.1 --port 4750) ' +
+      'and set env INTER_GRAPH_URL=http://127.0.0.1:4750 (see .agent/MCP/mcp_registry.json).',
+  };
+  return kind === 'list'
+    ? { ...base, lenses: [] }
+    : { ...base, requested: name, nodes: [], relationships: [] };
+}
+
 async function handleMessage(msg) {
   // Notifications have no `id` and never get a response.
   const isNotification = msg.id === undefined || msg.id === null;
@@ -898,13 +963,16 @@ async function handleMessage(msg) {
           sendError(id, ERR_INVALID_PARAMS, `Unknown tool: ${toolName}`);
           return;
         }
+        const _auditStart = Date.now();
         try {
           const result = await tool.handler(args);
+          auditMcpCall(toolName, true, Date.now() - _auditStart);
           sendResponse(id, {
             content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
             isError: false,
           });
         } catch (err) {
+          auditMcpCall(toolName, false, Date.now() - _auditStart);
           // Tool errors come back as content (not RPC errors) per MCP
           // convention — the agent should see the error text and adapt.
           sendResponse(id, {

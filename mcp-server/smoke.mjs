@@ -83,11 +83,12 @@ try {
 
   notify('notifications/initialized');
 
-  // 2. tools/list — should list 34 tools (31 + 3 Mycelium synergy consumers Tier 3.7 Phase A Tasks A2/A3/A4)
+  // 2. tools/list — should list 36 tools (34 + 2 generic lens tools, Phase 1
+  //    chemin agent, north-star § Update 2026-07-10: list_lenses / get_lens_graph)
   const list = await send('tools/list');
   if (list.error) fail(`tools/list: ${list.error.message}`);
   const tools = list.result?.tools || [];
-  if (tools.length !== 34) fail(`tools/list: expected 34 tools, got ${tools.length}`);
+  if (tools.length !== 36) fail(`tools/list: expected 36 tools, got ${tools.length}`);
   for (const expected of [
     'gitnexus_list_repos', 'gitnexus_entropy', 'gitnexus_churn', 'gitnexus_coupling',
     'gitnexus_growth', 'gitnexus_lifespan', 'gitnexus_ownership', 'gitnexus_dissonance',
@@ -103,6 +104,9 @@ try {
     'gitnexus_copilot_blt_context',
     'gitnexus_copilot_cluster_context',
     'gitnexus_copilot_forge_context',
+    // Phase 1 chemin agent — generic lens tools over the /lens contract.
+    'gitnexus_list_lenses',
+    'gitnexus_get_lens_graph',
   ]) {
     if (!tools.find((t) => t.name === expected)) fail(`tools/list: missing ${expected}`);
   }
