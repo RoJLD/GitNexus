@@ -27,7 +27,12 @@ env:
   # GIT tag form ('v' prefix) — consumed by scripts/apply-upstream-patches.mjs.
   # The docker IMAGE tag is derived from Dockerfile.cli in the pre-pull steps.
   GITNEXUS_VERSION: ${{ vars.GITNEXUS_VERSION || 'v1.6.5' }}
-  NODE_VERSION: '22.11.0'
+  # 22.12.0 is the engines floor of @rolldown/binding-* (^20.19.0 || >=22.12.0).
+  # On 22.11.0 npm SILENTLY SKIPS the optional native binding (engines-gated
+  # optional dep) → vitest dies at startup with "Cannot find native binding"
+  # (measured run 29148722437 — the same failure was misread as npm bug #4828
+  # on the 2026-06-15 runs). Matches __REQUIRED_NODE_VERSION__ in the app.
+  NODE_VERSION: '22.12.0'
 
 jobs:
   # Recurrence guard (added 2026-06-03). On 2026-05-31 the patch files were

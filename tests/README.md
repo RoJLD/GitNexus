@@ -85,6 +85,37 @@ Pré-requis local : Rancher Desktop running, **Node ≥ 22 LTS**. CI : `.github/
 | Graph lens — route handler | `unit/graph-lens-handler.test.mjs` | `handleGraphLensRoute` 200 projection + 404/400/502/500 paths (stubbed fetch) |
 | Research client — applyLens | `unit/research-client.test.mjs` | `applyLens` GET /graph/lens/:id?repo= + return shape |
 | Academic extract heuristics | `unit/academic-extract.test.mjs` | `guessMetaFromFilename` year/title + `keywordTopics` |
+| Adjacency matrix | `unit/adjacency-matrix.test.mjs` | `orderNodes` + `matrixCells` |
+| Baseline seed marker | `unit/baseline-seed-marker.test.mjs` | `hiddenMarkerPath` |
+| Bump report | `unit/bump-report.test.mjs` | `formatBumpReport` |
+| Patch drift guard | `unit/check-patch-drift.test.mjs` | `filesInDiff` + `compareDiffFileSets` + `normalizeDiff` |
+| Upstream releases watch | `unit/check-upstream-releases.test.mjs` | `parsePinnedVersion` + `parseStableTags` + `cmpSemver` |
+| Commits parse | `unit/commits-parse.test.mjs` | `parseCommitLines` + `isSafeRef` |
+| Docker-server routes shim | `unit/docker-server-routes.test.mjs` | route registry shim (`registerGitnexusRoutes`) |
+| Embedding tools | `unit/embedding-tools.test.mjs` | `nearestNeighbors` + `spectralLayout` |
+| Graph diff — models | `unit/graph-diff-models.test.mjs` | `diffGraphs` (P-IA-3 model diff) |
+| Graph diff — view | `unit/graph-diff-view.test.mjs` | `buildDiffStatus` + `unionResearchGraphs` + `DIFF_VIEW_COLORS` |
+| Render LoD | `unit/graph-lod.test.mjs` | `pruneForRender` |
+| Graph theory — cache | `unit/graph-theory-cache.test.mjs` | metrics cache TTL + LRU (injected clock) + `metricsCacheKey` (P2.3 params) |
+| Graph theory — client | `unit/graph-theory-client.test.mjs` | `getGraphMetrics` + `getGraphLensMetrics` + community option |
+| Graph theory — core | `unit/graph-theory-core.test.mjs` | `degreeCentrality` + `pageRank` + `louvain` (toolbox pur-JS) |
+| Graph theory — endpoint params | `unit/graph-theory-endpoint.test.mjs` | `parseMetricsParams` |
+| Graph theory — handler | `unit/graph-theory-handler.test.mjs` | `handleGraphMetricsRoute` + params P2.3 + observability |
+| Graph theory — lens metrics | `unit/graph-theory-lens-metrics.test.mjs` | `projectFileGraph` + `projectSymbolGraph` + `lensMetrics` |
+| Incremental config | `unit/incremental-config.test.mjs` | `parseIncrementalConfig` |
+| Layered layout | `unit/layered-layout.test.mjs` | `layeredLayout` |
+| Metrics recorder | `unit/metrics-recorder.test.mjs` | `percentile` + `normalizePath` + `makeLatencyRecorder` |
+| Metrics view | `unit/metrics-view.test.mjs` | `topNByMetric` + `metricsToCsv` + `metricsToJson` |
+| Model activations | `unit/model-activations.test.mjs` | `shapeActivations` (P-IA-2) |
+| Model graph importer | `unit/model-graph-importer.test.mjs` | `importModelGraph` |
+| Node inspector | `unit/node-inspector.test.mjs` | `nodeInspectorData` |
+| ONNX converter | `unit/onnx-to-model-graph.test.mjs` | `onnxGraphToModelGraph` |
+| Panel groups | `unit/panel-groups.test.mjs` | `PANEL_GROUPS` + `PANEL_GROUP_OF` + `modesInGroup` (toolbar 3 groupes) |
+| Research client — graphs | `unit/research-client-graphs.test.mjs` | `listGraphs` |
+| Research graph importer | `unit/research-graph-importer.test.mjs` | `importResearchGraph` |
+| Research → 3D | `unit/research-to-3d.test.mjs` | `researchTo3D` (P3-3 lens 3D) |
+| Sidecar render map | `unit/sidecar-render-map.test.mjs` | `mapRenderRows` |
+| Wiki anti-injection guard | `unit/wiki-prompt-injection-guard.test.mjs` | anti-injection system frame (P0-5) |
 
 ### Components React (unit)
 | Test | Fichier | Couvre |
@@ -117,6 +148,7 @@ Pré-requis local : Rancher Desktop running, **Node ≥ 22 LTS**. CI : `.github/
 | ClusterTooltip | `unit/components/ClusterTooltip.test.tsx` | popup render + click member |
 | ClustersCard | `unit/components/audit/ClustersCard.test.tsx` | 7ème card + drill-down |
 | Augmented Timeline — Animate button | `unit/components/Timeline.augmented.test.tsx` | Animate roadmap button visible + click sets cursor/animationActive/ghostFilters + banner shown when animationActive |
+| Timeline — Commits mode | `unit/components/Timeline.commits.test.tsx` | nav-mode toggle + `/commits` dots + `loadGraphAtCommit` + missing-diffs strip + seed baseline + density cap + Compare A↔B |
 
 ### Stack health
 | Test | Fichier | Couvre |
@@ -162,6 +194,9 @@ Pré-requis local : Rancher Desktop running, **Node ≥ 22 LTS**. CI : `.github/
 | Group graph endpoints | `integration/endpoints/group-graph.test.mjs` | `GET /groups` 200 array shape + `GET /group/status` 400 + `POST /group/sync` 400 + `GET /graph/merged` 400 missing-group + 404 unsynced-group |
 | Graph templates | `integration/endpoints/graph-templates.test.mjs` | `/graph/templates` + scaffold -> import -> `/graph/research/:name` + 400 unknown template |
 | Graph template tools | `integration/mcp/graph_templates.test.mjs` | 3 new tools present + list_graph_templates returns research-artifacts |
+| Baseline seed + promote | `integration/endpoints/baseline-seed.test.mjs` | `POST /snapshot/baseline-seed` + `POST /snapshot/promote` |
+| Commits lister | `integration/endpoints/commits.test.mjs` | `GET /commits` |
+| Prewarm | `integration/endpoints/prewarm.test.mjs` | `GET/POST /snapshot/prewarm` |
 
 ### Sidecar integration
 | Test | Fichier | Couvre |
