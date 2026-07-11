@@ -7907,7 +7907,7 @@ index 9263cfe2..e1739545 100644
   * Create a Graph RAG agent
   */
 diff --git a/gitnexus-web/src/hooks/useAppState.tsx b/gitnexus-web/src/hooks/useAppState.tsx
-index 5c118450..010c0da5 100644
+index 5c118450..b0e6b12d 100644
 --- a/gitnexus-web/src/hooks/useAppState.tsx
 +++ b/gitnexus-web/src/hooks/useAppState.tsx
 @@ -8,7 +8,12 @@ import {
@@ -8755,7 +8755,7 @@ index 5c118450..010c0da5 100644
        } catch (err: unknown) {
          console.error('Repo switch failed:', err);
          setProgress({
-@@ -1311,9 +2070,1257 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
+@@ -1311,9 +2070,1291 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
      setCodeReferenceFocus(null);
    }, []);
  
@@ -8992,6 +8992,40 @@ index 5c118450..010c0da5 100644
 +    setDiffData(null);
 +    setDiffError(null);
 +  }, [setGraph]);
++
++  // Effect: enrich the ACTIVE repo's availableRepos entry with its snapshots.
++  // MEASURED 2026-07-12 : /api/repos (→ availableRepos) does NOT carry a
++  // `snapshots` field — snapshots live behind /snapshots. But BOTH the cursor
++  // diff effect below (findSnapshotName) AND useTimelineUrlSync resolve
++  // cursor<->snapshot via `availableRepos[repo].snapshots`. Without this fetch
++  // that field is forever undefined, so the diff can only ever fire when both
++  // cursors sit on the live head — never on two distinct snapshots. Filling the
++  // source here fixes BOTH consumers unchanged (mutating availableRepos also
++  // re-triggers them via their dependency). Keyed on projectName; a Header
++  // /api/repos refresh may transiently drop snapshots until the next connect.
++  useEffect(() => {
++    const baseRepo = projectName ? projectName.split('@')[0] : '';
++    if (!baseRepo) return;
++    let cancelled = false;
++    fetch(`/snapshots?repo=${encodeURIComponent(baseRepo)}`, { cache: 'no-store' })
++      .then((r) => (r.ok ? r.json() : { snapshots: [] }))
++      .then((data) => {
++        if (cancelled) return;
++        const snaps = Array.isArray(data.snapshots) ? data.snapshots : [];
++        setAvailableRepos((prev) =>
++          prev.map((r) =>
++            r.name === baseRepo && (r.snapshots?.length ?? 0) !== snaps.length
++              ? { ...r, snapshots: snaps }
++              : r,
++          ),
++        );
++      })
++      .catch(() => {});
++    return () => {
++      cancelled = true;
++    };
++    // eslint-disable-next-line react-hooks/exhaustive-deps
++  }, [projectName]);
 +
 +  // Effect: watch graphMode + cursors and trigger enter/exit cursor diff.
 +  // Re-fires on cursor changes too — dragging cursor B while in diff mode
@@ -10013,7 +10047,7 @@ index 5c118450..010c0da5 100644
      graph,
      setGraph,
      selectedNode,
-@@ -1377,6 +3384,8 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
+@@ -1377,6 +3418,8 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
      updateLLMSettings,
      isSettingsPanelOpen,
      setSettingsPanelOpen,
@@ -10022,7 +10056,7 @@ index 5c118450..010c0da5 100644
      isAgentReady,
      isAgentInitializing,
      agentError,
-@@ -1399,6 +3408,171 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
+@@ -1399,6 +3442,171 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
      clearAICodeReferences,
      clearCodeReferences,
      codeReferenceFocus,

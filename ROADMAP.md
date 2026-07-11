@@ -107,9 +107,16 @@ quelle, pas de publication marketplace/.vsix.
    exportés de useSigma) : feedback visuel + counts A/B/both quand un snapshot-diff est actif. tsc vert, image web
    rebuild. **Finding measure-first (Playwright MCP)** : le diff (donc la légende) ne s'active QUE si les 2 cursors
    résolvent vers des snapshots DIFFÉRENTS (garde useAppState `if (nameA===nameB) return`) → c'est LA vraie raison
-   du « deferred » d'origine (forcer 2 snapshots distincts de façon fiable, pas l'absence de rendu). Test e2e rendu
-   **conditionnel** (zéro faux rouge). Vérif visuelle live tentée (browser) : la légende n'apparaît pas avec des
-   cursors au même snapshot — comportement CORRECT. Reste : un fixture e2e à 2 snapshots garantis distincts.
+   du « deferred » d'origine (forcer 2 snapshots distincts de façon fiable, pas l'absence de rendu).
+   **HARNAIS E2E CONSTRUIT + BUG PROD 2026-07-12** : creuser « forcer 2 snapshots » a révélé que le cursor-diff
+   était **cassé en prod** — `useTimelineUrlSync` ET le diff effect de `useAppState` résolvaient cursor↔snapshot
+   via `availableRepos[repo].snapshots`, un champ que `/api/repos` **ne remplit jamais** → diff possible SEULEMENT
+   sur la tête live. Fix : `useAppState` enrichit `availableRepos[repo].snapshots` depuis `/snapshots` (source
+   unique, re-déclenche les 2 consommateurs). Aussi : `tests/e2e/playwright.config.ts` **était absent** (tier e2e
+   jamais exécuté, masqué par job CI `continue-on-error`) → créé + `helpers/connect.ts` (`?project=&server=`). Le
+   test légende est **DÉTERMINISTE et vert** (2 shortHashes distincts→tlA/tlB→légende assertée) ; prouvé live
+   (comptes réels only-in-A/B/both). Spec cursors § Update 2026-07-12 (suite). Reste : migrer les ~13 autres specs
+   vers `connectRepo` puis retirer `continue-on-error`. Iron **Σ-THE-URL-SYNC-READS-A-FIELD-THE-API-NEVER-FILLS**.
 4. **Regression coupling < 30s** : cache série coupling par snapshotId (clé = hash repoId+snapshotId+route+
    **params normalisés** ; LIVE jamais caché) → le webhook watch porte enfin son culprit.
 5. **Extension VSCode** : packager le `.vsix` v0.1 + **observable d'usage défini AVANT le probe 7j**

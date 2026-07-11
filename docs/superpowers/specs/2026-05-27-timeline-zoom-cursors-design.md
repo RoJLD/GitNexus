@@ -328,3 +328,35 @@ webServer OU stack externe), (b) un `globalSetup`/helper qui connecte le repo (`
 (c) retirer `continue-on-error` une fois vert. Tant que (a)-(c) ne sont pas faits, le test légende reste
 **conditionnel** (aucun faux rouge) — inchangé cette session, car ajouter une assertion « déterministe »
 dans un fichier qui ne s'exécute jamais serait cosmétique.
+
+## Update 2026-07-12 (suite) — HARNAIS E2E CONSTRUIT + le cursor-diff était CASSÉ EN PROD (pas qu'en test)
+
+Les 3 trous ci-dessus sont **résolus**, et creuser le n°3 a révélé un bug **de production**, pas de test :
+
+1. **`tests/e2e/playwright.config.ts` créé** — testDir `./specs`, baseURL `E2E_WEB_URL` (défaut :4173),
+   chromium, reporter html → `tests/playwright-report` (chemin qu'attend le job CI). Le tier e2e **s'exécute
+   enfin** : sur HMMstudio, 8/9 tests du spec passent (le 9ᵉ = `mousewheel zoom`, flake de timing molette→mini-map,
+   couvert par `retries:1` en CI ; pré-existant, indépendant du harnais).
+2. **`tests/e2e/helpers/connect.ts`** — `connectRepo(page, repo?)` navigue vers `?project=<repo>&server=<api>`
+   (E2E_REPO / E2E_API_URL overridables) et attend les cursors. Le `beforeEach` du spec l'utilise.
+3. **Le n°3 n'était PAS une race — c'était un champ jamais rempli.** `/api/repos` (→ `availableRepos`) ne
+   porte **aucun** champ `snapshots` (mesuré : clés = indexedAt/lastCommit/name/path/stats). Or **DEUX** hooks
+   résolvent cursor↔snapshot via `availableRepos[repo].snapshots` : `useTimelineUrlSync` (tlA/tlB) **ET** le
+   diff effect de `useAppState` (`findSnapshotName`, l.~2334). Ce champ étant toujours `undefined`, **le
+   cursor-diff ne pouvait diffuser QUE la tête live** — jamais 2 snapshots distincts — **pour de vrais
+   utilisateurs**, pas seulement dans les tests. Fix : `useAppState` fetch `/snapshots` du repo actif et
+   **enrichit `availableRepos[repo].snapshots`** (source unique) ; muter availableRepos re-déclenche
+   naturellement les 2 consommateurs (dépendance) ; garde idempotente `length !==` (pas de boucle). **Preuve
+   live (Playwright MCP)** : `?project=HMMstudio&server=…&tlA=f6e2bcf&tlB=ee42cfb&tlMode=diff` → légende rendue
+   avec comptes réels (`only in A 155 / only in B 321 / in both 3295 / edges 2280·2509·4617`). Le test légende
+   est désormais **DÉTERMINISTE et vert** (découvre 2 shortHashes via `/snapshots`, navigue, asserte).
+
+Iron : **Σ-THE-URL-SYNC-READS-A-FIELD-THE-API-NEVER-FILLS** (deux consommateurs branchés sur `availableRepos.snapshots`
+que `/api/repos` ne remplit jamais → feature morte en prod, invisible car le tier de test qui l'aurait attrapée
+ne tournait pas non plus) · **Σ-A-DEAD-TEST-TIER-HIDES-A-DEAD-FEATURE** (le config e2e manquant masquait un
+cursor-diff non-fonctionnel) · **Σ-FILL-THE-SHARED-SOURCE-NOT-EACH-CONSUMER** (remplir `availableRepos.snapshots`
+fixe les 2 hooks sans les toucher).
+
+**Reste** : migrer les ~13 autres specs e2e vers `connectRepo` (mécanique) ; le flake `mousewheel` ; retirer
+`continue-on-error: true` du job CI e2e **une fois** tous les specs verts (aujourd'hui il masquerait encore les
+specs non-migrées qui font `goto('/')` nu).
