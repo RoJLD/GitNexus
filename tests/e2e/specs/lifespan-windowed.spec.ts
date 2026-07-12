@@ -3,73 +3,58 @@ import { connectRepo } from '../helpers/connect';
 
 /**
  * E2E spec for Lifespan Windowed (Phase 2 Item #3).
- * Verify the panel header switches between global and windowed modes
+ * Verify the LifespanPanel header switches between global and windowed modes
  * based on temporalFilterMode.
+ *
+ * 2026-07-12 : de-quarantined. The feature exists (LifespanPanel renders
+ * "Lifespan (window)" + a snapshot badge when `lifespanData.windowed` is set);
+ * the old tests failed only because they looked for an `h2:has-text("Lifespan")`
+ * that never existed (the header is a `<span>`). LifespanPanel now carries
+ * `data-testid` on the panel / header / window-badge, so the assertions are
+ * robust to Tailwind-class churn.
  */
 
+async function openLifespanPanel(page) {
+  // The "Lifespan" analytics-mode button (timeline toolbar) opens the panel.
+  await page.getByRole('button', { name: 'Lifespan', exact: true }).click();
+  await expect(page.getByTestId('lifespan-panel')).toBeVisible({ timeout: 15_000 });
+}
 
-  // QUARANTINED 2026-07-12 (surfaced by the resurrected harness — NOT a migration
-  // regression: connectRepo works, this fails later). The Lifespan panel no longer renders an `h2:has-text("Lifespan")` header (measured: clicking Lifespan opens a mode with no h2). Pre-existing UI/fixture
-  // drift → needs a dedicated UI-aware rework. Un-fixme once the selector/fixture match.
-test.describe.fixme('Lifespan windowed', () => {
+test.describe('Lifespan windowed', () => {
   test.beforeEach(async ({ page }) => {
     await connectRepo(page);
-    // Wait for the timeline cursors to initialize
-    await page.waitForSelector('[data-cursor="A"]', { timeout: 30_000 });
-    await page.waitForSelector('[data-cursor="B"]', { timeout: 30_000 });
   });
 
   test('initial header is "Lifespan" (global mode, temporalFilterMode=off)', async ({ page }) => {
-    // Open the Lifespan panel (assumes there's a button/tab to toggle it open)
-    const lifespanBtn = page.locator('button:has-text("Lifespan")').first();
-    await lifespanBtn.click();
-
-    const header = page.locator('h2:has-text("Lifespan"), [data-panel="lifespan"] h2').first();
-    await expect(header).toBeVisible();
+    await openLifespanPanel(page);
+    const header = page.getByTestId('lifespan-header');
     await expect(header).toContainText('Lifespan');
     await expect(header).not.toContainText('(window)');
   });
 
-  test('selecting Strict filter → header becomes "Lifespan (window)" + badge', async ({ page }) => {
-    // Open the Lifespan panel
-    const lifespanBtn = page.locator('button:has-text("Lifespan")').first();
-    await lifespanBtn.click();
-
-    // Activate temporal filter via the dropdown (Item #1)
-    const select = page.locator('label:has-text("Filter:")').locator('select');
-    await select.selectOption('strict');
-
-    // Wait for the windowed re-fetch
-    await page.waitForTimeout(2000);
-
-    // Header should now show "(window)" + a badge
-    const header = page.locator('h2:has-text("Lifespan")').first();
-    await expect(header).toContainText('(window)');
-
-    // Badge format : "<from> → <to> · <N> snapshots"
-    const badge = page.locator('[class*="bg-accent"]:has-text("snapshot")').first();
+  // QUARANTINED 2026-07-12 — BACKEND bug, not a test/selector issue. The windowed
+  // path (`GET /lifespan?repo=&from=&to=`) returns
+  //   {"error":"Unexpected token '<', \"<!DOCTYPE \"... is not valid JSON"}
+  // — it internally hits an endpoint that serves HTML (a 404 page) instead of JSON,
+  // so `lifespanData.windowed` is never set and the "(window)" header/badge never
+  // render (measured via curl on sample-repo, from=<snap>&to=live AND to=<snap>).
+  // Same 404-HTML class as the /analyze api-client bug. The interaction is otherwise
+  // correct: `enterLifespanMode` reads temporalFilterMode AT OPEN time (useCallback,
+  // no live re-fetch), so the filter must be set BEFORE opening. Un-fixme once the
+  // server-side windowed /lifespan path is fixed.
+  test.fixme('Strict filter set before open → header "Lifespan (window)" + badge', async ({ page }) => {
+    await page.locator('label:has-text("Filter:")').locator('select').selectOption('strict');
+    await openLifespanPanel(page);
+    await expect(page.getByTestId('lifespan-header')).toContainText('(window)', { timeout: 15_000 });
+    const badge = page.getByTestId('lifespan-window-badge');
     await expect(badge).toBeVisible();
-    await expect(badge).toContainText(/→/);
+    await expect(badge).toContainText('→');
     await expect(badge).toContainText(/snapshots?/);
   });
 
-  test('resetting Filter to Off → header reverts to "Lifespan"', async ({ page }) => {
-    const lifespanBtn = page.locator('button:has-text("Lifespan")').first();
-    await lifespanBtn.click();
-
-    const select = page.locator('label:has-text("Filter:")').locator('select');
-    await select.selectOption('normal');
-    await page.waitForTimeout(1500);
-
-    // Confirm windowed mode active
-    await expect(page.locator('h2:has-text("Lifespan")').first()).toContainText('(window)');
-
-    // Reset to off
-    await select.selectOption('off');
-    await page.waitForTimeout(1500);
-
-    // Header reverts
-    const header = page.locator('h2:has-text("Lifespan")').first();
-    await expect(header).not.toContainText('(window)');
+  test.fixme('Normal filter set before open also windows the panel', async ({ page }) => {
+    await page.locator('label:has-text("Filter:")').locator('select').selectOption('normal');
+    await openLifespanPanel(page);
+    await expect(page.getByTestId('lifespan-header')).toContainText('(window)', { timeout: 15_000 });
   });
 });

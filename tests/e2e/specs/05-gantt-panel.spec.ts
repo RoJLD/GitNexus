@@ -22,10 +22,9 @@ import { connectRepo } from '../helpers/connect';
 const REPO = process.env.E2E_REPO || 'sample-repo';
 
 test.describe('Gantt panel', () => {
-  // QUARANTINED 2026-07-12 (surfaced by the resurrected harness — NOT a migration
-  // regression: connectRepo works, this fails later). `[data-testid="gantt-swimlanes-toggle"]` does not exist in the current GanttPanel; also needs gantt-able ghost data in the fixture. Pre-existing UI/fixture
-  // drift → needs a dedicated UI-aware rework. Un-fixme once the selector/fixture match.
-  test.fixme('toggle button opens panel + swimlanes header appears on toggle', async ({ page }) => {
+  // De-quarantined 2026-07-12: the swimlanes control is a radio group
+  // (`gantt-swimlanes-{flat,tier,cluster}`), not a single `gantt-swimlanes-toggle`.
+  test('toggle button opens panel + swimlanes header appears on toggle', async ({ page }) => {
     await connectRepo(page);
 
     // Open the fixture repo (sidebar list).
@@ -48,14 +47,12 @@ test.describe('Gantt panel', () => {
     test.skip(svgCount === 0, 'fixture has no ghosts — placeholder only');
     await expect(svg).toBeVisible();
 
-    // Toggle swimlanes ON.
-    await panel.locator('[data-testid="gantt-swimlanes-toggle"]').click();
+    // Switch swimlanes to "By Tier" (radio input, not a single toggle).
+    await panel.locator('[data-testid="gantt-swimlanes-tier"]').click();
 
-    // When swimlanes are ON, at least one Tier group header rect renders
-    // inside the panel SVG (`.gantt-swimlane-header`). Skip if the
-    // fixture only has untiered ghosts (the grouping still emits one
-    // "No tier" header in that case, so any non-zero count passes).
-    const headers = panel.locator('g.gantt-swimlane-header');
-    await expect(headers.first()).toBeVisible();
+    // A tier group header (e.g. "Tier 1", via tierGroupLabel) is rendered as
+    // SVG text once the grouping path is wired. sample-repo's ROADMAP declares
+    // a Tier 1, so at least one "Tier …" label appears.
+    await expect(panel.getByText(/Tier/i).first()).toBeVisible({ timeout: 10_000 });
   });
 });

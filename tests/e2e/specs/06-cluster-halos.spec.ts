@@ -23,9 +23,12 @@ import { connectRepo } from '../helpers/connect';
 const REPO = process.env.E2E_REPO || 'sample-repo';
 
 test.describe('Cluster halos', () => {
-  // QUARANTINED 2026-07-12 (surfaced by the resurrected harness — NOT a migration
-  // regression: connectRepo works, this fails later). `[data-testid="graph-canvas"]` does not exist in the current UI (canvas has no such testid); also needs declared clusters in the fixture. Pre-existing UI/fixture
-  // drift → needs a dedicated UI-aware rework. Un-fixme once the selector/fixture match.
+  // QUARANTINED 2026-07-12 (still). The stale `[data-testid="graph-canvas"]` wait
+  // was removed, BUT the `text=Show cluster halos` toggle lives inside the Filters
+  // panel, which this test never opens → the toggle is not visible. Also sample-repo
+  // declares 0 clusters (/clusters returns []), so even with the toggle the halo
+  // path can't be exercised. Recovering this needs (a) opening the Filters panel and
+  // (b) a fixture with declared clusters — a dedicated UI-aware rework.
   test.fixme('toggle Show cluster halos → halos visible → click → tooltip', async ({ page }) => {
     await connectRepo(page);
 
@@ -36,7 +39,6 @@ test.describe('Cluster halos', () => {
     // Wait for the Sigma canvas to render (graph mounted before the
     // SVG overlay tries to read camera state).
     await page.waitForSelector('canvas', { timeout: 15_000 });
-    await page.locator('[data-testid="graph-canvas"]').waitFor({ timeout: 15_000 });
 
     // Flip the master "Show cluster halos" toggle (lives in the
     // Roadmap-predictive section of the Filters panel — text-locator

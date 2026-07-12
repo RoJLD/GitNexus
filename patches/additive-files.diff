@@ -19463,10 +19463,10 @@ index 00000000..cedd9395
 +};
 diff --git a/gitnexus-web/src/components/LifespanPanel.tsx b/gitnexus-web/src/components/LifespanPanel.tsx
 new file mode 100644
-index 00000000..23238326
+index 00000000..24dd9d90
 --- /dev/null
 +++ b/gitnexus-web/src/components/LifespanPanel.tsx
-@@ -0,0 +1,260 @@
+@@ -0,0 +1,261 @@
 +import { useMemo, useState } from 'react';
 +import {
 +  X,
@@ -19596,17 +19596,18 @@ index 00000000..23238326
 +
 +  return (
 +    <div
++      data-testid="lifespan-panel"
 +      className="pointer-events-auto absolute right-3 bottom-3 z-30 flex flex-col overflow-hidden rounded-xl border border-border-subtle bg-surface/95 shadow-xl backdrop-blur"
 +      style={{ width: PANEL_WIDTH_PX, maxHeight: 'calc(100% - 1.5rem)' }}
 +    >
 +      <div className="flex shrink-0 items-center gap-2 border-b border-border-subtle px-3 py-2">
 +        <History className="h-3.5 w-3.5 text-amber-300" />
 +        <div className="flex flex-col gap-1">
-+          <span className="text-xs font-semibold text-text-primary">
++          <span data-testid="lifespan-header" className="text-xs font-semibold text-text-primary">
 +            Lifespan {lifespanData?.windowed && <span className="text-text-muted">(window)</span>}
 +          </span>
 +          {lifespanData?.windowed && (
-+            <span className="rounded bg-accent/10 px-1.5 py-0.5 font-mono text-[10px] text-accent">
++            <span data-testid="lifespan-window-badge" className="rounded bg-accent/10 px-1.5 py-0.5 font-mono text-[10px] text-accent">
 +              {lifespanData.windowed.from} → {lifespanData.windowed.to} · {lifespanData.windowed.snapshotCount} snapshots
 +            </span>
 +          )}
