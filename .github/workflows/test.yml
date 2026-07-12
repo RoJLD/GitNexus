@@ -218,10 +218,17 @@ jobs:
         run: node scripts/apply-upstream-patches.mjs
       - name: Build derived images
         run: docker compose -f docker-compose.test.yml build
+      # docker-compose.test.yml mounts ./tests/fixtures/sample-repo-extracted at
+      # /data/projects. Without this the mount is empty → the app has no repo and
+      # every spec fails. Extract BEFORE `up` (the mount is bound at up time).
+      - name: Extract fixture
+        run: mkdir -p tests/fixtures/sample-repo-extracted && tar -xzf tests/fixtures/sample-repo.tar.gz -C tests/fixtures/sample-repo-extracted
       - name: Bring stack up
         run: docker compose -f docker-compose.test.yml up -d
       - name: Wait for stack
         run: cd tests && node integration/helpers/wait-ready.mjs
+      # test:e2e's globalSetup (tests/e2e/global-setup.mjs) analyzes + snapshots +
+      # ghost-syncs the mounted fixture before the specs run.
       - name: Run e2e
         run: cd tests && npm run test:e2e
       - uses: actions/upload-artifact@v4

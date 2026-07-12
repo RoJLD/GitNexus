@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { connectRepo } from '../helpers/connect';
 
 /**
  * E2E spec for Timeline Temporal Filter (Phase 2 Item #1).
@@ -8,7 +9,7 @@ import { test, expect } from '@playwright/test';
 
 test.describe('Timeline Temporal Filter', () => {
   test.beforeEach(async ({ page }) => {
-    await page.goto('http://localhost:4173/');
+    await connectRepo(page);
     await page.waitForSelector('[data-cursor="A"]', { timeout: 30_000 });
     await page.waitForSelector('[data-cursor="B"]', { timeout: 30_000 });
   });

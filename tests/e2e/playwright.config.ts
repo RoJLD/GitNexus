@@ -23,6 +23,10 @@ const WEB_URL = process.env.E2E_WEB_URL || 'http://localhost:4173';
 
 export default defineConfig({
   testDir: './specs',
+  // Analyzes + snapshots + ghost-syncs the fixture so the app has a repo to
+  // connect to (CI brings the stack up but does not prepare the fixture).
+  // Local runs against an already-prepared stack: set E2E_SKIP_SETUP=1.
+  globalSetup: './global-setup.mjs',
   // Snapshots + graph warm-up on a cold container make the first navigation
   // slow; keep the per-test budget generous but bounded.
   timeout: 90_000,

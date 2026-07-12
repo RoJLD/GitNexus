@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { connectRepo } from '../helpers/connect';
 
 /**
  * E2E — Augmented Timeline (roadmap-predictive Tier 3.x, 2026-05-27).
@@ -18,7 +19,7 @@ const REPO = process.env.E2E_REPO || 'sample-repo';
 
 test.describe('Augmented Timeline', () => {
   test('scrub timeline cursor with ghosts on (or skip if no snapshots)', async ({ page }) => {
-    await page.goto('/');
+    await connectRepo(page);
     await page.getByText(REPO, { exact: false }).first().click();
     await page.waitForSelector('canvas', { timeout: 15_000 });
 
@@ -42,11 +43,11 @@ test.describe('Augmented Timeline', () => {
 
     // Canvas must still be visible (no React error tearing it down).
     await page.waitForTimeout(300);
-    await expect(page.locator('canvas')).toBeVisible();
+    await expect(page.locator('canvas').first()).toBeVisible();
   });
 
   test('Animate roadmap button triggers play + shows banner (or skip)', async ({ page }) => {
-    await page.goto('/');
+    await connectRepo(page);
     await page.getByText(REPO, { exact: false }).first().click();
     await page.waitForSelector('canvas', { timeout: 15_000 });
 

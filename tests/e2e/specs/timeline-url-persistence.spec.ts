@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { connectRepo } from '../helpers/connect';
 
 /**
  * E2E spec for Timeline URL Persistence (Phase 2 Item #5).
@@ -7,7 +8,7 @@ import { test, expect } from '@playwright/test';
 
 test.describe('Timeline URL persistence', () => {
   test.beforeEach(async ({ page }) => {
-    await page.goto('http://localhost:4173/');
+    await connectRepo(page);
     await page.waitForSelector('[data-cursor="A"]', { timeout: 30_000 });
     await page.waitForSelector('[data-cursor="B"]', { timeout: 30_000 });
   });

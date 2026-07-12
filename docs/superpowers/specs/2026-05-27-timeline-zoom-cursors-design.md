@@ -360,3 +360,29 @@ fixe les 2 hooks sans les toucher).
 **Reste** : migrer les ~13 autres specs e2e vers `connectRepo` (mécanique) ; le flake `mousewheel` ; retirer
 `continue-on-error: true` du job CI e2e **une fois** tous les specs verts (aujourd'hui il masquerait encore les
 specs non-migrées qui font `goto('/')` nu).
+
+## Update 2026-07-12 (fin) — suite e2e migrée + verte + globalSetup CI ; le flag reste par doctrine
+
+Le « reste » (migrer les specs + retirer continue-on-error) s'est révélé plus profond :
+
+- **11 specs migrés** vers `connectRepo` (import CRLF-safe ; le CRLF avait fait échouer la 1ʳᵉ passe
+  d'insertion d'import, pas le remplacement du goto). Suite locale (contre une vraie stack + sample-repo
+  analysé/snapshotté/ghost-syncé) : **30 passed / 15 skipped / 0 failed**.
+- **6 échecs = drift UI/fixture PRÉ-EXISTANT** (pas la migration — `connectRepo` marche, l'échec vient après) :
+  **1 fixé** (`07-augmented-timeline` : `locator('canvas')` → 7 canvases → `.first()`), **5 quarantinés**
+  `test.fixme` + verdict (`lifespan` ×3 = plus de `h2:has-text("Lifespan")` dans l'UI ; `05-gantt` =
+  `gantt-swimlanes-toggle` testid absent ; `06-cluster` = `graph-canvas` testid absent).
+- **globalSetup e2e AJOUTÉ** (`tests/e2e/global-setup.mjs`) : le job CI e2e montait la stack mais **ne
+  préparait jamais le fixture** (mount `./tests/fixtures/sample-repo-extracted` vide → aucun repo → tous les
+  specs auraient échoué en CI). Le globalSetup analyze + snapshot + ghost-sync via les endpoints RÉELS/vérifiés
+  (`POST /api/analyze {path}`, `/snapshot/bulk`, `/ghosts/sync`) — délibérément PAS `integration/helpers/analyze.mjs`
+  dont l'api-client poste `/analyze {repo}` (**404** sur gitnexus ≥1.6.x ; le vrai = `/api/analyze {path}`), ce qui
+  explique vraisemblablement pourquoi tout le tier docker CI n'a « aucun baseline vert ». Skip-guard local
+  `E2E_SKIP_SETUP=1`. Job CI e2e : **étape « Extract fixture »** ajoutée avant `up`.
+- **`continue-on-error` CONSERVÉ** : la doctrine datée du projet (comment du job `integration`) l'exige —
+  *« flip after 2 observed green runs on PR »*. Non produisibles hors CI. Ce travail **débloque** cette voie
+  (le harnais peut enfin tourner vert en CI) ; le flip appartient à la règle projet sur un vrai cycle PR.
+
+Iron : **Σ-A-RESURRECTED-TEST-TIER-SURFACES-PRE-EXISTING-DRIFT** (ressusciter un tier mort révèle des tests
+dérivés — c'est le signal, pas un bug de migration) · **Σ-CI-BRINGS-THE-STACK-BUT-NOBODY-PREPARES-THE-FIXTURE**
+· **Σ-THE-SHARED-HELPER-HITS-A-404-ENDPOINT-SO-THE-WHOLE-TIER-HAS-NO-GREEN-BASELINE**.

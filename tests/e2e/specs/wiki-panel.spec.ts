@@ -1,8 +1,9 @@
 import { test, expect } from '@playwright/test';
+import { connectRepo } from '../helpers/connect';
 
 test.describe('Code Wiki panel', () => {
   test.beforeEach(async ({ page }) => {
-    await page.goto('http://localhost:4173/');
+    await connectRepo(page);
     await page.waitForSelector('[data-cursor="A"]', { timeout: 30_000 });
   });
 
