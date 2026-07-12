@@ -8427,10 +8427,10 @@ index 00000000..907d3550
 +}
 diff --git a/docker-server-lifespan.mjs b/docker-server-lifespan.mjs
 new file mode 100644
-index 00000000..c998bf94
+index 00000000..be38a03f
 --- /dev/null
 +++ b/docker-server-lifespan.mjs
-@@ -0,0 +1,386 @@
+@@ -0,0 +1,400 @@
 +/**
 + * Lifespan analytics — Phase 4C.
 + *
@@ -8502,7 +8502,15 @@ index 00000000..c998bf94
 +    if (!e.isDirectory()) continue;
 +    try {
 +      const commit = JSON.parse(await readFile(join(dir, e.name, 'commit.json'), 'utf8'));
-+      out.push({ name: `${repoName}@${e.name}`, date: commit.date, isLive: false });
++      // The snapshot dir name IS the shortHash. Expose it (+ a commit sub-object)
++      // so the windowed path can resolve/filter in-process without an HTTP round-trip.
++      out.push({
++        name: `${repoName}@${e.name}`,
++        date: commit.date,
++        isLive: false,
++        shortHash: e.name,
++        commit: { shortHash: e.name, date: commit.date },
++      });
 +    } catch {
 +      // half-built; skip
 +    }
@@ -8716,14 +8724,14 @@ index 00000000..c998bf94
 +      return;
 +    }
 +
-+    // Resolve snapshots — normalize to have shortHash at top level for
-+    // filterSnapshotsInWindow (which accesses s.shortHash, not s.commit.shortHash).
-+    const snapshotsResp = await fetch(`${api}/snapshots?repo=${encodeURIComponent(repoName)}`);
-+    const snapshotsBody = await snapshotsResp.json();
-+    const snapshots = (snapshotsBody.snapshots || [])
++    // Resolve snapshots IN-PROCESS (reads the snapshot dirs directly). The old
++    // `fetch(`${api}/snapshots`)` hit a 404 HTML page: /snapshots is a WEB-server
++    // route, but `api` points at the API server (used for /api/repos + /api/graph
++    // above), which has no /snapshots — so JSON.parse choked on "<!DOCTYPE …".
++    // Measured 2026-07-12. `filterSnapshotsInWindow` reads `s.shortHash`, now set.
++    const snapshots = (await listSnapshotNamesAndDates(repoName))
 +      .slice()
-+      .sort((a, b) => (a.commit?.date || '').localeCompare(b.commit?.date || ''))
-+      .map((s) => ({ ...s, shortHash: s.shortHash ?? s.commit?.shortHash }));
++      .sort((a, b) => (a.commit?.date || '').localeCompare(b.commit?.date || ''));
 +
 +    // Resolve aliases (same pattern as /nodes/alive-between)
 +    let resolvedFrom = from;
@@ -8783,6 +8791,12 @@ index 00000000..c998bf94
 +      });
 +
 +    const response = {
++      // The frontend gates on `totalPoints` (≥ 2 — useAppState.enterLifespanMode).
++      // Windowed mode's "points" are the snapshots inside the window; without this
++      // the frontend threw "Need at least 2 snapshots" even on a valid window
++      // (this was masked by the 404-HTML bug above until 2026-07-12).
++      totalPoints: windowed.length,
++      timeline: windowed.map((s) => ({ name: s.name, date: s.commit?.date, isLive: false })),
 +      counts: {
 +        foundational: buckets.foundational.size,
 +        recent: buckets.recent.size,
