@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { getApi } from '../helpers/api-client.mjs';
 import { FIXTURE } from '../helpers/analyze.mjs';
 
-const BASE = `http://localhost:${process.env.TEST_PORT || 4747}`;
+const BASE = `http://localhost:${process.env.TEST_WEB_PORT || 4173}`;
 
 describe('Snapshot auto-sync produces ghosts.json per snapshot', () => {
   const api = getApi();

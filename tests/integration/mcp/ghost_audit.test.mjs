@@ -10,7 +10,7 @@ import { FIXTURE } from '../helpers/analyze.mjs';
 const here = dirname(fileURLToPath(import.meta.url));
 const SERVER_PATH = join(here, '..', '..', '..', 'mcp-server', 'server.mjs');
 
-const BASE = `http://localhost:${process.env.TEST_PORT || 4747}`;
+const BASE = `http://localhost:${process.env.TEST_WEB_PORT || 4173}`;
 
 let server;
 let rl;

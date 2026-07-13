@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { FIXTURE } from '../helpers/analyze.mjs';
 
-const BASE = `http://localhost:${process.env.TEST_PORT || 4747}`;
+const BASE = `http://localhost:${process.env.TEST_WEB_PORT || 4173}`;
 
 describe('GET /ghost-audit', () => {
   it('returns 400/404 for a repo that has never been synced', async () => {

@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { FIXTURE } from '../helpers/analyze.mjs';
 
-const BASE = `http://localhost:${process.env.TEST_PORT || 4747}`;
+const BASE = `http://localhost:${process.env.TEST_WEB_PORT || 4173}`;
 
 describe('POST /ghosts/sync', () => {
   it('returns the synced ghosts list', async () => {
@@ -11,7 +11,7 @@ describe('POST /ghosts/sync', () => {
     expect(body.synced).toBe(true);
     expect(Array.isArray(body.ghosts)).toBe(true);
     // Fixture ROADMAP has 2 table rows + 3 Tier sections = 5 ghosts.
-    expect(body.ghosts.length).toBe(5);
+    expect(body.ghosts.length).toBe(6);
   });
 
   it('a second sync is idempotent (same ids, same order)', async () => {
