@@ -8427,7 +8427,7 @@ index 00000000..907d3550
 +}
 diff --git a/docker-server-lifespan.mjs b/docker-server-lifespan.mjs
 new file mode 100644
-index 00000000..be38a03f
+index 00000000..d479e75b
 --- /dev/null
 +++ b/docker-server-lifespan.mjs
 @@ -0,0 +1,400 @@
@@ -8488,7 +8488,7 @@ index 00000000..be38a03f
 +
 +const MAX_NODES_PER_BUCKET = 1000;
 +
-+async function listSnapshotNamesAndDates(repoName) {
++export async function listSnapshotNamesAndDates(repoName) {
 +  const dir = join(SNAPSHOTS_ROOT, safeSnapshotKey(repoName));
 +  let entries;
 +  try {
@@ -8952,10 +8952,10 @@ index 00000000..7cea6630
 +}
 diff --git a/docker-server-nodes-alive-between.mjs b/docker-server-nodes-alive-between.mjs
 new file mode 100644
-index 00000000..67c2bef6
+index 00000000..959c2f95
 --- /dev/null
 +++ b/docker-server-nodes-alive-between.mjs
-@@ -0,0 +1,161 @@
+@@ -0,0 +1,166 @@
 +/**
 + * Backend endpoint /nodes/alive-between?repo=&from=&to= for the Timeline
 + * Temporal Filter Phase 2 Item #1 (permissive mode).
@@ -8967,6 +8967,8 @@ index 00000000..67c2bef6
 + * Pure fns first, HTTP wrapper at the bottom. See spec:
 + * docs/superpowers/specs/2026-05-27-timeline-temporal-filter-design.md
 + */
++
++import { listSnapshotNamesAndDates } from './docker-server-lifespan.mjs';
 +
 +/**
 + * Filter the snapshot list to those whose shortHash is in window [from, to].
@@ -9057,9 +9059,12 @@ index 00000000..67c2bef6
 +      return true;
 +    }
 +
-+    const snapshotsResp = await fetch(`${api}/snapshots?repo=${encodeURIComponent(repoName)}`);
-+    const snapshotsBody = await snapshotsResp.json();
-+    const snapshots = (snapshotsBody.snapshots || [])
++    // Snapshots live on the WEB server (this very process), not the API server.
++    // The old `fetch(${api}/snapshots)` hit the API base — where /snapshots is
++    // not a route — and got the SPA HTML back, so `.json()` threw
++    // "Unexpected token '<'" → 500. Read them in-process instead (same fix as
++    // the windowed /lifespan path).
++    const snapshots = (await listSnapshotNamesAndDates(repoName))
 +      .slice()
 +      .sort((a, b) => (a.commit?.date || '').localeCompare(b.commit?.date || ''));
 +

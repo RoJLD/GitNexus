@@ -118,8 +118,12 @@ describe('brainstorm-hook end-to-end', () => {
       const second = readFileSync(join(dir, 'ROADMAP.md'), 'utf8');
 
       expect(first).toBe(second);
-      // Only one row referencing the spec
-      const rowOccurrences = (second.match(/2026-05-26-foo-design/g) || []).length;
+      // Only one ROW referencing the spec. Count the bracketed link *label*
+      // (`[2026-05-26-foo-design]`), which appears exactly once per row — NOT
+      // the bare slug, which appears twice per row (label + link URL
+      // `(…/2026-05-26-foo-design.md)`) and would read 2 for a single, correct,
+      // idempotent row.
+      const rowOccurrences = (second.match(/\[2026-05-26-foo-design\]/g) || []).length;
       expect(rowOccurrences).toBe(1);
     } finally {
       rmSync(dir, { recursive: true, force: true });

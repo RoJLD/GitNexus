@@ -36,12 +36,17 @@ describe('graph-templates routes', () => {
     const get = await fetch(`${BASE}/graph/research/${name}`);
     expect(get.status).toBe(200);
     const graph = await get.json();
-    expect(graph.schema_type).toBe('research-artifacts');
+    // The render endpoint's contract is { nodes, edges } (see the route doc in
+    // docker-server-graph-templates.mjs). schema_type is metadata that lives on
+    // the index record, so it is asserted on the /graph/research list below —
+    // not on the render payload, which never carried it.
     expect(Array.isArray(graph.nodes)).toBe(true);
     expect(graph.nodes.length).toBe(report.nodes);
 
-    const list = await fetch(`${BASE}/graph/research`);
-    expect((await list.json()).graphs.some((g) => g.name === name)).toBe(true);
+    const list = await (await fetch(`${BASE}/graph/research`)).json();
+    const record = list.graphs.find((g) => g.name === name);
+    expect(record).toBeDefined();
+    expect(record.schema_type).toBe('research-artifacts');
   });
 
   it('rejects an unknown template', async () => {
