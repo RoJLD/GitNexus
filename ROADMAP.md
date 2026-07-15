@@ -1,7 +1,7 @@
 # GitNexus — Roadmap
 
 État vivant des fonctionnalités déjà livrées et des prochaines pistes.
-Dernière mise à jour : **2026-07-10** — voir « Update 2026-07-10 — Cap re-séquencé » ci-dessous
+Dernière mise à jour : **2026-07-15** — voir « Update 2026-07-15 — integration + e2e enforced » ci-dessous
 (⚠️ le bump v1.6.7 décrit dans l'ancienne ligne de date a été **reverté** le 2026-07-07 après
 l'incident de gutting des patches ; sources+patches = v1.6.5, image CLI = 1.6.7, réconciliation
 planifiée — phase (i) ci-dessous). Ancienne entrée : 2026-06-14 (bump upstream v1.6.5 → v1.6.7 + cohabitation diff resync — v1.6.6 mega-release ~190 PRs (Scope-resolution RFC #909, Linux-kernel-scale parallel indexing, cross-service API graphs, legacy resolution engine deleted, web Tree/Circles views, .gitnexusrc), v1.6.7 patch (vendored tree-sitter prebuilds, MCP list_repos pagination, C++ inheritance-lattice fixes, taint/PDG substrate M0). Patches lbug-staleness + incremental-dump réappliqués. Avant : Multi-repo unified graph livré (#65) — `GET /graph/merged?group=` fusionne les graphes per-repo au niveau fichier + arêtes cross-repo des contrats ; groupe synchronisé via `gitnexus group` (endpoints worker + `docker-server-group.mjs`) ; mode "Group graph" dans le canvas (`GroupGraphPanel` + `group-graph-adapter.ts`). **4/8 items enterprise couverts** (Code Wiki, Auto-reindexing, Regression forensics, Multi-repo support ✅). Avant : Regression forensics polish (#62) — coupling 6e métrique watchable/auto-forensiquable + "Locate regression" dans EntropyCommitTimeline. Aussi : Commit-level time-travel A+B+C COMPLET — mode Commits timeline (#60) + baseline auto-seed caché/promote (#61) + pré-chauffage des diffs (#63). Avant : "Auto" regression forensics (#59), Regression Phase 2 (#58), MVP (#57), Auto-reindexing (#56), Code Wiki UI (#55).).
@@ -14,6 +14,34 @@ L'objectif global : transformer GitNexus en **outil d'archéologie + de
 diagnostic structurel** pour un écosystème de dépôts, pas juste un
 visualiseur de code. Chaque ligne ici décrit une promesse précise — pas
 un nom marketing — et son premier pas concret.
+
+---
+
+## Update 2026-07-15 — integration + e2e enforced (continue-on-error retiré)
+
+Les deux derniers jobs `continue-on-error` (`integration` + `e2e` dans
+`.github/workflows/test.yml`) sont **durcis** : un tier lourd rouge BLOQUE
+désormais un déploiement. La précondition du contrat daté (« 2 runs verts sur
+PR » — Update 2026-07-10, phase (i).3) s'est révélée **topologiquement
+insatisfiable** : `main` est un miroir upstream gelé (2026-05-22) sans ancêtre
+commun avec la branche de dev (GitHub compare → *404 no-common-ancestor* → aucune
+PR créable), et `workflow_dispatch` n'est pas enregistré (le workflow ne vit que
+sur la branche de dev, jamais sur la branche par défaut). Les tiers lourds ne
+peuvent donc tourner **que sur un push `deployment`** (branche ancêtre de la dev,
+cf. phase (i).4). Base de preuve du flip = **locale** : integration **85/85** vert
++ e2e **34** vert (2026-07-14), + le fix de dérivation du tag image (2026-07-11)
+qui a supprimé la cause environnementale des deploys historiquement rouges. La
+validation CI réelle surviendra naturellement au **prochain merge feat→deployment
++ push** (le moment de déploiement). Corrige aussi le rouge CI de branche : 2
+tests classdiagram orphelins (`unit/class-diagram.test.mjs`,
+`integration/endpoints/sysml-export-class.test.mjs`) réinscrits dans
+`tests/README.md` → `inventory-check` vert (premier vert de branche depuis le
+2026-07-11).
+
+Iron **Σ-CI-GATE-ENFORCEMENT-CAN-OUTRUN-CI-VALIDATION-ON-A-DISJOINT-FORK** : sur
+un fork à l'histoire disjointe de son miroir upstream, « prouver en CI avant de
+gater » peut être structurellement impossible ; la preuve locale + le raisonnement
+sur le seul chemin d'exécution réel (deployment) remplacent alors le run vert.
 
 ---
 

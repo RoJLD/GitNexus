@@ -158,14 +158,20 @@ jobs:
         run: npm install --prefix upstream/gitnexus-web --no-audit --no-fund
       - run: cd tests && npm run test:unit -- --reporter=verbose
 
-  # Still continue-on-error on 2026-07-11 — needs a full docker stack in CI
-  # and has no green-run baseline yet. DATED ENFORCEMENT (ROADMAP § Update
-  # 2026-07-10): flip after 2 observed green runs on PR, and AT THE LATEST
-  # before the phase (ii) proofs (copilot-phase-d-prove / classdiagram-build)
-  # land — those proofs are worthless inside an always-green job.
+  # Enforced 2026-07-15 — flipped from continue-on-error. The dated contract
+  # (ROADMAP § Update 2026-07-10) asked for "2 green runs on PR" first, but that
+  # precondition is topologically UNSATISFIABLE on this fork: `main` is a frozen
+  # upstream mirror sharing NO common ancestor with the dev branch (GitHub
+  # compare → 404 no-common-ancestor → no PR is creatable), and
+  # workflow_dispatch is unregistered because test.yml lives only on the dev
+  # branch, never on the default branch. So the heavy tiers cannot run on
+  # push/PR/dispatch here — only on a `deployment` ref push. Evidence basis for
+  # the flip is therefore LOCAL: integration 85/85 green + e2e 34 green
+  # (2026-07-14), plus the 2026-07-11 image-tag-derivation fix that removed the
+  # environmental cause of the historically-red deployment runs. A red heavy
+  # tier now BLOCKS a deployment.
   integration:
     runs-on: ubuntu-latest
-    continue-on-error: true
     timeout-minutes: 20
     # Heavy docker job — deployment / PR / dispatch only (cost guard).
     if: github.ref == 'refs/heads/deployment' || github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
@@ -197,11 +203,13 @@ jobs:
         if: always()
         run: docker compose -f docker-compose.test.yml down -v
 
-  # Same dated-enforcement contract as `integration` (see comment there).
+  # Enforced 2026-07-15 alongside `integration` — same LOCAL evidence basis
+  # (e2e 34 green) + same topological rationale (see comment there). `needs:
+  # integration` now means a hard-failed integration tier skips e2e and fails
+  # the run — the intended gate.
   e2e:
     runs-on: ubuntu-latest
     needs: integration
-    continue-on-error: true
     timeout-minutes: 20
     if: github.ref == 'refs/heads/deployment' || github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
     steps:
