@@ -33,6 +33,14 @@ services:
       - GITNEXUS_HOME=/data/gitnexus
       - HF_HOME=/data/hf-cache
       - NODE_ENV=production
+      # Cap the LadybugDB mmap reservation. The base image bakes
+      # GITNEXUS_LBUG_MAX_DB_SIZE=17179869184 (16 GiB); a CI runner cannot reserve
+      # that much address space, so `new lbug.Database(...)` aborts with "Buffer
+      # manager: Mmap failed" at the analyze worker's first native op → worker
+      # crash → retry x2 → job 'failed' in ~8s. WSL2/Windows overcommits address
+      # space, which is why the warm local run passed. 2 GiB is ample for any test
+      # fixture and fits the runner. (upstream lbug-config.ts reads this env.)
+      - GITNEXUS_LBUG_MAX_DB_SIZE=2147483648
     volumes:
       - gitnexus-test-data:/data/gitnexus
       - gitnexus-test-hf-cache:/data/hf-cache
@@ -79,6 +87,9 @@ services:
       # at the test API service. (This is why the tier never had a green
       # baseline; the "green" e2e ran against the dev stack, not this compose.)
       - GITNEXUS_API=http://gitnexus-server-test:4747
+      # Same 16 GiB→2 GiB mmap cap as the server (the web container also opens
+      # lbug read-side for the /api/graph-backed analytics routes).
+      - GITNEXUS_LBUG_MAX_DB_SIZE=2147483648
     volumes:
       # graph-templates routes run IN the web container: the research-fs
       # importer reads /data/projects/<source> and the JSON store writes under

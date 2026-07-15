@@ -32,7 +32,13 @@ export async function analyzeFixture({ withEmbeddings = false } = {}) {
   await pollUntilDone(async () => {
     const s = await api.analyzeStatus(jobId);
     const status = String(s.status || s.state || '');
-    if (/error|fail/i.test(status)) return { error: status };
+    // Surface the worker's REAL diagnostic. GET /api/analyze/:id returns
+    // { status, error } where `error` carries the actual cause (e.g. "Worker
+    // crashed 3 times (code …)" or "FTS verification failed …"). The old code
+    // returned `status` ('failed') and threw "Job failed: failed" — masking the
+    // real error (Zero-Masking violation) and making every cold-start failure
+    // opaque. Fall back to status only when no diagnostic is present.
+    if (/error|fail/i.test(status)) return { error: s.error || s.message || status };
     return { done: /complete|ready|done/i.test(status) };
   });
   return FIXTURE_NAME;
