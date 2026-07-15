@@ -8,7 +8,7 @@
 **Fork interne : [github.com/RoJLD/GitNexus](https://github.com/RoJLD/GitNexus) → branche active `feat/classdiagram-export-and-class-lens`** (le code v7 live ; `deployment` = base de réconciliation, fast-forwardée sur cette branche).
 
 <!-- Compteurs autogénérés (source de vérité = le code). `node scripts/check-doc-counters.mjs --write` régénère ; `--check` échoue en CI si un compteur dérive. NE PAS éditer les nombres à la main entre les marqueurs COUNTER. -->
-**Compteurs (autogénérés)** : MCP tools = <!-- COUNTER:mcp-tools -->36<!-- /COUNTER --> · additive-files = <!-- COUNTER:additive-files -->136<!-- /COUNTER --> · inplace-files = <!-- COUNTER:inplace-files -->21<!-- /COUNTER -->.
+**Compteurs (autogénérés)** : MCP tools = <!-- COUNTER:mcp-tools -->36<!-- /COUNTER --> · additive-files = <!-- COUNTER:additive-files -->137<!-- /COUNTER --> · inplace-files = <!-- COUNTER:inplace-files -->21<!-- /COUNTER -->.
 
 Document figé dans le temps, vocation : servir de base de brainstorming
 pour les évolutions futures. À ré-éditer quand on bump la version
