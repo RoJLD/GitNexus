@@ -1,9 +1,15 @@
 {
   "name": "gitnexus-vscode",
   "publisher": "robla-elysium",
+  "license": "PolyForm-Noncommercial-1.0.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/RoJLD/GitNexus.git",
+    "directory": "vscode-extension"
+  },
   "displayName": "GitNexus (local)",
   "description": "Inline GitNexus health metrics for the file you're editing. Talks to a local gitnexus deployment (http://localhost:4173 by default).",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "engines": {
     "vscode": "^1.85.0"
