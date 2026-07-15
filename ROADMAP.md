@@ -65,6 +65,41 @@ travail).
 
 ---
 
+## Update 2026-07-15 (2) — Audit liveness measure-first (re-priorisation : opérationnel > Tier 3 gelé)
+
+Audit measure-first sur le stack docker live (via `docker exec` — le stack tournait
+**sans mapping de ports hôte**, process joignable seulement en interne). **Meta-finding
+cardinal : le stack live ≠ le code.** Images mesurées : web `1.6.7-patched`
+(2026-07-12), **API `1.6.5-patched` (2026-07-07, pré-rebump v1.6.7 du 07-11)**. Le
+stack sert du code d'il y a 3-8 jours → `nodes/alive-between` renvoie **500**
+(`Unexpected token '<'`) = le bug déjà corrigé (`83bbfd52`) mais **non déployé**. La
+liveness live n'est donc fiable qu'après rebuild.
+
+**Liveness (caveat image périmée)** : ~20 endpoints **200** (analytics core,
+classdiagram v3 `mermaid-class`, regression, commits, graph/templates, prewarm,
+export, ghosts/sync, wiki/status, auto-reindex, watches, groups). Anomalies : **churn
+200 mais ~18 s** (lenteur réelle, feature cœur #8) ; `nodes/alive-between` 500
+(artefact image-périmée) ; dissonance/clusters 404 (config/sync, borderline attendu).
+
+**Tests/CI** : unit 733 ✓ · boot-smoke ✓ · **integration RED cold-start CI** (analyze
+interne conteneur `state.error='failed'`, gate reverté ce jour) · e2e 34 local (~13
+specs à migrer `connectRepo`) · quarantaine propre (1, copilot sidecar).
+
+**Re-priorisation** — le « reste » à haute valeur n'est PAS le Tier 3 (gelé, sans
+consommateur committé) mais l'**opérationnel mesuré** :
+- **P1** fixer l'analyze CI integration (débloque le re-durcissement des gates) ;
+- **P2** redéployer le stack (rebuild image courante — live ≠ code) ;
+- **P3** churn ~18 s → **déclenche enfin** le caching/ETag Tier 3 (le trigger
+  measure-first exigé existe désormais) + converge avec (ii).4 coupling-cache ;
+- **P4** finitions (ii) : migrer 13 specs e2e, packager VSCode `.vsix` v0.1.
+
+**Insight** : P1/P2/P3 = **le même nœud** — un rebuild frais révèle à la fois si
+l'analyze CI est un problème de conteneur-frais et si les fixes (alive-between)
+marchent live. Iron **Σ-THE-LIVE-STACK-CAN-LAG-THE-CODE-BY-DAYS** ·
+**Σ-A-FROZEN-CACHING-ITEM-GETS-ITS-TRIGGER-FROM-A-MEASURED-SLOW-ENDPOINT**.
+
+---
+
 ## Update 2026-07-10 — Cap re-séquencé (audit + brainstorm panel, critiques adversariales intégrées)
 
 Séquencement décidé : **(i) Consolidation → (ii) Chantiers en vol → (iii) Tier 3 trié**. Rien n'est
