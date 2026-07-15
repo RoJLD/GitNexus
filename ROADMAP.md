@@ -100,6 +100,40 @@ marchent live. Iron **Σ-THE-LIVE-STACK-CAN-LAG-THE-CODE-BY-DAYS** ·
 
 ---
 
+## Update 2026-07-15 (3) — P2 déployé + P3 cache livré (le nœud P1/P2/P3 résolu)
+
+**P2 — redéploiement.** Rebuild + recreate du stack docker local depuis HEAD :
+API `1.6.5-patched`→`1.6.7-patched`, web republié `0.0.0.0:4173`. Measure-first a
+**corrigé une fausse attribution de l'audit** : le fix `alive-between` n'était PAS
+`83bbfd52` (test-only) mais le fix *in-process* `listSnapshotNamesAndDates` (fichier
+owned) — l'image web du 07-12 le précédait. Après rebuild : `nodes/alive-between`
+**500→200**, handler in-process déployé. Caveat : le forward hôte de l'API `:4747`
+reste coincé dans le backend Docker Desktop (relais wslrelay périmé, `NetworkSettings.Ports`
+vide) — non-bloquant (le web proxifie `/api`, `localhost:4173/api/repos`=200) ; workaround
+MCP `GITNEXUS_API=http://localhost:4173`. Iron **Σ-PORTBINDINGS-DECLARED-NETWORKSETTINGS-EMPTY-IS-A-FAILED-HOST-BIND**.
+
+**P3 — cache partagé per-snapshot (Tier 3 caching, le trigger measure-first exigé
+existait enfin).** `/churn`, `/growth`, `/lifespan`, `/coupling` cold-scannaient chaque
+point de timeline via Cypher (`MATCH (n) RETURN n.id`) — chaque requête cold-open une
+DB lbug (mesuré : 1 requête live = **25.8 s**, endpoints 15-33 s), avec 4 copies dupliquées
+de `fetchNodeIds`. **Insight** : un snapshot `@<hash>` est immuable → sa liste de node-ids
+est cacheable **à vie**. Nouveau module owned `docker-server-snapshot-nodeids.mjs`
+(`getSnapshotNodeIds` : mémoire + disque pour les snapshots, in-memory keyed-`indexedAt`
+pour le live) ; les 4 handlers l'appellent (DRY : -4 copies). **Speedup mesuré live**
+(HMMstudio) : churn `33s→6.9s` (froid, réchauffe), growth `21s→0.016s`, lifespan
+`15s→0.05s`, coupling `33s→0.11s`, churn-répété `33s→0.03s`. Persistance disque vérifiée
+(2 snapshots écrits, live absent). 739 unit verts, 6 nouveaux tests. **Packaging seam
+attrapé** : `Dockerfile.web` COPY explicite par fichier → ligne COPY ajoutée pour le
+module (sinon `Cannot find module` runtime). Iron **Σ-IMMUTABLE-SNAPSHOT-IDS-CACHE-FOREVER-LIVE-KEYED-BY-REINDEX**
+· **Σ-A-SHARED-CACHE-MAKES-OPENING-ONE-ENDPOINT-WARM-THE-OTHERS** · **Σ-EXPLICIT-DOCKERFILE-COPY-A-NEW-MODULE-IS-A-PACKAGING-TASK**.
+[spec](docs/superpowers/specs/2026-07-15-snapshot-nodeids-shared-cache-design.md)
+
+**P4 — measure-first : e2e connectRepo déjà fait.** 12/13 specs e2e utilisent déjà
+`connectRepo` (l'audit surestimait « ~13 à migrer ») ; la 13ᵉ (`copilot-panel`) est le
+sidecar copilot en quarantaine. Reste P4 réel = packager le VSCode `.vsix` v0.1.
+
+---
+
 ## Update 2026-07-10 — Cap re-séquencé (audit + brainstorm panel, critiques adversariales intégrées)
 
 Séquencement décidé : **(i) Consolidation → (ii) Chantiers en vol → (iii) Tier 3 trié**. Rien n'est
@@ -301,6 +335,7 @@ trailers `Co-Authored-By` gravé comme prérequis — l'identité de commit est 
 | 66 | **Contrat de cohabitation upstream (Phase 2)** : deux gardes automatisés — `scripts/check-patch-drift.mjs` (dérive interne : diffs commités vs clone `upstream/`, exit 1 si désynchronisés) + `scripts/check-upstream-releases.mjs` (veille externe : alerte exit 10 si une release stable plus récente que notre pin existe). Contrat de cohabitation formalisé dans la spec. Règle de bump conservatrice (bump ONLY si `v1.7.x+` livré ET besoin), playbook complet, décision différée sur subtree/submodule jusqu'au prochain bump. Spec : [`docs/superpowers/specs/2026-05-29-upstream-cohabitation-contract-design.md`](docs/superpowers/specs/2026-05-29-upstream-cohabitation-contract-design.md). | `scripts/check-patch-drift.mjs`, `scripts/check-upstream-releases.mjs` |
 | 67 | **Graph templates — Stage 1 (research-artifacts)** : mécanisme de templates de graphe générique, **tout dans le conteneur web** (zéro Kùzu). Registry built-in (`research-artifacts`), importeur `research-fs` (walk `/data/projects/<source>` + frontmatter YAML → `ResearchGraph` JSON sur le volume `gitnexus-data`), 5 routes REST, 3 outils MCP, vue `?research=<name>` qui réutilise le canvas single-graph (adaptateur `research-graph-adapter.ts` + palette par type). POST handlers `try/catch → 500` (jamais de crash serveur). Vérifié **live** (scaffold→import→get JSON) ; sérialisé via le format **fork-cohabitation** (`cohabit drift` vert). **NB** : la baseline patches avait été corrompue par les commits multigraph (gutting 2026-05-31) — restaurée depuis `d2a9234a` le 2026-06-03, garde CI `build-gate` ajoutée. | `upstream/docker-server-graph-templates{,-core}.mjs`, `upstream/docker-server-research-fs-importer.mjs`, `upstream/gitnexus-web/src/{lib/research-graph-adapter.ts,lib/research-colors.ts,services/research-client.ts,components/GraphSidebar.tsx}`, +3 outils `mcp-server/server.mjs`, specs/plan `docs/superpowers/*/2026-06-02-graph-templates*` |
 | 68 | **Wiki prompt-injection guard (P0-5 sécurité)** : durcit le chemin LLM du wiki contre l'injection d'instructions via contenu de dépôt non-fiable. (a) `ANTI_INJECTION_DIRECTIVE` + `appendAntiInjectionFrame` apposés **systématiquement** par `buildSystemPrompt` (module/parent/overview) → le contenu du dépôt est déclaré donnée, jamais instruction. (b) Parité read-only du provider `claude` : `callClaudeLLM` passe `--disallowedTools` (Bash/Write/Edit/WebFetch/…) via le module pur `local-cli-args.ts` — levier non-contournable, parité avec le `--sandbox read-only` de `codex`, ferme le vecteur injection→exécution de commande. Résiduels documentés (GROUPING, cluster-enricher, délimiteur nonce). Spec : [`docs/superpowers/specs/2026-07-06-wiki-prompt-injection-guard.md`](docs/superpowers/specs/2026-07-06-wiki-prompt-injection-guard.md). | `upstream/gitnexus/src/core/wiki/{prompts.ts,generator.ts,local-cli-client.ts,local-cli-args.ts}`, `tests/unit/wiki-prompt-injection-guard.test.mjs` |
+| 69 | **Cache partagé per-snapshot (perf time-travel, 2026-07-15)** : `getSnapshotNodeIds` — un helper caché partagé par `/churn`·`/growth`·`/lifespan`·`/coupling` (qui cold-scannaient chacun chaque point de timeline via Cypher `MATCH (n) RETURN n.id`, mesuré 15-33 s ; 1 requête live = 25.8 s). Les snapshots `@<hash>` étant **immuables**, leurs node-ids sont cachés **à vie** (mémoire + disque `<repo>/.gitnexus/snapshot-nodeids-cache.json`) ; le point live est keyed par `indexedAt` (invalidé au re-index, in-memory seul). Élimine 4 copies dupliquées de `fetchNodeIds`. **Speedup live** (HMMstudio) : growth `21s→0.016s`, lifespan `15s→0.05s`, coupling `33s→0.11s`, churn-répété `33s→0.03s`. Ligne COPY `Dockerfile.web` ajoutée (packaging seam). 6 unit + 739 unit verts. [spec](docs/superpowers/specs/2026-07-15-snapshot-nodeids-shared-cache-design.md) | `upstream/docker-server-snapshot-nodeids.mjs`, `upstream/docker-server-{churn,growth,coupling,lifespan}.mjs`, `upstream/Dockerfile.web`, `tests/unit/snapshot-nodeids-cache.test.mjs` |
 
 Toutes les analytics ci-dessus marchent dans un seul repo. La granularité
 est le node gitnexus (File, Function, Class, Section, …).

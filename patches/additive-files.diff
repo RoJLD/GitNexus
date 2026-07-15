@@ -490,10 +490,10 @@ index 00000000..46981a29
 +}
 diff --git a/docker-server-churn.mjs b/docker-server-churn.mjs
 new file mode 100644
-index 00000000..33f13d27
+index 00000000..d318ed1f
 --- /dev/null
 +++ b/docker-server-churn.mjs
-@@ -0,0 +1,183 @@
+@@ -0,0 +1,174 @@
 +/**
 + * Churn analytics — Phase 4A of the time-travel feature.
 + *
@@ -532,6 +532,7 @@ index 00000000..33f13d27
 +import { readdir, readFile, stat } from 'node:fs/promises';
 +import { findRepoByName, SNAPSHOTS_ROOT, safeSnapshotKey } from './docker-server-snapshots.mjs';
 +import { toCsv, writeCsv, safeFilename } from './docker-server-csv.mjs';
++import { getSnapshotNodeIds } from './docker-server-snapshot-nodeids.mjs';
 +
 +async function listSnapshotNamesAndDates(repoName) {
 +  const repoSnapshotsDir = join(SNAPSHOTS_ROOT, safeSnapshotKey(repoName));
@@ -560,25 +561,10 @@ index 00000000..33f13d27
 +  return out;
 +}
 +
-+// Fetch the node-id set for a given registered repo via Cypher. We use
-+// /api/query because it's much cheaper than /api/graph — we don't need
-+// edges, properties, or anything except the id list.
-+async function fetchNodeIds(repoName, api) {
-+  const resp = await fetch(`${api}/api/query`, {
-+    method: 'POST',
-+    headers: { 'Content-Type': 'application/json' },
-+    body: JSON.stringify({ cypher: 'MATCH (n) RETURN n.id AS id', repo: repoName }),
-+  });
-+  if (!resp.ok) {
-+    throw new Error(`cypher failed for ${repoName}: ${resp.status}`);
-+  }
-+  const data = await resp.json();
-+  const rows = data?.result || data?.rows || [];
-+  // Be tolerant of shape variations across gitnexus versions.
-+  return rows
-+    .map((row) => (typeof row === 'object' && row !== null ? row.id ?? row['n.id'] : null))
-+    .filter((id) => typeof id === 'string');
-+}
++// Node-id fetch is the shared, cached getSnapshotNodeIds (was a local
++// fetchNodeIds copy) — snapshot points are immutable so their id lists are
++// cached forever; the live point is keyed by indexedAt. See
++// docker-server-snapshot-nodeids.mjs.
 +
 +async function handleChurn(url, res, opts) {
 +  const repoName = url.searchParams.get('repo');
@@ -630,7 +616,12 @@ index 00000000..33f13d27
 +  const errors = [];
 +  for (const point of timeline) {
 +    try {
-+      const ids = await fetchNodeIds(point.name, opts.api);
++      const ids = await getSnapshotNodeIds(point.name, {
++        api: opts.api,
++        isLive: point.isLive,
++        liveKey: liveEntry.indexedAt,
++        cacheDir: liveEntry.path,
++      });
 +      for (const id of ids) {
 +        perNode[id] = (perNode[id] || 0) + 1;
 +      }
@@ -2743,10 +2734,10 @@ index 00000000..0f8e30ee
 +}
 diff --git a/docker-server-coupling.mjs b/docker-server-coupling.mjs
 new file mode 100644
-index 00000000..e1e2ebdf
+index 00000000..92e832d6
 --- /dev/null
 +++ b/docker-server-coupling.mjs
-@@ -0,0 +1,266 @@
+@@ -0,0 +1,258 @@
 +/**
 + * Temporal coupling analytics — Phase 4B.
 + *
@@ -2788,6 +2779,7 @@ index 00000000..e1e2ebdf
 +import { join } from 'node:path';
 +import { SNAPSHOTS_ROOT, safeSnapshotKey } from './docker-server-snapshots.mjs';
 +import { toCsv, writeCsv, safeFilename } from './docker-server-csv.mjs';
++import { getSnapshotNodeIds } from './docker-server-snapshot-nodeids.mjs';
 +
 +const COUPLING_REGRESSION_THRESHOLD = Number(process.env.COUPLING_REGRESSION_THRESHOLD) || 0.5;
 +
@@ -2848,20 +2840,6 @@ index 00000000..e1e2ebdf
 +  return next === -1 ? rest : rest.slice(0, next);
 +}
 +
-+async function fetchNodeIds(repoName, api) {
-+  const resp = await fetch(`${api}/api/query`, {
-+    method: 'POST',
-+    headers: { 'Content-Type': 'application/json' },
-+    body: JSON.stringify({ cypher: 'MATCH (n) RETURN n.id AS id', repo: repoName }),
-+  });
-+  if (!resp.ok) throw new Error(`cypher failed for ${repoName}: ${resp.status}`);
-+  const data = await resp.json();
-+  const rows = data?.result || data?.rows || [];
-+  return rows
-+    .map((row) => (typeof row === 'object' && row !== null ? row.id ?? row['n.id'] : null))
-+    .filter((id) => typeof id === 'string');
-+}
-+
 +async function handleCoupling(url, res, opts) {
 +  const repoName = url.searchParams.get('repo');
 +  if (!repoName) {
@@ -2913,7 +2891,12 @@ index 00000000..e1e2ebdf
 +  const errors = [];
 +  for (const point of effectiveTimeline) {
 +    try {
-+      const ids = await fetchNodeIds(point.name, opts.api);
++      const ids = await getSnapshotNodeIds(point.name, {
++        api: opts.api,
++        isLive: point.isLive,
++        liveKey: liveEntry.indexedAt,
++        cacheDir: liveEntry.path,
++      });
 +      idSets.push(new Set(ids));
 +    } catch (err) {
 +      errors.push({ snapshot: point.name, error: err?.message || 'fetch failed' });
@@ -8180,10 +8163,10 @@ index 00000000..7db9b38d
 +}
 diff --git a/docker-server-growth.mjs b/docker-server-growth.mjs
 new file mode 100644
-index 00000000..4e22daa7
+index 00000000..1997e3a6
 --- /dev/null
 +++ b/docker-server-growth.mjs
-@@ -0,0 +1,185 @@
+@@ -0,0 +1,177 @@
 +/**
 + * Growth-by-category analytics — Phase 4D.
 + *
@@ -8222,6 +8205,7 @@ index 00000000..4e22daa7
 +  safeSnapshotKey,
 +} from './docker-server-snapshots.mjs';
 +import { toCsv, writeCsv, safeFilename } from './docker-server-csv.mjs';
++import { getSnapshotNodeIds } from './docker-server-snapshot-nodeids.mjs';
 +
 +async function listSnapshotNamesAndDates(repoName) {
 +  const dir = join(SNAPSHOTS_ROOT, safeSnapshotKey(repoName));
@@ -8243,20 +8227,6 @@ index 00000000..4e22daa7
 +    }
 +  }
 +  return out;
-+}
-+
-+async function fetchNodeIds(repoName, api) {
-+  const resp = await fetch(`${api}/api/query`, {
-+    method: 'POST',
-+    headers: { 'Content-Type': 'application/json' },
-+    body: JSON.stringify({ cypher: 'MATCH (n) RETURN n.id AS id', repo: repoName }),
-+  });
-+  if (!resp.ok) throw new Error(`cypher failed for ${repoName}: ${resp.status}`);
-+  const data = await resp.json();
-+  const rows = data?.result || data?.rows || [];
-+  return rows
-+    .map((row) => (typeof row === 'object' && row !== null ? row.id ?? row['n.id'] : null))
-+    .filter((id) => typeof id === 'string');
 +}
 +
 +function labelOf(id) {
@@ -8310,7 +8280,12 @@ index 00000000..4e22daa7
 +  for (const point of timeline) {
 +    let counts = {};
 +    try {
-+      const ids = await fetchNodeIds(point.name, opts.api);
++      const ids = await getSnapshotNodeIds(point.name, {
++        api: opts.api,
++        isLive: point.isLive,
++        liveKey: liveEntry.indexedAt,
++        cacheDir: liveEntry.path,
++      });
 +      for (const id of ids) {
 +        const lbl = labelOf(id);
 +        counts[lbl] = (counts[lbl] || 0) + 1;
@@ -8427,10 +8402,10 @@ index 00000000..907d3550
 +}
 diff --git a/docker-server-lifespan.mjs b/docker-server-lifespan.mjs
 new file mode 100644
-index 00000000..d479e75b
+index 00000000..b0658f80
 --- /dev/null
 +++ b/docker-server-lifespan.mjs
-@@ -0,0 +1,400 @@
+@@ -0,0 +1,392 @@
 +/**
 + * Lifespan analytics — Phase 4C.
 + *
@@ -8485,6 +8460,7 @@ index 00000000..d479e75b
 +import { toCsv, writeCsv, safeFilename } from './docker-server-csv.mjs';
 +import { filterSnapshotsInWindow, unionSnapshotNodeIds } from './docker-server-nodes-alive-between.mjs';
 +import { computeWindowedBuckets } from './docker-server-lifespan-windowed-core.mjs';
++import { getSnapshotNodeIds } from './docker-server-snapshot-nodeids.mjs';
 +
 +const MAX_NODES_PER_BUCKET = 1000;
 +
@@ -8516,20 +8492,6 @@ index 00000000..d479e75b
 +    }
 +  }
 +  return out;
-+}
-+
-+async function fetchNodeIds(repoName, api) {
-+  const resp = await fetch(`${api}/api/query`, {
-+    method: 'POST',
-+    headers: { 'Content-Type': 'application/json' },
-+    body: JSON.stringify({ cypher: 'MATCH (n) RETURN n.id AS id', repo: repoName }),
-+  });
-+  if (!resp.ok) throw new Error(`cypher failed for ${repoName}: ${resp.status}`);
-+  const data = await resp.json();
-+  const rows = data?.result || data?.rows || [];
-+  return rows
-+    .map((row) => (typeof row === 'object' && row !== null ? row.id ?? row['n.id'] : null))
-+    .filter((id) => typeof id === 'string');
 +}
 +
 +// Parse the display fields out of a node id. gitnexus ids follow a few
@@ -8613,7 +8575,12 @@ index 00000000..d479e75b
 +  for (let i = 0; i < timeline.length; i++) {
 +    let ids;
 +    try {
-+      ids = await fetchNodeIds(timeline[i].name, opts.api);
++      ids = await getSnapshotNodeIds(timeline[i].name, {
++        api: opts.api,
++        isLive: timeline[i].isLive,
++        liveKey: liveEntry.indexedAt,
++        cacheDir: liveEntry.path,
++      });
 +    } catch (err) {
 +      errors.push({ snapshot: timeline[i].name, error: err?.message || 'fetch failed' });
 +      continue;
@@ -13194,6 +13161,138 @@ index 00000000..f141612c
 +    return true;
 +  }
 +  return false;
++}
+diff --git a/docker-server-snapshot-nodeids.mjs b/docker-server-snapshot-nodeids.mjs
+new file mode 100644
+index 00000000..ba29f52d
+--- /dev/null
++++ b/docker-server-snapshot-nodeids.mjs
+@@ -0,0 +1,126 @@
++/**
++ * Shared, cached node-id fetch for the time-travel analytics endpoints
++ * (/churn, /growth, /lifespan, /coupling).
++ *
++ * WHY: each of those endpoints walks a repo's snapshot timeline and, per
++ * point, POSTs `MATCH (n) RETURN n.id` to the API's /api/query. The API's
++ * lbug REST cache is single-entry, so each query against a different snapshot
++ * path cold-opens that path's DB (mmap+load) — measured at ~25 s for one live
++ * query, ~15-33 s per endpoint. The four endpoints also carried their own
++ * duplicated copy of this fetch and cached nothing.
++ *
++ * KEY INSIGHT: a snapshot point (`<repo>@<shortHash>`) is a frozen commit —
++ * its node-id list never changes, so it is cacheable FOREVER (memory + disk).
++ * Only the LIVE point moves, and only on reindex — so it is keyed by the live
++ * entry's `indexedAt` (a reindex changes it → natural invalidation) and kept
++ * in memory only (never persisted).
++ *
++ * Effect: opening /churn warms the cache; /growth, /lifespan, /coupling for
++ * the same repo then serve from memory instantly. A rebuild/restart re-warms
++ * snapshot ids from disk.
++ *
++ * See docs/superpowers/specs/2026-07-15-snapshot-nodeids-shared-cache-design.md
++ */
++
++import { join } from 'node:path';
++import { readFile, writeFile, mkdir } from 'node:fs/promises';
++
++// In-memory cache: cacheKey -> string[] of node ids.
++const memCache = new Map();
++// cacheDirs whose on-disk snapshot cache has been lazy-loaded this process.
++const loadedDirs = new Set();
++
++/**
++ * The single canonical Cypher call (was duplicated across the 4 handlers).
++ * `fetchImpl` is injectable for unit tests; defaults to the global fetch.
++ */
++export async function fetchNodeIds(repoName, api, { fetchImpl = fetch } = {}) {
++  const resp = await fetchImpl(`${api}/api/query`, {
++    method: 'POST',
++    headers: { 'Content-Type': 'application/json' },
++    body: JSON.stringify({ cypher: 'MATCH (n) RETURN n.id AS id', repo: repoName }),
++  });
++  if (!resp.ok) throw new Error(`cypher failed for ${repoName}: ${resp.status}`);
++  const data = await resp.json();
++  const rows = data?.result || data?.rows || [];
++  // Tolerate row-shape variations across gitnexus versions.
++  return rows
++    .map((row) => (typeof row === 'object' && row !== null ? row.id ?? row['n.id'] : null))
++    .filter((id) => typeof id === 'string');
++}
++
++function diskPath(cacheDir) {
++  return join(cacheDir, '.gitnexus', 'snapshot-nodeids-cache.json');
++}
++
++// Lazy-load a repo's on-disk snapshot cache into memory once per process.
++// Best-effort: absent/corrupt file → treated as empty (a miss just refetches).
++async function loadDisk(cacheDir) {
++  if (!cacheDir || loadedDirs.has(cacheDir)) return;
++  loadedDirs.add(cacheDir);
++  try {
++    const obj = JSON.parse(await readFile(diskPath(cacheDir), 'utf8'));
++    for (const [name, ids] of Object.entries(obj)) {
++      const key = `snap:${name}`;
++      if (Array.isArray(ids) && !memCache.has(key)) memCache.set(key, ids);
++    }
++  } catch {
++    /* absent or corrupt — nothing to warm from */
++  }
++}
++
++// Write-through a snapshot point to disk (re-read + merge so a concurrent
++// endpoint's entries aren't clobbered). Best-effort — failures are ignored.
++async function persistSnapshot(cacheDir, pointName, ids) {
++  if (!cacheDir) return;
++  try {
++    let obj = {};
++    try {
++      obj = JSON.parse(await readFile(diskPath(cacheDir), 'utf8')) || {};
++    } catch {
++      /* first write — start fresh */
++    }
++    obj[pointName] = ids;
++    await mkdir(join(cacheDir, '.gitnexus'), { recursive: true });
++    await writeFile(diskPath(cacheDir), JSON.stringify(obj), 'utf8');
++  } catch {
++    /* best-effort: a failed persist just means a refetch next process */
++  }
++}
++
++/**
++ * Return the node-id list for one timeline point, cached.
++ *
++ * @param {string} pointName            e.g. "HMMstudio@f6e2bcf" or "HMMstudio" (live)
++ * @param {object} opts
++ * @param {string} opts.api             API base (http://gitnexus:4747)
++ * @param {boolean} [opts.isLive]       true for the live point (reindex-keyed)
++ * @param {string} [opts.liveKey]       live entry's indexedAt — invalidates live on reindex
++ * @param {string} [opts.cacheDir]      live repo dir; snapshot ids persist under <dir>/.gitnexus/
++ * @param {Function} [opts.fetchImpl]   injectable fetch (tests)
++ * @returns {Promise<string[]>}
++ */
++export async function getSnapshotNodeIds(
++  pointName,
++  { api, isLive = false, liveKey = '', cacheDir = '', fetchImpl } = {},
++) {
++  const memKey = isLive ? `live:${pointName}:${liveKey}` : `snap:${pointName}`;
++  if (memCache.has(memKey)) return memCache.get(memKey);
++
++  // Snapshot points may already be warm on disk from a previous process.
++  if (!isLive) {
++    await loadDisk(cacheDir);
++    if (memCache.has(memKey)) return memCache.get(memKey);
++  }
++
++  const ids = await fetchNodeIds(pointName, api, { fetchImpl });
++  memCache.set(memKey, ids);
++  if (!isLive) await persistSnapshot(cacheDir, pointName, ids);
++  return ids;
++}
++
++// Test hook — reset all in-process cache state (also simulates a restart).
++export function __clearCache() {
++  memCache.clear();
++  loadedDirs.clear();
 +}
 diff --git a/docker-server-snapshots-bulk.mjs b/docker-server-snapshots-bulk.mjs
 new file mode 100644
