@@ -56,6 +56,7 @@ Pré-requis local : Rancher Desktop running, **Node ≥ 22 LTS**. CI : `.github/
 | Install hooks | `unit/install-brainstorm-hooks.test.mjs` | Claude merge + git-hook template + GHA workflow template |
 | SysML — PlantUML renderer | unit/sysml-export-plantuml.test.mjs | safeId + renderPlantUml + tier filter + satisfy + deriveReqt |
 | SysML — Mermaid renderer | unit/sysml-export-mermaid.test.mjs | renderMermaid (graph TD + subgraphs) |
+| Class diagram — projection + mermaid render | `unit/class-diagram.test.mjs` | `projectClassDiagram` (Class/Interface + members + inter-class CALLS roll-up) + `renderMermaidClass` |
 | Timeline zoom — pure date/position fns | `unit/timeline-zoom.test.mjs` | computeZoomWindow + mapDateToPosition + mapPositionToDate + snapToNearestSnapshot + applyWheelZoom (anchor-preserving, clamp min span / full range, shift-to-fit — 24 cases) |
 | Timeline zoom — useAppState slice | `unit/use-app-state-timeline.test.tsx` | cursorA/B + zoomWindow + graphMode init + auto-swap + mutual exclusion (8 cases) |
 | Timeline zoom — intra-repo graph diff | `unit/graph-diff-between-snapshots.test.mjs` | diffBetweenSnapshots alias + edges by triple + empty snapshots (5 cases) |
@@ -189,6 +190,7 @@ Pré-requis local : Rancher Desktop running, **Node ≥ 22 LTS**. CI : `.github/
 | Ghost connector suggestions | `integration/endpoints/ghost-connector-suggestions.test.mjs` | `GET /ghosts/connector-suggestions` empty-config + Plane path |
 | Brainstorm-hook e2e | `integration/endpoints/brainstorm-hook-e2e.test.mjs` | script run → ROADMAP managed section → CORE parser emits planned ghost |
 | SysML endpoint | integration/endpoints/sysml-export.test.mjs | GET 200 (text/plain), 400 missing repo, 400 invalid format |
+| SysML class diagram endpoint | `integration/endpoints/sysml-export-class.test.mjs` | `GET /sysml-export?format=mermaid-class` 200 text/plain + real EXTENDS/IMPLEMENTS arrows from fixture + 400 missing repo |
 | MCP ghost_audit | `integration/mcp/ghost_audit.test.mjs` | stdio JSON-RPC tool call |
 | Clusters endpoint | `integration/endpoints/clusters.test.mjs` | `GET /clusters` 200/400/404 + filter |
 | Group graph endpoints | `integration/endpoints/group-graph.test.mjs` | `GET /groups` 200 array shape + `GET /group/status` 400 + `POST /group/sync` 400 + `GET /graph/merged` 400 missing-group + 404 unsynced-group |
