@@ -1,10 +1,10 @@
 # GitNexus — Roadmap
 
 État vivant des fonctionnalités déjà livrées et des prochaines pistes.
-Dernière mise à jour : **2026-07-15** — voir « Update 2026-07-15 — integration + e2e enforced » ci-dessous
-(⚠️ le bump v1.6.7 décrit dans l'ancienne ligne de date a été **reverté** le 2026-07-07 après
-l'incident de gutting des patches ; sources+patches = v1.6.5, image CLI = 1.6.7, réconciliation
-planifiée — phase (i) ci-dessous). Ancienne entrée : 2026-06-14 (bump upstream v1.6.5 → v1.6.7 + cohabitation diff resync — v1.6.6 mega-release ~190 PRs (Scope-resolution RFC #909, Linux-kernel-scale parallel indexing, cross-service API graphs, legacy resolution engine deleted, web Tree/Circles views, .gitnexusrc), v1.6.7 patch (vendored tree-sitter prebuilds, MCP list_repos pagination, C++ inheritance-lattice fixes, taint/PDG substrate M0). Patches lbug-staleness + incremental-dump réappliqués. Avant : Multi-repo unified graph livré (#65) — `GET /graph/merged?group=` fusionne les graphes per-repo au niveau fichier + arêtes cross-repo des contrats ; groupe synchronisé via `gitnexus group` (endpoints worker + `docker-server-group.mjs`) ; mode "Group graph" dans le canvas (`GroupGraphPanel` + `group-graph-adapter.ts`). **4/8 items enterprise couverts** (Code Wiki, Auto-reindexing, Regression forensics, Multi-repo support ✅). Avant : Regression forensics polish (#62) — coupling 6e métrique watchable/auto-forensiquable + "Locate regression" dans EntropyCommitTimeline. Aussi : Commit-level time-travel A+B+C COMPLET — mode Commits timeline (#60) + baseline auto-seed caché/promote (#61) + pré-chauffage des diffs (#63). Avant : "Auto" regression forensics (#59), Regression Phase 2 (#58), MVP (#57), Auto-reindexing (#56), Code Wiki UI (#55).).
+Dernière mise à jour : **2026-07-15** — voir « Update 2026-07-15 (4) » ci-dessous (P1 CI clos, gates integration+e2e re-durcis evidence-backed, `.vsix` v0.1/v0.2 packagé)
+(✅ le split-brain de versions est **résolu** : le re-bump v1.6.7 a été **ré-exécuté le 2026-07-11** —
+sources+patches = image CLI = `v1.6.7` ; le revert du 2026-07-07 après l'incident de gutting est
+désormais de l'histoire, cf. INVENTORY.md entête + phase (i).4 ✅). Ancienne entrée : 2026-06-14 (bump upstream v1.6.5 → v1.6.7 + cohabitation diff resync — v1.6.6 mega-release ~190 PRs (Scope-resolution RFC #909, Linux-kernel-scale parallel indexing, cross-service API graphs, legacy resolution engine deleted, web Tree/Circles views, .gitnexusrc), v1.6.7 patch (vendored tree-sitter prebuilds, MCP list_repos pagination, C++ inheritance-lattice fixes, taint/PDG substrate M0). Patches lbug-staleness + incremental-dump réappliqués. Avant : Multi-repo unified graph livré (#65) — `GET /graph/merged?group=` fusionne les graphes per-repo au niveau fichier + arêtes cross-repo des contrats ; groupe synchronisé via `gitnexus group` (endpoints worker + `docker-server-group.mjs`) ; mode "Group graph" dans le canvas (`GroupGraphPanel` + `group-graph-adapter.ts`). **4/8 items enterprise couverts** (Code Wiki, Auto-reindexing, Regression forensics, Multi-repo support ✅). Avant : Regression forensics polish (#62) — coupling 6e métrique watchable/auto-forensiquable + "Locate regression" dans EntropyCommitTimeline. Aussi : Commit-level time-travel A+B+C COMPLET — mode Commits timeline (#60) + baseline auto-seed caché/promote (#61) + pré-chauffage des diffs (#63). Avant : "Auto" regression forensics (#59), Regression Phase 2 (#58), MVP (#57), Auto-reindexing (#56), Code Wiki UI (#55).).
 
 > 📋 **Voir aussi** [INVENTORY.md](INVENTORY.md) — état des lieux complet :
 > features upstream + nos ajouts + distance avec upstream. À utiliser
@@ -62,6 +62,12 @@ enfin possible). Iron **Σ-LOCAL-WARM-GREEN-DOES-NOT-PREDICT-CI-COLD-START** ·
 **Σ-THE-TOPOLOGY-FIX-IS-WHAT-LET-CI-FALSIFY-THE-FLIP** (corriger la default branch a
 débloqué la mesure qui a invalidé l'hypothèse — la validation empirique a fait son
 travail).
+
+> **↪ Résolu depuis — voir Update 2026-07-15 (4).** Le « baseline vert qui n'existe pas
+> encore » a été produit : la cause de l'échec analyze cold-start (bake mmap 16 GiB
+> irréservable sur un runner CI) est corrigée, les tiers lourds passent en CI
+> (`workflow_dispatch` verts), et `continue-on-error` a été **re-retiré** — cette fois
+> sur preuve CI-froide, pas locale-tiède.
 
 ---
 
@@ -131,6 +137,48 @@ module (sinon `Cannot find module` runtime). Iron **Σ-IMMUTABLE-SNAPSHOT-IDS-CA
 **P4 — measure-first : e2e connectRepo déjà fait.** 12/13 specs e2e utilisent déjà
 `connectRepo` (l'audit surestimait « ~13 à migrer ») ; la 13ᵉ (`copilot-panel`) est le
 sidecar copilot en quarantaine. Reste P4 réel = packager le VSCode `.vsix` v0.1.
+
+---
+
+## Update 2026-07-15 (4) — P1 clos (analyze CI vert cold-start) + gates re-durcis evidence-backed + P4 packagé (.vsix v0.1/v0.2)
+
+Le nœud opérationnel P1-P4 de l'Update (2) est **entièrement soldé**. L'Update (3)
+n'avait documenté que P2/P3 ; voici P1 et P4.
+
+**P1 — analyze CI integration réparé (le blocage du re-durcissement levé).** Root cause
+trouvée par Workflow (4 facettes + synthèse, evidence code) : l'image de base bake
+`GITNEXUS_LBUG_MAX_DB_SIZE=16 GiB` — un runner CI ne peut pas réserver cet espace
+d'adressage → `new lbug.Database()` abort « Buffer manager: Mmap failed » au 1er op natif
+du worker analyze → retry ×2 → job `failed` en ~8 s. Le « 85/85 warm » local passait pour
+deux raisons cumulées : WSL2/Windows sur-alloue l'adressage, **et** le run était produit
+sous `INTEG_SKIP_SETUP=1` (court-circuite `analyzeFixture` → n'exerçait **jamais** ce
+chemin). 4 fixes owned (hors `upstream/`, zéro régén patches) : (1) `docker-compose.test.yml`
+cap `GITNEXUS_LBUG_MAX_DB_SIZE=2 GiB` (server + web) ; (2) `stack.mjs` chmod `a+rwX`
+post-extraction (mkdtemp 0700 → uid conteneur `node` ≠ uid runner → EACCES sur `.gitnexus/` ;
+no-op Windows) ; (3) `Dockerfile.cli` `git config safe.directory '*'` (miroir `Dockerfile.web` ;
+dubious-ownership cassait churn/snapshot silencieusement) ; (4) `analyze.mjs` poller surface
+`s.error` au lieu de `status:'failed'` (dé-masquage Zero-Masking — toute erreur cold-start
+future devient lisible). Commits `67f95436` (integration) + `36a4a06e` (extension e2e).
+
+**Gates re-durcis, cette fois prouvés en CI.** `continue-on-error` re-retiré de `integration`
++ `e2e` (`b22fe39a`) sur **preuve CI réelle** : les runs `workflow_dispatch` (full heavy tiers)
+sont **VERTS cold-start** — première fois du fork. Le durcissement précédent (Update 07-15 (1),
+`edc7d41d`) avait été reverté (`f17493fc`) précisément parce que la preuve était locale-tiède ;
+ici la preuve est CI-froide. Iron **Σ-THE-16GIB-MMAP-BAKE-IS-UNRESERVABLE-ON-A-CI-RUNNER**
+· **Σ-INTEG-SKIP-SETUP-WARM-NEVER-EXERCISED-THE-COLD-PATH**.
+
+**P4 — .vsix packagé.** `vsce package` v0.1 (`64eb2b42`) puis v0.2 (`e45f0245` : ajout `LICENSE`
+PolyForm-Noncommercial + `repository` → zéro warning vsce ; `@types/node` résout à la racine
+6 erreurs TS `node:*`). Note doctrine (ii).5 : le v0.2 ici = **métadonnées de packaging**, pas
+une feature — l'**observable d'usage** (log local / verdict structuré) et le **go/no-go probe
+7 j** restent à définir avant tout v0.2 *fonctionnel*.
+
+**État CI de branche (mesuré `gh run list`)** : HEAD `e45f0245` = vert ; runs `workflow_dispatch`
+6m39s/6m47s verts (tiers lourds). Le split-brain de version est clos (entête réconcilié). Le
+« reste » réellement ouvert et **non-gelé** se réduit désormais à : (ii).4 cache-réponse
+coupling/ETag (perf déjà atteinte par P3 — reste la clé ETag/304 spec'd), (ii).5 observable
+d'usage `.vsix`, (ii).6 ghost placementAccuracy (DEFERRED, backend Leiden absent). Le Tier 3
+reste **gelé avec triggers de dégel écrits** (phase (iii)).
 
 ---
 
