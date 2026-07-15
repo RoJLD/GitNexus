@@ -29,6 +29,8 @@ import * as path from 'node:path';
 import * as http from 'node:http';
 import * as https from 'node:https';
 import { URL } from 'node:url';
+import * as fs from 'node:fs';
+import { serializeEvent, parseEvents, computeUsageVerdict } from './usage';
 
 interface GitNexusRepo {
   name: string;
@@ -71,14 +73,36 @@ const REPO_LIST_TTL_MS = 5 * 60 * 1000;
 
 let statusBar: vscode.StatusBarItem | undefined;
 
+// Usage observable (SIGIL-1711 (ii).5): a local, privacy-preserving (no network,
+// no telemetry) JSONL log so a future v0.2 go/no-go is evidence-backed instead of
+// a guess. `file_match` is the highest-signal event — the status bar showed a real
+// bus-factor for a file in an indexed repo. Throttle it to once per repo:file per
+// session so switching between files doesn't flood the log.
+let usageLogPath: string | undefined;
+const matchedThisSession = new Set<string>();
+
+function recordUsage(type: 'activate' | 'file_match' | 'command', detail?: string): void {
+  if (!usageLogPath) return;
+  try {
+    fs.mkdirSync(path.dirname(usageLogPath), { recursive: true });
+    fs.appendFileSync(usageLogPath, serializeEvent({ t: Date.now(), type, detail }));
+  } catch {
+    /* best-effort — a failed usage write must never disrupt the editor */
+  }
+}
+
 export function activate(context: vscode.ExtensionContext): void {
   statusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
   statusBar.command = 'gitnexus.openWebUI';
   statusBar.tooltip = 'GitNexus (click to open the web UI). Use the command palette to refresh.';
   context.subscriptions.push(statusBar);
 
+  usageLogPath = path.join(context.globalStorageUri.fsPath, 'usage.jsonl');
+  recordUsage('activate');
+
   context.subscriptions.push(
     vscode.commands.registerCommand('gitnexus.refresh', async () => {
+      recordUsage('command', 'refresh');
       // Drop the per-repo cache so the next update re-hits /ownership.
       cache.ownership = {};
       cache.reposFetchedAt = 0;
@@ -89,8 +113,15 @@ export function activate(context: vscode.ExtensionContext): void {
 
   context.subscriptions.push(
     vscode.commands.registerCommand('gitnexus.openWebUI', async () => {
+      recordUsage('command', 'openWebUI');
       const url = getServerUrl();
       await vscode.env.openExternal(vscode.Uri.parse(url));
+    }),
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('gitnexus.usageReport', async () => {
+      await showUsageReport();
     }),
   );
 
@@ -111,6 +142,24 @@ export function activate(context: vscode.ExtensionContext): void {
 
   // Best-effort initial paint — don't block activation on it.
   updateStatusBar().catch(() => {});
+}
+
+async function showUsageReport(): Promise<void> {
+  let body = '';
+  if (usageLogPath) {
+    try {
+      body = fs.readFileSync(usageLogPath, 'utf8');
+    } catch {
+      /* no log yet — computeUsageVerdict treats it as NO-DATA */
+    }
+  }
+  const v = computeUsageVerdict(parseEvents(body), Date.now());
+  const detail =
+    `Verdict: ${v.verdict} (go for v0.2: ${v.goForV02 ? 'YES' : 'no'})\n` +
+    `File matches: ${v.fileMatches} · Active days: ${v.activeDays} · ` +
+    `Commands: ${v.commandInvocations} · Activations: ${v.activations}\n\n` +
+    v.reason;
+  await vscode.window.showInformationMessage('GitNexus usage report', { modal: true, detail });
 }
 
 export function deactivate(): void {
@@ -267,6 +316,13 @@ async function updateStatusBar(): Promise<void> {
     statusBar.tooltip = `${match.relativePath} has no git-log history in ${match.repoName}. Untracked, new, or under .gitignore.`;
     statusBar.show();
     return;
+  }
+
+  // Real match: the status bar is about to show a bus-factor for a tracked file.
+  const matchKey = `${match.repoName}:${match.relativePath}`;
+  if (!matchedThisSession.has(matchKey)) {
+    matchedThisSession.add(matchKey);
+    recordUsage('file_match', match.repoName);
   }
 
   const metric = getMetricChoice();

@@ -79,6 +79,7 @@ Pré-requis local : Rancher Desktop running, **Node ≥ 22 LTS**. CI : `.github/
 | Lifespan windowed — pure fn | `unit/lifespan-windowed-core.test.mjs` | computeWindowedBuckets (4 buckets + ephemeral filter, 5 cases) |
 | Snapshot node-id shared cache | `unit/snapshot-nodeids-cache.test.mjs` | `getSnapshotNodeIds` (memory hit, snapshot on-disk persist + restart survival, live not persisted + refetch, liveKey reindex invalidation) + `fetchNodeIds` shape tolerance/error — 6 cases |
 | ETag conditional-GET — pure fn | `unit/etag-conditional-get.test.mjs` | `computeETag` deterministic/differs + `withETag` 200+ETag / 304 on match / 200 on stale / pass-through non-200, non-JSON, non-string body — 9 cases |
+| VSCode extension usage observable | `unit/vscode-usage-verdict.test.ts` | `serializeEvent`/`parseEvents` round-trip + corrupt-line tolerance + `computeUsageVerdict` NO-DATA / USE-PROVEN / INSUFFICIENT (burst vs spread) + custom thresholds — 8 cases |
 | Timeline URL — pure fns | `unit/timeline-url.test.mjs` | serializeTimelineToParams + parseTimelineParams (clean-URL set/remove, defaults, validation, round-trip — 9 cases) |
 | Graph templates registry | `unit/graph-templates-registry.test.mjs` | registry list/get + builtin-protect + sanitizeSource |
 | Research-fs importer | `unit/research-fs-importer.test.mjs` | walk + frontmatter types + link resolution + unresolved report |

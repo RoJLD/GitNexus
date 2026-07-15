@@ -376,7 +376,7 @@ Pure frontend extension de la Timeline existante — aucune route serveur, réut
 - ✅ 2.1 Annotation sémantique LLM (`/semantic-labels`, `services/semantic-labeler.ts`, intégré dans `DissonancePanel`)
 - ✅ 2.2 Dissonance score (`/dissonance`, `DissonancePanel.tsx`, exemple `patches/example-gitnexus-domains.json`)
 - ✅ 2.3 What-if simulator (`services/mutation-engine.ts`, `WhatIfPanel.tsx`, frontend-only)
-- ✅ 2.4 VSCode extension v0.1 ([vscode-extension/](vscode-extension/) — status bar + 2 commandes)
+- ✅ 2.4 VSCode extension v0.2.1 ([vscode-extension/](vscode-extension/) — status bar + 3 commandes ; **observable d'usage local** SIGIL-1711 (ii).5 : log JSONL `globalStorageUri` privacy-preserving + commande `gitnexus.usageReport` → verdict go/no-go v0.2)
 - ✅ 2.5a Cross-repo similarity v1 — plan structural × temporal (4 quadrants sur 8), identity vector 5-dim, policy JSON, warnings auto.
 - ✅ 2.5b Cross-repo similarity v1.b — axe sémantique lexical (cosine BoW sur labels LLM cachés), cube 2×2×2 complet, partial-coverage handling.
 - ✅ 2.5b.bis Cross-repo similarity v1.b.bis — vrais embeddings via `createEmbeddingsModel` (OpenAI/Azure/Gemini/Ollama), bouton ✨ Embed labels dans le panel, centroid cosine quand ≥80% des labels embeddés. Fallback gracieux : embeddings → lexical → null par paire.
