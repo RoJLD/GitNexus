@@ -47,7 +47,10 @@ export default async function globalSetup() {
   await poll(async () => {
     const s = await (await fetch(`${API}/api/analyze/${jobId}`)).json();
     const status = String(s.status || s.state || '');
-    if (/error|fail/i.test(status)) throw new Error(`analyze job failed: ${status}`);
+    // Surface the worker's real diagnostic (GET returns { status, error }); the
+    // bare status ('failed') masks the actual cause — Zero-Masking, mirrors
+    // tests/integration/helpers/analyze.mjs.
+    if (/error|fail/i.test(status)) throw new Error(`analyze job failed: ${s.error || s.message || status}`);
     return /complete|ready|done/i.test(status);
   });
 

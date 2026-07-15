@@ -230,7 +230,11 @@ jobs:
       # /data/projects. Without this the mount is empty → the app has no repo and
       # every spec fails. Extract BEFORE `up` (the mount is bound at up time).
       - name: Extract fixture
-        run: mkdir -p tests/fixtures/sample-repo-extracted && tar -xzf tests/fixtures/sample-repo.tar.gz -C tests/fixtures/sample-repo-extracted
+        # chmod so the analyze container's `node` uid (≠ the runner uid) can mkdir
+        # .gitnexus/ + write into the mounted source — else EACCES → analyze job
+        # 'failed'. The integration tier gets this from stack.mjs (chmod after
+        # mkdtemp); the e2e job extracts here, so it must chmod here too.
+        run: mkdir -p tests/fixtures/sample-repo-extracted && tar -xzf tests/fixtures/sample-repo.tar.gz -C tests/fixtures/sample-repo-extracted && chmod -R a+rwX tests/fixtures/sample-repo-extracted
       - name: Bring stack up
         run: docker compose -f docker-compose.test.yml up -d
       - name: Wait for stack
