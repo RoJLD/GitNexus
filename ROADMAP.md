@@ -17,7 +17,7 @@ un nom marketing — et son premier pas concret.
 
 ---
 
-## Update 2026-07-15 — integration + e2e enforced (continue-on-error retiré)
+## Update 2026-07-15 — topologie corrigée (default branch) ; flip integration/e2e tenté puis REVERTÉ (la CI cold-start a falsifié la preuve locale)
 
 Les deux derniers jobs `continue-on-error` (`integration` + `e2e` dans
 `.github/workflows/test.yml`) sont **durcis** : un tier lourd rouge BLOQUE
@@ -42,6 +42,26 @@ Iron **Σ-CI-GATE-ENFORCEMENT-CAN-OUTRUN-CI-VALIDATION-ON-A-DISJOINT-FORK** : su
 un fork à l'histoire disjointe de son miroir upstream, « prouver en CI avant de
 gater » peut être structurellement impossible ; la preuve locale + le raisonnement
 sur le seul chemin d'exécution réel (deployment) remplacent alors le run vert.
+
+**MAJ même jour — flip REVERTÉ après validation CI.** Le fix topologique a été
+poussé plus loin : la **branche par défaut du fork** a été repointée `main` →
+`feat/classdiagram-export-and-class-lens` (le tronc de dev), ce qui **enregistre
+`workflow_dispatch`** et permet enfin de lancer les tiers lourds en CI **sans
+déploiement**. Premier dispatch (run `29406894966`) : **boot-smoke VERT** (le stack
+docker de base fonctionne en CI) mais **integration ROUGE** — `global-setup` monte
+le stack `Healthy` puis `analyzeFixture`→`pollUntilDone` reçoit
+`state.error='failed'` du job `/api/analyze` **interne au conteneur** (e2e skippé
+par `needs`). Le 85/85 local était **tiède** et ne prédit pas le cold-start CI.
+**Conséquence : `continue-on-error` RESTAURÉ** sur integration + e2e (un hard-gate
+rouge = violation Zero-Masking). Le baseline vert que le flip exigeait n'existe
+toujours pas ; diagnostiquer l'échec analyze interne au conteneur (logs
+`gitnexus-server-test` ; suspects : embeddings/HF cache ou analyze du fixture dans
+un conteneur CI frais) avant de re-flipper. **Le fix topologique, lui, RESTE** (vrai
+gain durable : dispatch opérationnel, PRs saines, validation CI des tiers lourds
+enfin possible). Iron **Σ-LOCAL-WARM-GREEN-DOES-NOT-PREDICT-CI-COLD-START** ·
+**Σ-THE-TOPOLOGY-FIX-IS-WHAT-LET-CI-FALSIFY-THE-FLIP** (corriger la default branch a
+débloqué la mesure qui a invalidé l'hypothèse — la validation empirique a fait son
+travail).
 
 ---
 
