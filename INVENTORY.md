@@ -8,7 +8,7 @@
 **Fork interne : [github.com/RoJLD/GitNexus](https://github.com/RoJLD/GitNexus) → branche active `feat/classdiagram-export-and-class-lens`** (le code v7 live ; `deployment` = base de réconciliation, fast-forwardée sur cette branche).
 
 <!-- Compteurs autogénérés (source de vérité = le code). `node scripts/check-doc-counters.mjs --write` régénère ; `--check` échoue en CI si un compteur dérive. NE PAS éditer les nombres à la main entre les marqueurs COUNTER. -->
-**Compteurs (autogénérés)** : MCP tools = <!-- COUNTER:mcp-tools -->36<!-- /COUNTER --> · additive-files = <!-- COUNTER:additive-files -->137<!-- /COUNTER --> · inplace-files = <!-- COUNTER:inplace-files -->21<!-- /COUNTER -->.
+**Compteurs (autogénérés)** : MCP tools = <!-- COUNTER:mcp-tools -->36<!-- /COUNTER --> · additive-files = <!-- COUNTER:additive-files -->138<!-- /COUNTER --> · inplace-files = <!-- COUNTER:inplace-files -->21<!-- /COUNTER -->.
 
 Document figé dans le temps, vocation : servir de base de brainstorming
 pour les évolutions futures. À ré-éditer quand on bump la version
@@ -180,6 +180,7 @@ Spec Phase 3 :
 | `GET /growth` | Counts par catégorie dans le temps. **Cache partagé per-snapshot (↓)** |
 | `GET /lifespan` | Buckets foundational / recent / discontinued / ephemeral. **Mode global (default)** : computed sur toute l'histoire (1er snapshot → live). **Mode windowed (Phase 2 Item #3)** : `?from=<shortHash\|oldest>&to=<shortHash\|live\|newest>` redéfinit "1er snapshot" → cursorA, "live" → cursorB. Backward-compat — sans params, comportement inchangé. Réponse en mode windowed inclut un champ `windowed: { from, to, snapshotCount }`. Ephemeral fenêtré nécessite snapshots intermédiaires (réutilise `/nodes/alive-between` machinery). **Cache partagé per-snapshot (↓)** |
 | _(helper)_ `docker-server-snapshot-nodeids.mjs` | **Cache partagé per-snapshot node-ids (2026-07-15)** — `getSnapshotNodeIds` sert `/churn`·`/growth`·`/lifespan`·`/coupling`. Les 4 cold-scannaient chaque point de timeline via Cypher (`MATCH (n) RETURN n.id`), 15-33 s (1 requête live = 25.8 s), avec 4 copies dupliquées de `fetchNodeIds`. Snapshots `@<hash>` immuables → node-ids cachés à vie (mémoire + disque `<repo>/.gitnexus/snapshot-nodeids-cache.json`) ; point live keyed par `indexedAt` (invalidé au re-index, in-memory seul). Ouvrir un endpoint réchauffe les autres (points partagés). Speedup live : growth `21s→0.016s`, coupling `33s→0.11s`, churn-répété `33s→0.03s`. `Dockerfile.web` COPY ajouté. Tier 3 caching. |
+| _(helper)_ `docker-server-etag.mjs` | **Conditional-GET ETag/304 (2026-07-15, SIGIL-1711 Bloc 1)** — `withETag(req,res)` enveloppe la réponse 200 JSON des 4 endpoints figés (`/churn`·`/growth`·`/lifespan`·`/coupling`). ETag = hash du corps → 304 sur `If-None-Match` égal ; corps changé (LIVE) → ETag changé → jamais servi périmé. Complète (ii).4 : la perf était déjà réglée par P3, l'ETag ajoute l'économie de re-transfert. Footprint in-place minimal (4 route wrappers × 1 ligne). Tier 3 cueillette. |
 | `GET /entropy` | Densité × modularité du graphe par snapshot |
 | `GET /ownership` | Bus factor par fichier (`git log --name-only`) |
 | `GET /dissonance` | Compare domaines déclarés (`.gitnexus-domains.json`) vs communities détectées, purity + misplaced |

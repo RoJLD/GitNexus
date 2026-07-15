@@ -490,10 +490,10 @@ index 00000000..46981a29
 +}
 diff --git a/docker-server-churn.mjs b/docker-server-churn.mjs
 new file mode 100644
-index 00000000..d318ed1f
+index 00000000..1e9a9749
 --- /dev/null
 +++ b/docker-server-churn.mjs
-@@ -0,0 +1,174 @@
+@@ -0,0 +1,176 @@
 +/**
 + * Churn analytics — Phase 4A of the time-travel feature.
 + *
@@ -533,6 +533,7 @@ index 00000000..d318ed1f
 +import { findRepoByName, SNAPSHOTS_ROOT, safeSnapshotKey } from './docker-server-snapshots.mjs';
 +import { toCsv, writeCsv, safeFilename } from './docker-server-csv.mjs';
 +import { getSnapshotNodeIds } from './docker-server-snapshot-nodeids.mjs';
++import { withETag } from './docker-server-etag.mjs';
 +
 +async function listSnapshotNamesAndDates(repoName) {
 +  const repoSnapshotsDir = join(SNAPSHOTS_ROOT, safeSnapshotKey(repoName));
@@ -663,6 +664,7 @@ index 00000000..d318ed1f
 +
 +export async function handleChurnRoute(req, url, res, opts) {
 +  if (url.pathname === '/churn' && req.method === 'GET') {
++    withETag(req, res);
 +    await handleChurn(url, res, opts);
 +    return true;
 +  }
@@ -2734,10 +2736,10 @@ index 00000000..0f8e30ee
 +}
 diff --git a/docker-server-coupling.mjs b/docker-server-coupling.mjs
 new file mode 100644
-index 00000000..92e832d6
+index 00000000..93ea5bb7
 --- /dev/null
 +++ b/docker-server-coupling.mjs
-@@ -0,0 +1,258 @@
+@@ -0,0 +1,260 @@
 +/**
 + * Temporal coupling analytics — Phase 4B.
 + *
@@ -2780,6 +2782,7 @@ index 00000000..92e832d6
 +import { SNAPSHOTS_ROOT, safeSnapshotKey } from './docker-server-snapshots.mjs';
 +import { toCsv, writeCsv, safeFilename } from './docker-server-csv.mjs';
 +import { getSnapshotNodeIds } from './docker-server-snapshot-nodeids.mjs';
++import { withETag } from './docker-server-etag.mjs';
 +
 +const COUPLING_REGRESSION_THRESHOLD = Number(process.env.COUPLING_REGRESSION_THRESHOLD) || 0.5;
 +
@@ -2991,6 +2994,7 @@ index 00000000..92e832d6
 +
 +export async function handleCouplingRoute(req, url, res, opts) {
 +  if (url.pathname === '/coupling' && req.method === 'GET') {
++    withETag(req, res);
 +    await handleCoupling(url, res, opts);
 +    return true;
 +  }
@@ -3945,6 +3949,77 @@ index 00000000..c57e279d
 +    return true;
 +  }
 +  return false;
++}
+diff --git a/docker-server-etag.mjs b/docker-server-etag.mjs
+new file mode 100644
+index 00000000..c83d30b4
+--- /dev/null
++++ b/docker-server-etag.mjs
+@@ -0,0 +1,65 @@
++/**
++ * Conditional-GET (ETag / If-None-Match → 304) for the deterministic
++ * timeline-analytics endpoints (/churn, /growth, /lifespan, /coupling).
++ *
++ * The node-id compute is already cheap (P3 shared cache,
++ * docker-server-snapshot-nodeids.mjs); this adds the HTTP-level re-transfer
++ * saving. The ETag is a hash of the response body, so it is correct by
++ * construction: a frozen snapshot's identical body yields an identical ETag
++ * (→ 304), and the live point's changed body yields a new ETag (→ never served
++ * stale). See
++ * docs/superpowers/specs/2026-07-15-etag-conditional-get-frozen-analytics-design.md
++ */
++
++import { createHash } from 'node:crypto';
++
++/** Quoted ETag = first 32 hex chars of sha256(body). */
++export function computeETag(body) {
++  return '"' + createHash('sha256').update(body).digest('hex').slice(0, 32) + '"';
++}
++
++/**
++ * Wrap `res` so a 200 `application/json` string response carries an `ETag` and
++ * honors `If-None-Match` with a 304 (no body). Everything else — non-200,
++ * non-JSON, non-string bodies, streams — passes through untouched. Call once,
++ * before the handler writes to `res`.
++ */
++export function withETag(req, res) {
++  const ifNoneMatch = req && req.headers ? req.headers['if-none-match'] : undefined;
++  const origWriteHead = res.writeHead.bind(res);
++  const origEnd = res.end.bind(res);
++
++  let capturedStatus = 200;
++  let capturedHeaders = {};
++  let intercept = false;
++
++  res.writeHead = (code, ...rest) => {
++    // Tolerate writeHead(code, headers) and writeHead(code, statusMessage, headers).
++    const headers = rest.find((a) => a && typeof a === 'object') || {};
++    capturedStatus = code;
++    capturedHeaders = headers;
++    const ct = headers['Content-Type'] || headers['content-type'] || '';
++    intercept = code === 200 && /application\/json/i.test(ct);
++    // Defer the real writeHead only when intercepting — we need the body to
++    // compute the ETag before committing the status line.
++    if (intercept) return res;
++    return origWriteHead(code, ...rest);
++  };
++
++  res.end = (...args) => {
++    const body = args[0];
++    if (intercept && typeof body === 'string') {
++      const etag = computeETag(body);
++      if (ifNoneMatch && ifNoneMatch === etag) {
++        origWriteHead(304, { ETag: etag });
++        return origEnd();
++      }
++      origWriteHead(200, { ...capturedHeaders, ETag: etag });
++      return origEnd(body);
++    }
++    // Non-intercepted, or an intercepted 200 with a non-string body: flush the
++    // deferred writeHead (only when we intercepted) then end untouched.
++    if (intercept) origWriteHead(capturedStatus, capturedHeaders);
++    return origEnd(...args);
++  };
 +}
 diff --git a/docker-server-ghost-audit-core.mjs b/docker-server-ghost-audit-core.mjs
 new file mode 100644
@@ -8163,10 +8238,10 @@ index 00000000..7db9b38d
 +}
 diff --git a/docker-server-growth.mjs b/docker-server-growth.mjs
 new file mode 100644
-index 00000000..1997e3a6
+index 00000000..911d13a9
 --- /dev/null
 +++ b/docker-server-growth.mjs
-@@ -0,0 +1,177 @@
+@@ -0,0 +1,179 @@
 +/**
 + * Growth-by-category analytics — Phase 4D.
 + *
@@ -8206,6 +8281,7 @@ index 00000000..1997e3a6
 +} from './docker-server-snapshots.mjs';
 +import { toCsv, writeCsv, safeFilename } from './docker-server-csv.mjs';
 +import { getSnapshotNodeIds } from './docker-server-snapshot-nodeids.mjs';
++import { withETag } from './docker-server-etag.mjs';
 +
 +async function listSnapshotNamesAndDates(repoName) {
 +  const dir = join(SNAPSHOTS_ROOT, safeSnapshotKey(repoName));
@@ -8339,6 +8415,7 @@ index 00000000..1997e3a6
 +
 +export async function handleGrowthRoute(req, url, res, opts) {
 +  if (url.pathname === '/growth' && req.method === 'GET') {
++    withETag(req, res);
 +    await handleGrowth(url, res, opts);
 +    return true;
 +  }
@@ -8402,10 +8479,10 @@ index 00000000..907d3550
 +}
 diff --git a/docker-server-lifespan.mjs b/docker-server-lifespan.mjs
 new file mode 100644
-index 00000000..b0658f80
+index 00000000..1792ccb9
 --- /dev/null
 +++ b/docker-server-lifespan.mjs
-@@ -0,0 +1,392 @@
+@@ -0,0 +1,394 @@
 +/**
 + * Lifespan analytics — Phase 4C.
 + *
@@ -8460,6 +8537,7 @@ index 00000000..b0658f80
 +import { toCsv, writeCsv, safeFilename } from './docker-server-csv.mjs';
 +import { filterSnapshotsInWindow, unionSnapshotNodeIds } from './docker-server-nodes-alive-between.mjs';
 +import { computeWindowedBuckets } from './docker-server-lifespan-windowed-core.mjs';
++import { withETag } from './docker-server-etag.mjs';
 +import { getSnapshotNodeIds } from './docker-server-snapshot-nodeids.mjs';
 +
 +const MAX_NODES_PER_BUCKET = 1000;
@@ -8793,6 +8871,7 @@ index 00000000..b0658f80
 +
 +export async function handleLifespanRoute(req, url, res, opts) {
 +  if (url.pathname === '/lifespan' && req.method === 'GET') {
++    withETag(req, res);
 +    await handleLifespan(url, res, opts);
 +    return true;
 +  }

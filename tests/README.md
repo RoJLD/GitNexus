@@ -78,6 +78,7 @@ Pré-requis local : Rancher Desktop running, **Node ≥ 22 LTS**. CI : `.github/
 | Layout cache | `unit/layout-cache.test.mjs` | `saveLayoutPositions` + `loadLayout` round-trip + version guard + `applyLayoutToGraph` coverage + `clearLayout` + `clearAllLayouts` (5 cases) |
 | Lifespan windowed — pure fn | `unit/lifespan-windowed-core.test.mjs` | computeWindowedBuckets (4 buckets + ephemeral filter, 5 cases) |
 | Snapshot node-id shared cache | `unit/snapshot-nodeids-cache.test.mjs` | `getSnapshotNodeIds` (memory hit, snapshot on-disk persist + restart survival, live not persisted + refetch, liveKey reindex invalidation) + `fetchNodeIds` shape tolerance/error — 6 cases |
+| ETag conditional-GET — pure fn | `unit/etag-conditional-get.test.mjs` | `computeETag` deterministic/differs + `withETag` 200+ETag / 304 on match / 200 on stale / pass-through non-200, non-JSON, non-string body — 9 cases |
 | Timeline URL — pure fns | `unit/timeline-url.test.mjs` | serializeTimelineToParams + parseTimelineParams (clean-URL set/remove, defaults, validation, round-trip — 9 cases) |
 | Graph templates registry | `unit/graph-templates-registry.test.mjs` | registry list/get + builtin-protect + sanitizeSource |
 | Research-fs importer | `unit/research-fs-importer.test.mjs` | walk + frontmatter types + link resolution + unresolved report |
@@ -171,6 +172,7 @@ Pré-requis local : Rancher Desktop running, **Node ≥ 22 LTS**. CI : `.github/
 | Growth cross | `integration/endpoints/growth-cross.test.mjs` | `/growth/cross?repos=` |
 | Lifespan | `integration/endpoints/lifespan.test.mjs` | `/lifespan` buckets + golden |
 | Lifespan windowed | `integration/endpoints/lifespan-windowed.test.mjs` | GET 200 global + 200 windowed + 400 partial params + 400 invalid range + alias resolution (5 cases) |
+| ETag conditional-GET | `integration/endpoints/etag-conditional-get.test.mjs` | GET /churn 200 + ETag header + 304 on If-None-Match match + 200 on stale (3 cases) |
 | Code Wiki endpoints | `integration/endpoints/wiki.test.mjs` | `/wiki` 200-html-or-404 + missing-repo 400 + `/wiki/status` 200-or-502 shape + `/wiki/generate` 202/409/404/502 proxy |
 | Auto-reindex endpoint | `integration/endpoints/auto-reindex.test.mjs` | `GET /auto-reindex` 200 + per-repo shape (enabled/dueNow/headSha) + `?repo=` filter |
 | Regression endpoint | `integration/endpoints/regression.test.mjs` | `GET /regression` density + modularity 200 (verdict shape) + unknown-metric 400 + missing-repo 400 |
