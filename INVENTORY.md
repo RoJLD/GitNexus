@@ -402,7 +402,7 @@ Pure frontend extension de la Timeline existante — aucune route serveur, réut
 - ⏳ 3.6 Architectural CI (concurrence Akon Labs commercial)
 - 🟢 3.7 AI-guided tour / Architect's Copilot — Phase A+B+C livré, Phase D Hardening **scaffolded 2026-06-15** (metrics + E2E + INVENTORY +7 → ~138). Consumers : `docker-server-copilot.mjs` (REST gate) + `docker-server-copilot-core.mjs` (inventory) + `docker-server-copilot-blt.mjs` (BLT) + `docker-server-copilot-cluster.mjs` (hash-chain) + `docker-server-copilot-forge.mjs` (ASTKG) + `docker-server-copilot-metrics.mjs` (Prometheus) + `CopilotPanel.tsx` (4 sub-panels UI) + `tests/e2e/specs/copilot-panel.spec.ts` (Playwright). Iron Rules : COPILOT-1..5 (spec) + COPILOT-UI-1..3 (Phase C) + COPILOT-HARDENING-1..3 (Phase D).
 - ⏳ 3.8 Domain-specific AST extractors (requiert 3.10)
-- ⏳ 3.9 Public reference dataset / industry baselines (Chemin C)
+- 🗑️ ~~3.9 Public reference dataset / industry baselines (Chemin C)~~ — **DELETE** (SIGIL-1711 Bloc 2, 2026-07-16 : Chemin C structurellement impossible sous PolyForm-Noncommercial ; direction Chemin B)
 - ⏳ 3.10 Plugin architecture pour analytics (lève le goulot horizontal)
 
 **Aussi dans ROADMAP** :

@@ -300,12 +300,20 @@ quelle, pas de publication marketplace/.vsix.
 
 ### Phase (iii) — Tier 3 trié (prune avant de construire)
 
+> **Triage measure-first re-audité (SIGIL-1711 Bloc 2, 2026-07-16)** — workflow multi-agents,
+> un mesureur par item + vérification adversariale des `BUILD`. **Résultat : 0 BUILD · 8
+> STAY-FROZEN · 1 DELETE.** Le gel de 2026-07-10 est confirmé evidence-backed ; **3.9 dataset
+> public reclassé DELETE** (raison d'être structurellement morte sous PolyForm — voir plus bas).
+> Un `BUILD` initial (export/import versionné) a été **rétrogradé** par la vérification
+> adversariale (scénario version-skew injoignable en mono-format). Verdicts + conditions de
+> dégel complètes : [`docs/superpowers/specs/2026-07-16-tier3-trigger-triage-verdicts.md`](docs/superpowers/specs/2026-07-16-tier3-trigger-triage-verdicts.md).
+
 **Verdicts gravés** (triggers de dégel falsifiables, items conservés sur la roadmap) :
 3.1 dead-code runtime **GELÉ** (dégel : un repo indexé émet réellement des spans) · 3.4 auto-PR refacto
 **GELÉ** (aucune capacité d'écriture de PR ; le consommateur agent passe par MCP) · 3.5 prédiction bugs
 **GELÉ** (zéro label disponible) · 3.8 AST extractors **GELÉ** (dépend 3.10, aucun consommateur committé) ·
-3.9 dataset public **GELÉ** (note licence : publication noncommerciale possible mais raison d'être
-stratégique morte) · 3.10 plugin architecture **GELÉ** (dégel : ≥2 nouvelles analytics committées —
+~~3.9 dataset public~~ **→ DELETE** (2026-07-16, SIGIL-1711 Bloc 2 : raison d'être structurellement
+morte sous PolyForm ; retiré de la roadmap, cf. verdicts) · 3.10 plugin architecture **GELÉ** (dégel : ≥2 nouvelles analytics committées —
 n'enable PAS le chemin lentilles, qui passe par la gateway BrainGraph du monorepo hôte) ·
 **3.6 CI architectural : décision A (GEL)** — le judge 2026-06-14 a déjà préféré le Copilot (26/30 vs
 20.5/30) et la licence rend la bataille commerciale sans objet ; option B interne-only réévaluable après (i).
@@ -1094,6 +1102,12 @@ mentionnée comme limitation de 2.5.
 dominante de hmm_studio.
 
 ### 3.9 — Public reference dataset / industry baselines
+
+> 🗑️ **DELETE (SIGIL-1711 Bloc 2, 2026-07-16)** — retiré de la roadmap active. Seul moteur = Chemin C
+> (SaaS / API publique), **structurellement impossible** sous PolyForm-Noncommercial ; direction retenue =
+> Chemin B ; les baselines internes (ses propres repos vs médianes OSS) sont couvertes par Galaxie 2.5/2.6.
+> Section conservée pour mémoire. Verdict complet : [`docs/superpowers/specs/2026-07-16-tier3-trigger-triage-verdicts.md`](docs/superpowers/specs/2026-07-16-tier3-trigger-triage-verdicts.md).
+
 **Promesse** : indexer N repos OSS publics (top GitHub par langage,
 curated list) pour créer un dataset de référence. Permet de répondre à
 "votre entropie 0.42, médiane des Django projects OSS = 0.31, p90 =
@@ -1305,7 +1319,7 @@ fin. Tout ce qui suit s'appuie sur Tier 1 + Tier 2.1-2.4 ✅ déjà livrés.
 9. **3.7 AI-guided tour** (Chemin B) — synthèse narrative MCP-driven. ~2-3 semaines. Requiert 2bis.1.
 10. **3.6 Architectural CI** (Chemin A — vs commercial Akon Labs) — PR check + budgets. ~3-4 semaines. Décision stratégique requise.
 11. **3.8 Domain-specific AST extractors** — Django/React/Spring concepts. ~1-2 sem/stack. Requiert 3.10.
-12. **3.9 Public reference dataset** (Chemin C) — baseline industrie. ~1 mois initial + maintenance.
+12. ~~**3.9 Public reference dataset** (Chemin C)~~ — 🗑️ **DELETE** (SIGIL-1711 Bloc 2, 2026-07-16 : Chemin C structurellement impossible sous PolyForm ; retiré de la roadmap).
 
 ### Phase 6 — R&D long terme
 13. **3.1 Dead code runtime** — APM-bloqué.
