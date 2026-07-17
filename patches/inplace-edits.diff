@@ -11274,10 +11274,10 @@ index 6c660b0a..937fd909 100644
     REDUCED MOTION — respect OS-level motion preferences (WCAG 2.3.3)
  ═══════════════════════════════════════════════════════════════ */
 diff --git a/gitnexus-web/src/lib/graph-adapter.ts b/gitnexus-web/src/lib/graph-adapter.ts
-index bb3f5f11..faf8a7c3 100644
+index bb3f5f11..62a712c9 100644
 --- a/gitnexus-web/src/lib/graph-adapter.ts
 +++ b/gitnexus-web/src/lib/graph-adapter.ts
-@@ -241,9 +241,15 @@ export const knowledgeGraphToGraphology = (
+@@ -241,15 +241,31 @@ export const knowledgeGraphToGraphology = (
  
      // Symbol nodes get colored by community if available
      const usesCommunityColor = hasCommunity && symbolTypes.has(node.label);
@@ -11293,9 +11293,27 @@ index bb3f5f11..faf8a7c3 100644
 +      : usesCommunityColor
 +        ? getCommunityColor(communityIndex!)
 +        : NODE_COLORS[node.label] || '#9ca3af';
++
++    // Lens dim (Σ-LENS-SOUVERAINE Phase 1b) — a node the lens engine's
++    // `apply_select` excluded (`properties.inLens === false`) is dimmed gray
++    // + shrunk, same idiom as the existing `isolateCommunity` dim in
++    // research-graph-adapter.ts. Lowest-priority adjustment: applied last,
++    // right before addNode, so it never fights an explicit projection color.
++    // A node without `inLens` (undefined) or `inLens === true` is unaffected.
++    const inLensFalse = (node.properties as { inLens?: boolean }).inLens === false;
++    const finalColor = inLensFalse ? '#374151' : nodeColor;
++    const finalSize = inLensFalse ? Math.min(scaledSize, 2) : scaledSize;
  
      graph.addNode(nodeId, {
        x,
+       y,
+-      size: scaledSize,
+-      color: nodeColor,
++      size: finalSize,
++      color: finalColor,
+       label: node.properties.name,
+       nodeType: node.label,
+       filePath: node.properties.filePath,
 diff --git a/gitnexus-web/src/lib/lucide-icons.tsx b/gitnexus-web/src/lib/lucide-icons.tsx
 index 7d9b5fc7..d0ed22ec 100644
 --- a/gitnexus-web/src/lib/lucide-icons.tsx
