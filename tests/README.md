@@ -82,6 +82,7 @@ Pré-requis local : Rancher Desktop running, **Node ≥ 22 LTS**. CI : `.github/
 | ETag conditional-GET — pure fn | `unit/etag-conditional-get.test.mjs` | `computeETag` deterministic/differs + `withETag` 200+ETag / 304 on match / 200 on stale / pass-through non-200, non-JSON, non-string body — 9 cases |
 | VSCode extension usage observable | `unit/vscode-usage-verdict.test.ts` | `serializeEvent`/`parseEvents` round-trip + corrupt-line tolerance + `computeUsageVerdict` NO-DATA / USE-PROVEN / INSUFFICIENT (burst vs spread) + custom thresholds — 8 cases |
 | Timeline URL — pure fns | `unit/timeline-url.test.mjs` | serializeTimelineToParams + parseTimelineParams (clean-URL set/remove, defaults, validation, round-trip — 9 cases) |
+| Lens insights/meaning — useAppState slice | `unit/use-app-state-lens.test.tsx` | `lensInsights`/`lensMeaning` defaults `[]`/`undefined` + setters (state-slice only — capture-from-fetched-response inside `switchRepo` is NOT unit-tested, see Task 2 report) |
 | Graph templates registry | `unit/graph-templates-registry.test.mjs` | registry list/get + builtin-protect + sanitizeSource |
 | Research-fs importer | `unit/research-fs-importer.test.mjs` | walk + frontmatter types + link resolution + unresolved report |
 | Research graph adapter | `unit/research-graph-adapter.test.mjs` | ResearchGraph -> graphology nodes/colors/edges |
@@ -154,6 +155,7 @@ Pré-requis local : Rancher Desktop running, **Node ≥ 22 LTS**. CI : `.github/
 | ClustersCard | `unit/components/audit/ClustersCard.test.tsx` | 7ème card + drill-down |
 | Augmented Timeline — Animate button | `unit/components/Timeline.augmented.test.tsx` | Animate roadmap button visible + click sets cursor/animationActive/ghostFilters + banner shown when animationActive |
 | Timeline — Commits mode | `unit/components/Timeline.commits.test.tsx` | nav-mode toggle + `/commits` dots + `loadGraphAtCommit` + missing-diffs strip + seed baseline + density cap + Compare A↔B |
+| LensInsightsPanel | `unit/components/lens-insights-panel.test.tsx` | pure component — meaning + insights render, `null` when both empty/absent, insight order preserved, name-fallback to id |
 
 ### Stack health
 | Test | Fichier | Couvre |

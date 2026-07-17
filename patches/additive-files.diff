@@ -19658,6 +19658,89 @@ index 00000000..cedd9395
 +    </div>
 +  );
 +};
+diff --git a/gitnexus-web/src/components/LensInsightsPanel.tsx b/gitnexus-web/src/components/LensInsightsPanel.tsx
+new file mode 100644
+index 00000000..1c2982e6
+--- /dev/null
++++ b/gitnexus-web/src/components/LensInsightsPanel.tsx
+@@ -0,0 +1,77 @@
++/**
++ * LensInsightsPanel — pure presentational panel for a governance lens'
++ * `insights`/`meaning` fields (top-level, produced by the sovereign
++ * brain-graph gateway's `evaluate()`, surfaced by `/api/graph?repo=<lens>`).
++ *
++ * Pure component: props in, JSX out. No internal state, no fetch — the
++ * caller is responsible for sourcing `meaning`/`insights` (see
++ * `useAppState` — `lensMeaning`/`lensInsights`) and deciding when to
++ * mount it. Renders nothing when both are empty/absent, so ordinary
++ * repos (which never carry these fields) see no extra chrome.
++ *
++ * Style follows the HelpPanel.tsx convention (inline styles, dark
++ * card-on-card palette) rather than the Tailwind-class panels, since
++ * this is a small standalone widget, not a floating mode panel wired
++ * to useAppState.
++ */
++
++export interface LensInsight {
++  id: string;
++  name?: string;
++  value: number;
++}
++
++interface LensInsightsPanelProps {
++  meaning?: string;
++  insights?: LensInsight[];
++}
++
++export const LensInsightsPanel = ({ meaning, insights }: LensInsightsPanelProps) => {
++  const hasMeaning = !!meaning && meaning.trim().length > 0;
++  const hasInsights = !!insights && insights.length > 0;
++
++  if (!hasMeaning && !hasInsights) return null;
++
++  return (
++    <div
++      data-testid="lens-insights-panel"
++      style={{
++        background: '#12121a',
++        border: '0.5px solid rgba(255,255,255,0.12)',
++        borderRadius: 12,
++        padding: '12px 14px',
++        display: 'flex',
++        flexDirection: 'column',
++        gap: 8,
++        fontFamily: 'var(--font-mono, monospace)',
++      }}
++    >
++      {hasMeaning && (
++        <p style={{ fontSize: 12, color: '#e2e2e8', margin: 0, lineHeight: 1.5 }}>{meaning}</p>
++      )}
++      {hasInsights && (
++        <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: 4 }}>
++          {insights!.map((insight) => (
++            <li
++              key={insight.id}
++              data-testid="lens-insight-row"
++              style={{
++                display: 'flex',
++                alignItems: 'baseline',
++                gap: 4,
++                fontSize: 11,
++                color: '#9ca3af',
++              }}
++            >
++              <span style={{ color: '#e2e2e8', fontWeight: 500 }}>
++                {insight.name || insight.id}
++              </span>
++              <span>{':'}</span>
++              <span style={{ color: '#a78bfa', fontWeight: 500 }}>{insight.value}</span>
++            </li>
++          ))}
++        </ul>
++      )}
++    </div>
++  );
++};
 diff --git a/gitnexus-web/src/components/LifespanPanel.tsx b/gitnexus-web/src/components/LifespanPanel.tsx
 new file mode 100644
 index 00000000..24dd9d90
