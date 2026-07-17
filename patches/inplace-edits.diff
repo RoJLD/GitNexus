@@ -4631,7 +4631,7 @@ index c09ad428..6a9e8a43 100644
      "@vitejs/plugin-react": "^5.1.4",
      "@vitest/coverage-v8": "^4.1.5",
 diff --git a/gitnexus-web/src/App.tsx b/gitnexus-web/src/App.tsx
-index 68f7d496..0f25fcd7 100644
+index 68f7d496..f14bf13e 100644
 --- a/gitnexus-web/src/App.tsx
 +++ b/gitnexus-web/src/App.tsx
 @@ -1,11 +1,29 @@
@@ -4690,7 +4690,7 @@ index 68f7d496..0f25fcd7 100644
      refreshLLMSettings,
      initializeAgent,
      startEmbeddingsWithFallback,
-@@ -48,10 +73,38 @@ const AppContent = () => {
+@@ -48,10 +73,40 @@ const AppContent = () => {
      setAvailableRepos,
      switchRepo,
      setCurrentRepo,
@@ -4698,6 +4698,7 @@ index 68f7d496..0f25fcd7 100644
 +    lensInsights,
 +    lensMeaning,
 +    lensFreshness,
++    groupGraphActive,
    } = useAppState();
  
 +  // Two-way sync of Timeline state <-> URL query params (shareable links).
@@ -4707,7 +4708,8 @@ index 68f7d496..0f25fcd7 100644
    const [serverDisconnected, setServerDisconnected] = useState(false);
 +  // Is the active project a governance lens (family = META|DOMAIN, served by
 +  // the gateway)? Same isLensProject idiom as GraphCanvas.tsx (which computes
-+  // it independently for its own dim/render decision) — gates the
++  // it independently for its own circular-layout decision — the per-node dim
++  // is separate, see graph-adapter.ts's applyInLensDim) — gates the
 +  // LensFreshnessBadge mount so an ordinary real repo (lensFreshness always
 +  // null — its /lens/<name> fetch is never triggered, see useAppState's
 +  // switchRepo `family` check) never shows a spurious "fraîcheur inconnue"
@@ -4729,7 +4731,7 @@ index 68f7d496..0f25fcd7 100644
  
    const handleServerConnect = useCallback(
      async (result: ConnectResult): Promise<void> => {
-@@ -111,6 +164,20 @@ const AppContent = () => {
+@@ -111,6 +166,20 @@ const AppContent = () => {
      tRef.current = t;
    }, [t]);
  
@@ -4750,7 +4752,7 @@ index 68f7d496..0f25fcd7 100644
    useEffect(() => {
      if (autoConnectRan.current) return;
      const params = new URLSearchParams(window.location.search);
-@@ -194,6 +261,26 @@ const AppContent = () => {
+@@ -194,6 +263,26 @@ const AppContent = () => {
      graphCanvasRef.current?.focusNode(nodeId);
    }, []);
  
@@ -4777,7 +4779,7 @@ index 68f7d496..0f25fcd7 100644
    // Handle settings saved - refresh and reinitialize agent
    // NOTE: Must be defined BEFORE any conditional returns (React hooks rule)
    const handleSettingsSaved = useCallback(() => {
-@@ -201,6 +288,21 @@ const AppContent = () => {
+@@ -201,6 +290,21 @@ const AppContent = () => {
      initializeAgent();
    }, [refreshLLMSettings, initializeAgent]);
  
@@ -4799,7 +4801,7 @@ index 68f7d496..0f25fcd7 100644
    // ── Server heartbeat: detect when server goes down while exploring ────────
    // Uses SSE (EventSource) for instant detection — no polling delay.
    // On disconnect: show a reconnecting banner instead of resetting to onboarding.
-@@ -257,22 +359,84 @@ const AppContent = () => {
+@@ -257,22 +361,84 @@ const AppContent = () => {
            // Retry once after 1s if the repo isn't found yet (server may still
            // be reinitializing after the worker completed).
            const url = serverBaseUrl ?? 'http://localhost:4747';
@@ -4885,19 +4887,25 @@ index 68f7d496..0f25fcd7 100644
                fetchRepos()
                  .then((repos) => setAvailableRepos(repos))
                  .catch(() => {});
-@@ -288,7 +452,152 @@ const AppContent = () => {
+@@ -288,7 +454,158 @@ const AppContent = () => {
  
          {/* Graph area - takes remaining space */}
          <div className="relative min-w-0 flex-1">
 -          <GraphCanvas ref={graphCanvasRef} />
 +          {viewDimension === '3d' ? <Graph3DCanvas /> : <GraphCanvas ref={graphCanvasRef} />}
 +
-+          {/* Lens freshness badge + insights/meaning — top-left, unclaimed
-+              corner (Coupling/Ownership/Dissonance/WhatIf/Similarity share
-+              top-right; GrowthChart bottom-left; Lifespan/Audit bottom-right).
-+              Gated on isLensProject so an ordinary real repo never renders
-+              this corner (the freshness badge would otherwise show a
-+              spurious "fraîcheur inconnue" — lensFreshness defaults to
++          {/* Lens freshness badge + insights/meaning — top-left. This corner
++              is SHARED with the group-graph legend (GraphCanvas.tsx, also
++              `absolute left-3 top-3 z-30`, gated on `groupGraphActive &&
++              groupGraphData`): entering a group graph
++              (`enterGroupGraph`) does not touch `projectName`, so
++              `isLensProject` stays true while `groupGraphActive` flips on —
++              without the `!groupGraphActive` guard below the two would
++              overlap AND the panel would keep showing metrics for a lens
++              that is no longer on screen (the merged group graph replaced
++              it). Gated on isLensProject so an ordinary real repo never
++              renders this corner (the freshness badge would otherwise show
++              a spurious "fraîcheur inconnue" — lensFreshness defaults to
 +              null and is only ever fetched for governance lenses, but
 +              gating the MOUNT itself, not just the fetch, is the belt for
 +              that braces).
@@ -4906,7 +4914,7 @@ index 68f7d496..0f25fcd7 100644
 +              See docs/superpowers/plans/2026-07-17-lens-souveraine-phase1b-browser-projector.md
 +              Task 2 Step 5 (insights/meaning) + Task 3 Step 5 (freshness,
 +              fork-only /lens/<name> fetch — Option A) + the Task 3 report. */}
-+          {isLensProject && (
++          {isLensProject && !groupGraphActive && (
 +            <div className="pointer-events-auto absolute left-3 top-3 z-30 max-w-sm flex flex-col gap-2">
 +              <LensFreshnessBadge freshness={lensFreshness} />
 +              {(lensMeaning || (lensInsights && lensInsights.length > 0)) && (
@@ -5039,7 +5047,7 @@ index 68f7d496..0f25fcd7 100644
  
            {/* Code References Panel (overlay) - does NOT resize the graph, it overlaps on top */}
            {isCodePanelOpen && (codeReferences.length > 0 || !!selectedNode) && (
-@@ -296,12 +605,31 @@ const AppContent = () => {
+@@ -296,12 +613,31 @@ const AppContent = () => {
                <CodeReferencesPanel onFocusNode={handleFocusNode} />
              </div>
            )}
@@ -5071,7 +5079,7 @@ index 68f7d496..0f25fcd7 100644
        <StatusBar />
  
        {serverDisconnected && (
-@@ -316,6 +644,38 @@ const AppContent = () => {
+@@ -316,6 +652,38 @@ const AppContent = () => {
          onClose={() => setSettingsPanelOpen(false)}
          onSettingsSaved={handleSettingsSaved}
        />
