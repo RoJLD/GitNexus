@@ -1,5 +1,9 @@
 import { describe, it, expect } from 'vitest';
-import { knowledgeGraphToGraphology } from '../../upstream/gitnexus-web/src/lib/graph-adapter';
+import {
+  knowledgeGraphToGraphology,
+  knowledgeGraphToTreeGraphology,
+  knowledgeGraphToCirclesGraphology,
+} from '../../upstream/gitnexus-web/src/lib/graph-adapter';
 
 // Minimal KnowledgeGraph fixture — only the fields graph-adapter.ts actually
 // reads (nodes/relationships) are required at runtime; the TS `KnowledgeGraph`
@@ -50,5 +54,40 @@ describe('inLens dim (knowledgeGraphToGraphology)', () => {
     expect(g.getNodeAttribute('a', 'label')).toBe('nodeA');
     expect(g.getNodeAttribute('a', 'filePath')).toBe('a.ts');
     expect(g.getNodeAttribute('a', 'hidden')).toBe(false);
+  });
+});
+
+describe('inLens dim (knowledgeGraphToTreeGraphology)', () => {
+  it('dims a Class node with inLens===false, leaves true intact', () => {
+    // 'Class' has a base NODE_SIZE of 8 (> the dim cap of 2), so the dim
+    // branch's size reduction is actually observable here — like the Force
+    // adapter tests above.
+    const g = knowledgeGraphToTreeGraphology(
+      kg([
+        { id: 'x', label: 'Class', properties: { name: 'x', filePath: 'x', inLens: true } },
+        { id: 'y', label: 'Class', properties: { name: 'y', filePath: 'y', inLens: false } },
+      ]),
+    );
+
+    expect(g.getNodeAttribute('y', 'color')).toBe('#374151');
+    expect(g.getNodeAttribute('x', 'color')).not.toBe('#374151');
+    expect(g.getNodeAttribute('y', 'size')).toBeLessThan(g.getNodeAttribute('x', 'size'));
+    expect(g.getNodeAttribute('y', 'size')).toBe(2);
+  });
+});
+
+describe('inLens dim (knowledgeGraphToCirclesGraphology)', () => {
+  it('dims a Class node with inLens===false, leaves true intact', () => {
+    const g = knowledgeGraphToCirclesGraphology(
+      kg([
+        { id: 'x', label: 'Class', properties: { name: 'x', filePath: 'x', inLens: true } },
+        { id: 'y', label: 'Class', properties: { name: 'y', filePath: 'y', inLens: false } },
+      ]),
+    );
+
+    expect(g.getNodeAttribute('y', 'color')).toBe('#374151');
+    expect(g.getNodeAttribute('x', 'color')).not.toBe('#374151');
+    expect(g.getNodeAttribute('y', 'size')).toBeLessThan(g.getNodeAttribute('x', 'size'));
+    expect(g.getNodeAttribute('y', 'size')).toBe(2);
   });
 });

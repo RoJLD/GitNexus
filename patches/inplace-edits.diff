@@ -11274,10 +11274,36 @@ index 6c660b0a..937fd909 100644
     REDUCED MOTION — respect OS-level motion preferences (WCAG 2.3.3)
  ═══════════════════════════════════════════════════════════════ */
 diff --git a/gitnexus-web/src/lib/graph-adapter.ts b/gitnexus-web/src/lib/graph-adapter.ts
-index bb3f5f11..62a712c9 100644
+index bb3f5f11..12dbd1bc 100644
 --- a/gitnexus-web/src/lib/graph-adapter.ts
 +++ b/gitnexus-web/src/lib/graph-adapter.ts
-@@ -241,15 +241,31 @@ export const knowledgeGraphToGraphology = (
+@@ -84,6 +84,25 @@ const getNodeMass = (nodeType: NodeLabel, nodeCount: number): number => {
+   }
+ };
+ 
++/**
++ * Lens dim (Σ-LENS-SOUVERAINE Phase 1b/1c) — shared across all three render
++ * modes (Force/Tree/Circles): a node the lens engine's `apply_select`
++ * excluded (`properties.inLens === false`) is dimmed gray + shrunk, same
++ * idiom as the existing `isolateCommunity` dim in research-graph-adapter.ts.
++ * Lowest-priority adjustment: call last, right before `graph.addNode`, so it
++ * never fights an explicit projection/view color. A node without `inLens`
++ * (undefined) or `inLens === true` passes through unchanged.
++ */
++const applyInLensDim = (
++  color: string,
++  size: number,
++  node: { properties: unknown },
++): { color: string; size: number } => {
++  const inLensFalse = (node.properties as { inLens?: boolean }).inLens === false;
++  if (!inLensFalse) return { color, size };
++  return { color: '#374151', size: Math.min(size, 2) };
++};
++
+ /**
+  * Converts the KnowledgeGraph to a graphology Graph for Sigma.js
+  * Folders are positioned in a wide spread, children positioned NEAR their parents
+@@ -241,15 +260,24 @@ export const knowledgeGraphToGraphology = (
  
      // Symbol nodes get colored by community if available
      const usesCommunityColor = hasCommunity && symbolTypes.has(node.label);
@@ -11294,15 +11320,8 @@ index bb3f5f11..62a712c9 100644
 +        ? getCommunityColor(communityIndex!)
 +        : NODE_COLORS[node.label] || '#9ca3af';
 +
-+    // Lens dim (Σ-LENS-SOUVERAINE Phase 1b) — a node the lens engine's
-+    // `apply_select` excluded (`properties.inLens === false`) is dimmed gray
-+    // + shrunk, same idiom as the existing `isolateCommunity` dim in
-+    // research-graph-adapter.ts. Lowest-priority adjustment: applied last,
-+    // right before addNode, so it never fights an explicit projection color.
-+    // A node without `inLens` (undefined) or `inLens === true` is unaffected.
-+    const inLensFalse = (node.properties as { inLens?: boolean }).inLens === false;
-+    const finalColor = inLensFalse ? '#374151' : nodeColor;
-+    const finalSize = inLensFalse ? Math.min(scaledSize, 2) : scaledSize;
++    // Lens dim (Σ-LENS-SOUVERAINE Phase 1b) — see applyInLensDim() above.
++    const { color: finalColor, size: finalSize } = applyInLensDim(nodeColor, scaledSize, node);
  
      graph.addNode(nodeId, {
        x,
@@ -11310,6 +11329,46 @@ index bb3f5f11..62a712c9 100644
 -      size: scaledSize,
 -      color: nodeColor,
 +      size: finalSize,
++      color: finalColor,
+       label: node.properties.name,
+       nodeType: node.label,
+       filePath: node.properties.filePath,
+@@ -359,13 +387,17 @@ export const knowledgeGraphToTreeGraphology = (
+ 
+     const baseSize = NODE_SIZES[node.label] || 8;
+     const scaledSize = getScaledNodeSize(baseSize, nodeCount);
+-    const finalSize = Math.max(2, pos.size * (scaledSize / baseSize));
++    const treeSize = Math.max(2, pos.size * (scaledSize / baseSize));
++    const treeColor = NODE_COLORS[node.label] || '#9ca3af';
++
++    // Lens dim (Σ-LENS-SOUVERAINE Phase 1c) — see applyInLensDim() above.
++    const { color: finalColor, size: finalSize } = applyInLensDim(treeColor, treeSize, node);
+ 
+     graph.addNode(node.id, {
+       x: pos.x,
+       y: pos.y,
+       size: finalSize,
+-      color: NODE_COLORS[node.label] || '#9ca3af',
++      color: finalColor,
+       label: node.properties.name,
+       nodeType: node.label,
+       filePath: node.properties.filePath,
+@@ -440,13 +472,17 @@ export const knowledgeGraphToCirclesGraphology = (
+ 
+     const baseSize = NODE_SIZES[node.label] || 8;
+     const scaledSize = getScaledNodeSize(baseSize, nodeCount);
+-    const finalSize = Math.max(2, pos.size * (scaledSize / baseSize));
++    const circlesSize = Math.max(2, pos.size * (scaledSize / baseSize));
++    const circlesColor = NODE_COLORS[node.label] || '#9ca3af';
++
++    // Lens dim (Σ-LENS-SOUVERAINE Phase 1c) — see applyInLensDim() above.
++    const { color: finalColor, size: finalSize } = applyInLensDim(circlesColor, circlesSize, node);
+ 
+     graph.addNode(node.id, {
+       x: pos.x,
+       y: pos.y,
+       size: finalSize,
+-      color: NODE_COLORS[node.label] || '#9ca3af',
 +      color: finalColor,
        label: node.properties.name,
        nodeType: node.label,
