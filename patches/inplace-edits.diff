@@ -4631,11 +4631,12 @@ index c09ad428..6a9e8a43 100644
      "@vitejs/plugin-react": "^5.1.4",
      "@vitest/coverage-v8": "^4.1.5",
 diff --git a/gitnexus-web/src/App.tsx b/gitnexus-web/src/App.tsx
-index 68f7d496..4c7983b8 100644
+index 68f7d496..0f25fcd7 100644
 --- a/gitnexus-web/src/App.tsx
 +++ b/gitnexus-web/src/App.tsx
-@@ -1,11 +1,28 @@
- import { useCallback, useEffect, useRef, useState } from 'react';
+@@ -1,11 +1,29 @@
+-import { useCallback, useEffect, useRef, useState } from 'react';
++import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
  import { AppStateProvider, useAppState } from './hooks/useAppState';
 +import { useTimelineUrlSync } from './hooks/useTimelineUrlSync';
  import { DropZone } from './components/DropZone';
@@ -4646,6 +4647,7 @@ index 68f7d496..4c7983b8 100644
 +import { OwnershipPanel } from './components/OwnershipPanel';
 +import { DissonancePanel } from './components/DissonancePanel';
 +import { LensInsightsPanel } from './components/LensInsightsPanel';
++import { LensFreshnessBadge } from './components/LensFreshnessBadge';
 +import { WhatIfPanel } from './components/WhatIfPanel';
 +import { SimilarityPanel } from './components/SimilarityPanel';
 +import AuditPanel from './components/AuditPanel';
@@ -4663,7 +4665,7 @@ index 68f7d496..4c7983b8 100644
  import { StatusBar } from './components/StatusBar';
  import { FileTreePanel } from './components/FileTreePanel';
  import { CodeReferencesPanel } from './components/CodeReferencesPanel';
-@@ -23,6 +40,8 @@ import {
+@@ -23,6 +41,8 @@ import {
  import { ERROR_RESET_DELAY_MS } from './config/ui-constants';
  import { formatBackendError } from './i18n/error-messages';
  import { useTranslation } from 'react-i18next';
@@ -4672,7 +4674,7 @@ index 68f7d496..4c7983b8 100644
  
  const AppContent = () => {
    const { t } = useTranslation(['common', 'errors']);
-@@ -32,10 +51,15 @@ const AppContent = () => {
+@@ -32,10 +52,15 @@ const AppContent = () => {
      setGraph,
      setProgress,
      setProjectName,
@@ -4688,13 +4690,14 @@ index 68f7d496..4c7983b8 100644
      refreshLLMSettings,
      initializeAgent,
      startEmbeddingsWithFallback,
-@@ -48,10 +72,26 @@ const AppContent = () => {
+@@ -48,10 +73,38 @@ const AppContent = () => {
      setAvailableRepos,
      switchRepo,
      setCurrentRepo,
 +    viewDimension,
 +    lensInsights,
 +    lensMeaning,
++    lensFreshness,
    } = useAppState();
  
 +  // Two-way sync of Timeline state <-> URL query params (shareable links).
@@ -4702,6 +4705,17 @@ index 68f7d496..4c7983b8 100644
 +
    const graphCanvasRef = useRef<GraphCanvasHandle>(null);
    const [serverDisconnected, setServerDisconnected] = useState(false);
++  // Is the active project a governance lens (family = META|DOMAIN, served by
++  // the gateway)? Same isLensProject idiom as GraphCanvas.tsx (which computes
++  // it independently for its own dim/render decision) — gates the
++  // LensFreshnessBadge mount so an ordinary real repo (lensFreshness always
++  // null — its /lens/<name> fetch is never triggered, see useAppState's
++  // switchRepo `family` check) never shows a spurious "fraîcheur inconnue"
++  // badge. NOT VERIFIED LIVE (stack not running).
++  const isLensProject = useMemo(
++    () => Boolean(availableRepos.find((r) => r.name === projectName)?.family),
++    [availableRepos, projectName],
++  );
 +  // Roadmap-predictive Audit view (Tier roadmap-predictive Audit).
 +  // Local state — the panel is self-fetching against /ghost-audit and
 +  // does not need to coexist with the other top-right slot panels, so
@@ -4715,7 +4729,7 @@ index 68f7d496..4c7983b8 100644
  
    const handleServerConnect = useCallback(
      async (result: ConnectResult): Promise<void> => {
-@@ -111,6 +151,20 @@ const AppContent = () => {
+@@ -111,6 +164,20 @@ const AppContent = () => {
      tRef.current = t;
    }, [t]);
  
@@ -4736,7 +4750,7 @@ index 68f7d496..4c7983b8 100644
    useEffect(() => {
      if (autoConnectRan.current) return;
      const params = new URLSearchParams(window.location.search);
-@@ -194,6 +248,26 @@ const AppContent = () => {
+@@ -194,6 +261,26 @@ const AppContent = () => {
      graphCanvasRef.current?.focusNode(nodeId);
    }, []);
  
@@ -4763,7 +4777,7 @@ index 68f7d496..4c7983b8 100644
    // Handle settings saved - refresh and reinitialize agent
    // NOTE: Must be defined BEFORE any conditional returns (React hooks rule)
    const handleSettingsSaved = useCallback(() => {
-@@ -201,6 +275,21 @@ const AppContent = () => {
+@@ -201,6 +288,21 @@ const AppContent = () => {
      initializeAgent();
    }, [refreshLLMSettings, initializeAgent]);
  
@@ -4785,7 +4799,7 @@ index 68f7d496..4c7983b8 100644
    // ── Server heartbeat: detect when server goes down while exploring ────────
    // Uses SSE (EventSource) for instant detection — no polling delay.
    // On disconnect: show a reconnecting banner instead of resetting to onboarding.
-@@ -257,22 +346,84 @@ const AppContent = () => {
+@@ -257,22 +359,84 @@ const AppContent = () => {
            // Retry once after 1s if the repo isn't found yet (server may still
            // be reinitializing after the worker completed).
            const url = serverBaseUrl ?? 'http://localhost:4747';
@@ -4871,26 +4885,33 @@ index 68f7d496..4c7983b8 100644
                fetchRepos()
                  .then((repos) => setAvailableRepos(repos))
                  .catch(() => {});
-@@ -288,7 +439,145 @@ const AppContent = () => {
+@@ -288,7 +452,152 @@ const AppContent = () => {
  
          {/* Graph area - takes remaining space */}
          <div className="relative min-w-0 flex-1">
 -          <GraphCanvas ref={graphCanvasRef} />
 +          {viewDimension === '3d' ? <Graph3DCanvas /> : <GraphCanvas ref={graphCanvasRef} />}
 +
-+          {/* Lens insights/meaning — top-left, unclaimed corner (Coupling/
-+              Ownership/Dissonance/WhatIf/Similarity share top-right;
-+              GrowthChart bottom-left; Lifespan/Audit bottom-right).
-+              Renders nothing unless the active repo is a governance
-+              lens carrying insights/meaning (see useAppState —
-+              lensInsights/lensMeaning, captured by switchRepo).
++          {/* Lens freshness badge + insights/meaning — top-left, unclaimed
++              corner (Coupling/Ownership/Dissonance/WhatIf/Similarity share
++              top-right; GrowthChart bottom-left; Lifespan/Audit bottom-right).
++              Gated on isLensProject so an ordinary real repo never renders
++              this corner (the freshness badge would otherwise show a
++              spurious "fraîcheur inconnue" — lensFreshness defaults to
++              null and is only ever fetched for governance lenses, but
++              gating the MOUNT itself, not just the fetch, is the belt for
++              that braces).
 +              NOT VERIFIED LIVE — written against the documented /lens
-+              contract, not exercised against a running gateway+web
-+              stack. See docs/superpowers/plans/2026-07-17-lens-souveraine-phase1b-browser-projector.md
-+              Task 2 Step 5 + the Task 2 report. */}
-+          {(lensMeaning || (lensInsights && lensInsights.length > 0)) && (
-+            <div className="pointer-events-auto absolute left-3 top-3 z-30 max-w-sm">
-+              <LensInsightsPanel meaning={lensMeaning} insights={lensInsights} />
++              contract, not exercised against a running gateway+web stack.
++              See docs/superpowers/plans/2026-07-17-lens-souveraine-phase1b-browser-projector.md
++              Task 2 Step 5 (insights/meaning) + Task 3 Step 5 (freshness,
++              fork-only /lens/<name> fetch — Option A) + the Task 3 report. */}
++          {isLensProject && (
++            <div className="pointer-events-auto absolute left-3 top-3 z-30 max-w-sm flex flex-col gap-2">
++              <LensFreshnessBadge freshness={lensFreshness} />
++              {(lensMeaning || (lensInsights && lensInsights.length > 0)) && (
++                <LensInsightsPanel meaning={lensMeaning} insights={lensInsights} />
++              )}
 +            </div>
 +          )}
 +
@@ -5018,7 +5039,7 @@ index 68f7d496..4c7983b8 100644
  
            {/* Code References Panel (overlay) - does NOT resize the graph, it overlaps on top */}
            {isCodePanelOpen && (codeReferences.length > 0 || !!selectedNode) && (
-@@ -296,12 +585,31 @@ const AppContent = () => {
+@@ -296,12 +605,31 @@ const AppContent = () => {
                <CodeReferencesPanel onFocusNode={handleFocusNode} />
              </div>
            )}
@@ -5050,7 +5071,7 @@ index 68f7d496..4c7983b8 100644
        <StatusBar />
  
        {serverDisconnected && (
-@@ -316,6 +624,38 @@ const AppContent = () => {
+@@ -316,6 +644,38 @@ const AppContent = () => {
          onClose={() => setSettingsPanelOpen(false)}
          onSettingsSaved={handleSettingsSaved}
        />
@@ -7927,10 +7948,10 @@ index 9263cfe2..e1739545 100644
   * Create a Graph RAG agent
   */
 diff --git a/gitnexus-web/src/hooks/app-state/graph.test.tsx b/gitnexus-web/src/hooks/app-state/graph.test.tsx
-index 12d946ee..62bee96c 100644
+index 12d946ee..d89ca7f7 100644
 --- a/gitnexus-web/src/hooks/app-state/graph.test.tsx
 +++ b/gitnexus-web/src/hooks/app-state/graph.test.tsx
-@@ -19,4 +19,34 @@ describe('GraphState', () => {
+@@ -19,4 +19,58 @@ describe('GraphState', () => {
      });
      expect(result.current.graphViewMode).toBe('tree');
    });
@@ -7964,12 +7985,36 @@ index 12d946ee..62bee96c 100644
 +    expect(result.current.lensInsights).toEqual([]);
 +    expect(result.current.lensMeaning).toBeUndefined();
 +  });
++
++  it('should default lensFreshness to null', () => {
++    const { result } = renderHook(() => useGraphState(), { wrapper });
++    expect(result.current.lensFreshness).toBeNull();
++  });
++
++  it('should set lensFreshness', () => {
++    const { result } = renderHook(() => useGraphState(), { wrapper });
++    act(() => {
++      result.current.setLensFreshness({ stale: true, age_hours: 50, ttl_hours: 24 });
++    });
++    expect(result.current.lensFreshness).toEqual({ stale: true, age_hours: 50, ttl_hours: 24 });
++  });
++
++  it('should reset lensFreshness back to null', () => {
++    const { result } = renderHook(() => useGraphState(), { wrapper });
++    act(() => {
++      result.current.setLensFreshness({ stale: false });
++    });
++    act(() => {
++      result.current.setLensFreshness(null);
++    });
++    expect(result.current.lensFreshness).toBeNull();
++  });
  });
 diff --git a/gitnexus-web/src/hooks/app-state/graph.tsx b/gitnexus-web/src/hooks/app-state/graph.tsx
-index aa6524a5..0c83009e 100644
+index aa6524a5..1e5d9a74 100644
 --- a/gitnexus-web/src/hooks/app-state/graph.tsx
 +++ b/gitnexus-web/src/hooks/app-state/graph.tsx
-@@ -3,6 +3,17 @@ import type { GraphNode, NodeLabel } from 'gitnexus-shared';
+@@ -3,6 +3,31 @@ import type { GraphNode, NodeLabel } from 'gitnexus-shared';
  import type { KnowledgeGraph } from '../../core/graph/types';
  import { DEFAULT_VISIBLE_LABELS, DEFAULT_VISIBLE_EDGES, type EdgeType } from '../../lib/constants';
  
@@ -7984,10 +8029,24 @@ index aa6524a5..0c83009e 100644
 +  value: number;
 +}
 +
++/**
++ * A governance lens' freshness verdict (`meta.freshness` field), served
++ * **only** by the `/lens/<name>` route (NOT `/api/graph?repo=`, which is
++ * the route this app's graph render uses — see `fetchLensFreshness` in
++ * `backend-client.ts` for the additional fetch that sources this slice).
++ * `null` for ordinary repos and before the additional fetch resolves.
++ */
++export interface LensFreshness {
++  stale?: boolean;
++  age_hours?: number;
++  ttl_hours?: number;
++  source_mtime?: string;
++}
++
  interface GraphStateContextValue {
    graph: KnowledgeGraph | null;
    setGraph: (graph: KnowledgeGraph | null) => void;
-@@ -18,6 +29,13 @@ interface GraphStateContextValue {
+@@ -18,6 +43,20 @@ interface GraphStateContextValue {
    setHighlightedNodeIds: (ids: Set<string>) => void;
    graphViewMode: 'force' | 'tree' | 'circles';
    setGraphViewMode: (mode: 'force' | 'tree' | 'circles') => void;
@@ -7998,19 +8057,27 @@ index aa6524a5..0c83009e 100644
 +  setLensInsights: (insights: LensInsight[]) => void;
 +  lensMeaning: string | undefined;
 +  setLensMeaning: (meaning: string | undefined) => void;
++  // Lens freshness (meta.freshness from the /lens/<name> route — see
++  // LensFreshness doc comment above). Captured by switchRepo's
++  // additional /lens/<name> fetch (fork-only, Option A — /api/graph does
++  // not carry it), reset to null on every repo/lens switch. See
++  // LensFreshnessBadge.
++  lensFreshness: LensFreshness | null;
++  setLensFreshness: (freshness: LensFreshness | null) => void;
  }
  
  const GraphStateContext = createContext<GraphStateContextValue | null>(null);
-@@ -30,6 +48,8 @@ export const GraphStateProvider = ({ children }: { children: ReactNode }) => {
+@@ -30,6 +69,9 @@ export const GraphStateProvider = ({ children }: { children: ReactNode }) => {
    const [depthFilter, setDepthFilter] = useState<number | null>(null);
    const [highlightedNodeIds, setHighlightedNodeIds] = useState<Set<string>>(new Set());
    const [graphViewMode, setGraphViewMode] = useState<'force' | 'tree' | 'circles'>('force');
 +  const [lensInsights, setLensInsights] = useState<LensInsight[]>([]);
 +  const [lensMeaning, setLensMeaning] = useState<string | undefined>(undefined);
++  const [lensFreshness, setLensFreshness] = useState<LensFreshness | null>(null);
  
    const toggleLabelVisibility = useCallback((label: NodeLabel) => {
      setVisibleLabels((prev) =>
-@@ -59,6 +79,10 @@ export const GraphStateProvider = ({ children }: { children: ReactNode }) => {
+@@ -59,6 +101,12 @@ export const GraphStateProvider = ({ children }: { children: ReactNode }) => {
        setHighlightedNodeIds,
        graphViewMode,
        setGraphViewMode,
@@ -8018,20 +8085,23 @@ index aa6524a5..0c83009e 100644
 +      setLensInsights,
 +      lensMeaning,
 +      setLensMeaning,
++      lensFreshness,
++      setLensFreshness,
      }),
      [
        graph,
-@@ -68,6 +92,8 @@ export const GraphStateProvider = ({ children }: { children: ReactNode }) => {
+@@ -68,6 +116,9 @@ export const GraphStateProvider = ({ children }: { children: ReactNode }) => {
        depthFilter,
        highlightedNodeIds,
        graphViewMode,
 +      lensInsights,
 +      lensMeaning,
++      lensFreshness,
      ],
    );
  
 diff --git a/gitnexus-web/src/hooks/useAppState.tsx b/gitnexus-web/src/hooks/useAppState.tsx
-index 5c118450..bacc8477 100644
+index 5c118450..0babdd1f 100644
 --- a/gitnexus-web/src/hooks/useAppState.tsx
 +++ b/gitnexus-web/src/hooks/useAppState.tsx
 @@ -8,7 +8,12 @@ import {
@@ -8048,16 +8118,17 @@ index 5c118450..bacc8477 100644
  import type { KnowledgeGraph } from '../core/graph/types';
  import { createKnowledgeGraph } from '../core/graph/graph';
  import type {
-@@ -28,6 +33,8 @@ import type { AgentMessage } from '../core/llm/agent';
+@@ -28,6 +33,9 @@ import type { AgentMessage } from '../core/llm/agent';
  import { type EdgeType } from '../lib/constants';
  import {
    connectToServer,
 +  fetchGraph,
 +  fetchNodesAliveBetween,
++  fetchLensFreshness,
    runQuery as backendRunQuery,
    search as backendSearch,
    grep as backendGrep,
-@@ -39,11 +46,27 @@ import {
+@@ -39,11 +47,32 @@ import {
    type ConnectResult,
    type JobProgress,
  } from '../services/backend-client';
@@ -8082,11 +8153,16 @@ index 5c118450..bacc8477 100644
  import { normalizePath } from '../lib/path-resolution';
  import { FILE_REF_REGEX, NODE_REF_REGEX } from '../lib/grounding-patterns';
 -import { GraphStateProvider, useGraphState } from './app-state/graph';
-+import { GraphStateProvider, useGraphState, type LensInsight } from './app-state/graph';
++import {
++  GraphStateProvider,
++  useGraphState,
++  type LensInsight,
++  type LensFreshness,
++} from './app-state/graph';
  
  export const AUTO_START_EMBEDDINGS_STORAGE_KEY = 'gitnexus.autoStartEmbeddings';
  
-@@ -53,6 +76,7 @@ export const shouldAutoStartEmbeddings = (): boolean => {
+@@ -53,6 +82,7 @@ export const shouldAutoStartEmbeddings = (): boolean => {
  };
  
  export type ViewMode = 'onboarding' | 'loading' | 'exploring';
@@ -8094,7 +8170,7 @@ index 5c118450..bacc8477 100644
  export type RightPanelTab = 'code' | 'chat';
  export type EmbeddingStatus = 'idle' | 'loading' | 'embedding' | 'indexing' | 'ready' | 'error';
  
-@@ -94,11 +118,23 @@ interface AppState {
+@@ -94,11 +124,29 @@ interface AppState {
    // View state
    viewMode: ViewMode;
    setViewMode: (mode: ViewMode) => void;
@@ -8115,10 +8191,16 @@ index 5c118450..bacc8477 100644
 +  lensMeaning: string | undefined;
 +  setLensMeaning: (meaning: string | undefined) => void;
 +
++  // Lens freshness (meta.freshness — served only by the /lens/<name>
++  // route, fetched additionally by switchRepo when the repo is a
++  // governance lens; see LensFreshnessBadge). null for ordinary repos.
++  lensFreshness: LensFreshness | null;
++  setLensFreshness: (freshness: LensFreshness | null) => void;
++
    // Selection
    selectedNode: GraphNode | null;
    setSelectedNode: (node: GraphNode | null) => void;
-@@ -184,6 +220,8 @@ interface AppState {
+@@ -184,6 +232,8 @@ interface AppState {
    updateLLMSettings: (updates: Partial<LLMSettings>) => void;
    isSettingsPanelOpen: boolean;
    setSettingsPanelOpen: (open: boolean) => void;
@@ -8127,7 +8209,7 @@ index 5c118450..bacc8477 100644
    isAgentReady: boolean;
    isAgentInitializing: boolean;
    agentError: string | null;
-@@ -209,6 +247,491 @@ interface AppState {
+@@ -209,6 +259,491 @@ interface AppState {
    clearAICodeReferences: () => void;
    clearCodeReferences: () => void;
    codeReferenceFocus: CodeReferenceFocus | null;
@@ -8619,7 +8701,7 @@ index 5c118450..bacc8477 100644
  }
  
  const AppStateContext = createContext<AppState | null>(null);
-@@ -222,6 +745,10 @@ export const AppStateProvider = ({ children }: { children: ReactNode }) => (
+@@ -222,6 +757,10 @@ export const AppStateProvider = ({ children }: { children: ReactNode }) => (
  const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
    // View state
    const [viewMode, setViewMode] = useState<ViewMode>('onboarding');
@@ -8630,7 +8712,7 @@ index 5c118450..bacc8477 100644
  
    const {
      graph,
-@@ -238,6 +765,10 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
+@@ -238,6 +777,12 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
      setHighlightedNodeIds,
      graphViewMode,
      setGraphViewMode,
@@ -8638,10 +8720,12 @@ index 5c118450..bacc8477 100644
 +    setLensInsights,
 +    lensMeaning,
 +    setLensMeaning,
++    lensFreshness,
++    setLensFreshness,
    } = useGraphState();
  
    // Right Panel
-@@ -348,6 +879,7 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
+@@ -348,6 +893,7 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
    // LLM/Agent state
    const [llmSettings, setLLMSettings] = useState<LLMSettings>(loadSettings);
    const [isSettingsPanelOpen, setSettingsPanelOpen] = useState(false);
@@ -8649,7 +8733,7 @@ index 5c118450..bacc8477 100644
    const [isAgentReady, setIsAgentReady] = useState(false);
    const [isAgentInitializing, setIsAgentInitializing] = useState(false);
    const [agentError, setAgentError] = useState<string | null>(null);
-@@ -362,6 +894,179 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
+@@ -362,6 +908,179 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
    const [isCodePanelOpen, setCodePanelOpen] = useState(false);
    const [codeReferenceFocus, setCodeReferenceFocus] = useState<CodeReferenceFocus | null>(null);
  
@@ -8829,7 +8913,7 @@ index 5c118450..bacc8477 100644
    // Map of normalized file path → node ID for graph-based lookups
    const fileNodeByPath = useMemo(() => {
      if (!graph) return new Map<string, string>();
-@@ -1133,6 +1838,74 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
+@@ -1133,6 +1852,85 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
      async (repoName: string) => {
        if (!serverBaseUrl) return;
  
@@ -8867,6 +8951,7 @@ index 5c118450..bacc8477 100644
 +        // cached snapshot carries none (ordinary repos never do).
 +        setLensInsights([]);
 +        setLensMeaning(undefined);
++        setLensFreshness(null);
 +
 +        const repoPath = cached.repoInfo.repoPath ?? cached.repoInfo.path;
 +        const pName =
@@ -8885,6 +8970,16 @@ index 5c118450..bacc8477 100644
 +        // same payload that was captured on the original fetch below).
 +        setLensInsights(cached.insights ?? []);
 +        setLensMeaning(cached.meaning);
++        // Freshness (meta.freshness) does NOT travel with the cache —
++        // it's not part of ConnectResult/fetchGraph's payload (Option A,
++        // see fetchLensFreshness doc comment). Re-fetch it on every
++        // switch, even cache hits, gated on the repo being a governance
++        // lens (family present) — never for ordinary repos. Best-effort,
++        // fire-and-forget: fetchLensFreshness never throws.
++        // NOT VERIFIED LIVE (stack not running).
++        if (cached.repoInfo.family) {
++          fetchLensFreshness(pName).then(setLensFreshness);
++        }
 +
 +        // Persist URL like the slow path does.
 +        if (pName) {
@@ -8904,7 +8999,7 @@ index 5c118450..bacc8477 100644
        setProgress({
          phase: 'extracting',
          percent: 0,
-@@ -1153,6 +1926,11 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
+@@ -1153,6 +1951,12 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
        setCodeReferences([]);
        setCodePanelOpen(false);
        setCodeReferenceFocus(null);
@@ -8913,10 +9008,11 @@ index 5c118450..bacc8477 100644
 +      // while the new payload is still in flight.
 +      setLensInsights([]);
 +      setLensMeaning(undefined);
++      setLensFreshness(null);
  
        let connectedRepo: BackendRepo | undefined;
        let pNameStr = repoName || 'server-project';
-@@ -1209,6 +1987,18 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
+@@ -1209,6 +2013,29 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
          for (const node of result.nodes) newGraph.addNode(node);
          for (const rel of result.relationships) newGraph.addRelationship(rel);
          setGraph(newGraph);
@@ -8925,6 +9021,17 @@ index 5c118450..bacc8477 100644
 +        // ordinary repos — defaults keep the panel unmounted.
 +        setLensInsights(result.insights ?? []);
 +        setLensMeaning(result.meaning);
++        // Freshness (meta.freshness) is NOT part of this /api/graph
++        // response — it's injected only on the /lens/<name> route
++        // (Option A, fork-only, see fetchLensFreshness doc comment).
++        // Additional lightweight fetch, gated on the repo being a
++        // governance lens (family present) so ordinary real repos never
++        // hit /lens/<name> (which would just 404 for them). Best-effort,
++        // fire-and-forget: fetchLensFreshness never throws.
++        // NOT VERIFIED LIVE (stack not running).
++        if (result.repoInfo.family) {
++          fetchLensFreshness(pName).then(setLensFreshness);
++        }
 +
 +        // Stuff the freshly-fetched payload in the snapshot cache so
 +        // the next switch to this same (snapshot of the same base)
@@ -8935,7 +9042,7 @@ index 5c118450..bacc8477 100644
        } catch (err: unknown) {
          console.error('Repo switch failed:', err);
          setProgress({
-@@ -1311,11 +2101,1297 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
+@@ -1311,11 +2138,1299 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
      setCodeReferenceFocus(null);
    }, []);
  
@@ -10230,10 +10337,12 @@ index 5c118450..bacc8477 100644
 +    setLensInsights,
 +    lensMeaning,
 +    setLensMeaning,
++    lensFreshness,
++    setLensFreshness,
      selectedNode,
      setSelectedNode,
      isRightPanelOpen,
-@@ -1377,6 +3453,8 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
+@@ -1377,6 +3492,8 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
      updateLLMSettings,
      isSettingsPanelOpen,
      setSettingsPanelOpen,
@@ -10242,7 +10351,7 @@ index 5c118450..bacc8477 100644
      isAgentReady,
      isAgentInitializing,
      agentError,
-@@ -1399,6 +3477,171 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
+@@ -1399,6 +3516,171 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
      clearAICodeReferences,
      clearCodeReferences,
      codeReferenceFocus,
@@ -11629,7 +11738,7 @@ index 7d9b5fc7..d0ed22ec 100644
    X,
    Zap,
 diff --git a/gitnexus-web/src/services/backend-client.ts b/gitnexus-web/src/services/backend-client.ts
-index e887e390..ee8c580f 100644
+index e887e390..a9cc90c7 100644
 --- a/gitnexus-web/src/services/backend-client.ts
 +++ b/gitnexus-web/src/services/backend-client.ts
 @@ -11,12 +11,31 @@ import { CircuitOpenError, ResilientFetchExhaustedError, resilientFetch } from '
@@ -11743,7 +11852,7 @@ index e887e390..ee8c580f 100644
    }
  
    // Streaming download with progress
-@@ -578,6 +630,34 @@ export const fetchGraph = async (
+@@ -578,6 +630,81 @@ export const fetchGraph = async (
    return JSON.parse(new TextDecoder().decode(combined));
  };
  
@@ -11775,10 +11884,57 @@ index e887e390..ee8c580f 100644
 +  return response.json();
 +};
 +
++/**
++ * A governance lens' freshness verdict. Structurally identical to
++ * `LensFreshness` in `hooks/app-state/graph.tsx` — duplicated here for
++ * the same reason as `LensInsight` above (keep this service module free
++ * of a hooks-layer dependency).
++ */
++export interface LensFreshness {
++  stale?: boolean;
++  age_hours?: number;
++  ttl_hours?: number;
++  source_mtime?: string;
++}
++
++/**
++ * Fetch `meta.freshness` for an active governance lens.
++ *
++ * Option A (fork-only, see the Phase 1b Task 3 plan): `meta.freshness`
++ * is injected by the sovereign brain-graph gateway **only** on the
++ * `/lens/<name>` route, not on `/api/graph?repo=` (the route
++ * `fetchGraph` above uses for the actual render). This is a lightweight
++ * additional fetch triggered only when the active repo is a governance
++ * lens (see `switchRepo`'s `family` check) — never for ordinary repos,
++ * which have no `/lens/<name>` entry and would just 404.
++ *
++ * Best-effort by design: any failure (network, 404, malformed body)
++ * resolves to `null` rather than throwing, so a lens with an
++ * unreachable/misbehaving freshness endpoint still renders its graph —
++ * the caller surfaces `null` as "fraîcheur inconnue" (Zero-Masking)
++ * rather than crashing the switch.
++ *
++ * NOT VERIFIED LIVE — written against the documented `/lens/<name>`
++ * contract (`meta.freshness`), not exercised against a running
++ * gateway. See docs/superpowers/plans/2026-07-17-lens-souveraine-phase1b-browser-projector.md
++ * Task 3 + the Task 3 report.
++ */
++export const fetchLensFreshness = async (name: string): Promise<LensFreshness | null> => {
++  try {
++    const url = `${_backendUrl}/lens/${encodeURIComponent(name)}`;
++    const response = await fetchWithTimeout(url, {}, 10_000);
++    if (!response.ok) return null;
++    const payload = await response.json();
++    return (payload && payload.meta && payload.meta.freshness) || null;
++  } catch {
++    return null;
++  }
++};
++
  const parseNdjsonGraphResponse = async (
    response: Response,
    onProgress?: (downloaded: number, total: number | null) => void,
-@@ -864,6 +944,10 @@ export interface ConnectResult {
+@@ -864,6 +991,10 @@ export interface ConnectResult {
    nodes: GraphNode[];
    relationships: GraphRelationship[];
    repoInfo: BackendRepo;
@@ -11789,7 +11945,7 @@ index e887e390..ee8c580f 100644
  }
  
  /**
-@@ -886,10 +970,10 @@ export async function connectToServer(
+@@ -886,10 +1017,10 @@ export async function connectToServer(
    const repoInfo = await fetchRepoInfo(repoName, { awaitAnalysis: opts?.awaitAnalysis });
  
    onProgress?.('downloading', 0, null);

@@ -66,3 +66,37 @@ describe('useAppState — lens insights/meaning slice', () => {
     expect(result.current.lensMeaning).toBeUndefined();
   });
 });
+
+// Covers the state slice exposed for LensFreshnessBadge (Task 3): default
+// value + setter plumbing (added/exposed in hooks/app-state/graph.tsx,
+// wired through useAppState.tsx). The actual capture-from-fetched-response
+// logic (the additional best-effort /lens/<name> fetch triggered inside
+// switchRepo when the repo is a governance lens) lives deep inside the
+// same large switchRepo handler as lensInsights/lensMeaning and is NOT
+// unit-tested here either — see the Task 3 report for the explicit
+// non-unit-tested / non-verified-live flag.
+describe('useAppState — lens freshness slice', () => {
+  it('defaults to lensFreshness=null', () => {
+    const { result } = renderHook(() => useAppState(), { wrapper });
+    expect(result.current.lensFreshness).toBeNull();
+  });
+
+  it('setLensFreshness updates state', () => {
+    const { result } = renderHook(() => useAppState(), { wrapper });
+    act(() => {
+      result.current.setLensFreshness({ stale: true, age_hours: 50, ttl_hours: 24 });
+    });
+    expect(result.current.lensFreshness).toEqual({ stale: true, age_hours: 50, ttl_hours: 24 });
+  });
+
+  it('setLensFreshness(null) clears back to default', () => {
+    const { result } = renderHook(() => useAppState(), { wrapper });
+    act(() => {
+      result.current.setLensFreshness({ stale: false });
+    });
+    act(() => {
+      result.current.setLensFreshness(null);
+    });
+    expect(result.current.lensFreshness).toBeNull();
+  });
+});

@@ -19658,6 +19658,109 @@ index 00000000..cedd9395
 +    </div>
 +  );
 +};
+diff --git a/gitnexus-web/src/components/LensFreshnessBadge.tsx b/gitnexus-web/src/components/LensFreshnessBadge.tsx
+new file mode 100644
+index 00000000..7338d863
+--- /dev/null
++++ b/gitnexus-web/src/components/LensFreshnessBadge.tsx
+@@ -0,0 +1,97 @@
++/**
++ * LensFreshnessBadge — pure presentational badge for a governance lens'
++ * `meta.freshness` field (`{stale, age_hours, ttl_hours, source_mtime}`),
++ * injected by the sovereign brain-graph gateway **only** on the
++ * `/lens/<name>` route (NOT on `/api/graph?repo=`, which the explorer's
++ * main render fetch uses — see `useAppState`/`backend-client`'s
++ * `fetchLensFreshness` for the additional fetch that sources this prop).
++ *
++ * Pure component: props in, JSX out. No internal state, no fetch — the
++ * caller is responsible for sourcing `freshness` (see `useAppState` —
++ * `lensFreshness`/`setLensFreshness`) and deciding when to mount it.
++ *
++ * Doctrine Zero-Masking: an absent/unreadable freshness verdict renders
++ * an explicit "fraîcheur inconnue" badge rather than silently rendering
++ * nothing — the caller must never be able to mistake "we don't know" for
++ * "it's fresh". A verdict of `stale:false` renders nothing (discreet —
++ * ordinary repos and up-to-date lenses see no extra chrome).
++ */
++
++export interface LensFreshness {
++  stale?: boolean;
++  age_hours?: number;
++  ttl_hours?: number;
++  source_mtime?: string;
++}
++
++interface LensFreshnessBadgeProps {
++  freshness?: LensFreshness | null;
++}
++
++export const LensFreshnessBadge = ({ freshness }: LensFreshnessBadgeProps) => {
++  const stale = freshness?.stale;
++
++  // stale === false — up to date. Discreet: render nothing so ordinary
++  // repos/fresh lenses see no extra chrome (decision recorded in the
++  // Phase 1b Task 3 plan: "discret/rien pour ne pas encombrer").
++  if (stale === false) return null;
++
++  // freshness == null, or present but without a `stale` verdict — Zero-
++  // Masking: say so rather than staying silent (silence would read as
++  // "fresh", which we cannot claim).
++  if (stale === undefined) {
++    return (
++      <div
++        data-testid="lens-freshness-badge"
++        data-freshness="unknown"
++        style={{
++          display: 'inline-flex',
++          alignItems: 'baseline',
++          gap: 4,
++          fontFamily: 'var(--font-mono, monospace)',
++          fontSize: 11,
++          fontWeight: 500,
++          borderRadius: 6,
++          padding: '2px 8px',
++          width: 'fit-content',
++          color: '#9ca3af',
++          background: '#1a1a24',
++          border: '0.5px solid rgba(255,255,255,0.12)',
++        }}
++      >
++        fraîcheur inconnue
++      </div>
++    );
++  }
++
++  // stale === true
++  const hasAgeTtl = freshness?.age_hours !== undefined && freshness?.ttl_hours !== undefined;
++
++  return (
++    <div
++      data-testid="lens-freshness-badge"
++      data-freshness="stale"
++      style={{
++        display: 'inline-flex',
++        alignItems: 'baseline',
++        gap: 4,
++        fontFamily: 'var(--font-mono, monospace)',
++        fontSize: 11,
++        fontWeight: 600,
++        borderRadius: 6,
++        padding: '2px 8px',
++        width: 'fit-content',
++        color: '#f59e0b',
++        background: 'rgba(245,158,11,0.12)',
++        border: '0.5px solid rgba(245,158,11,0.35)',
++      }}
++    >
++      <span>PÉRIMÉ</span>
++      {hasAgeTtl && (
++        <span style={{ color: '#d1a15c', fontWeight: 500 }}>
++          ({freshness!.age_hours}h / {freshness!.ttl_hours}h)
++        </span>
++      )}
++    </div>
++  );
++};
 diff --git a/gitnexus-web/src/components/LensInsightsPanel.tsx b/gitnexus-web/src/components/LensInsightsPanel.tsx
 new file mode 100644
 index 00000000..1c2982e6
