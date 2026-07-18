@@ -11816,7 +11816,7 @@ index 7d9b5fc7..d0ed22ec 100644
    X,
    Zap,
 diff --git a/gitnexus-web/src/services/backend-client.ts b/gitnexus-web/src/services/backend-client.ts
-index e887e390..a9cc90c7 100644
+index e887e390..0f59488c 100644
 --- a/gitnexus-web/src/services/backend-client.ts
 +++ b/gitnexus-web/src/services/backend-client.ts
 @@ -11,12 +11,31 @@ import { CircuitOpenError, ResilientFetchExhaustedError, resilientFetch } from '
@@ -11930,7 +11930,7 @@ index e887e390..a9cc90c7 100644
    }
  
    // Streaming download with progress
-@@ -578,6 +630,81 @@ export const fetchGraph = async (
+@@ -578,6 +630,123 @@ export const fetchGraph = async (
    return JSON.parse(new TextDecoder().decode(combined));
  };
  
@@ -12009,10 +12009,52 @@ index e887e390..a9cc90c7 100644
 +  }
 +};
 +
++// ── Lens Atelier (authoring) — POST preview (gateway, no auth) + propose (bridge-api, Bearer) ──
++let _bridgeUrl = 'http://localhost:8000'; // ELYSIUM bridge-api; override via setBridgeUrl (prod: https://bridge.elysium.local)
++
++export const setBridgeUrl = (url: string): void => { _bridgeUrl = url.replace(/\/$/, ''); };
++export const getBridgeUrl = (): string => _bridgeUrl;
++
++export interface LensPreviewResult {
++  ok: boolean;
++  errors?: string[];
++  braingraph?: Record<string, unknown>; // {lens,nodes,relationships,meta,insights,meaning} on 200
++}
++
++export const previewLens = async (spec: Record<string, unknown>): Promise<LensPreviewResult> => {
++  const response = await fetchWithTimeout(`${_backendUrl}/lens/preview`, {
++    method: 'POST',
++    headers: { 'Content-Type': 'application/json' },
++    body: JSON.stringify(spec),
++  });
++  if (response.status === 200) {
++    return { ok: true, braingraph: (await response.json()) as Record<string, unknown> };
++  }
++  const body = await response.json().catch(() => ({} as Record<string, unknown>));
++  const errors = Array.isArray((body as { errors?: unknown }).errors)
++    ? ((body as { errors: string[] }).errors)
++    : [String((body as { error?: unknown }).error ?? `HTTP ${response.status}`)];
++  return { ok: false, errors };
++};
++
++export const proposeLens = async (
++  spec: Record<string, unknown>,
++  autoApprove: boolean,
++  token: string,
++): Promise<{ id: string; status: string }> => {
++  const response = await fetchWithTimeout(`${_bridgeUrl}/elysium/lens/propose`, {
++    method: 'POST',
++    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
++    body: JSON.stringify({ spec, auto_approve: autoApprove }), // NO author — server derives it
++  });
++  await assertOk(response);
++  return (await response.json()) as { id: string; status: string };
++};
++
  const parseNdjsonGraphResponse = async (
    response: Response,
    onProgress?: (downloaded: number, total: number | null) => void,
-@@ -864,6 +991,10 @@ export interface ConnectResult {
+@@ -864,6 +1033,10 @@ export interface ConnectResult {
    nodes: GraphNode[];
    relationships: GraphRelationship[];
    repoInfo: BackendRepo;
@@ -12023,7 +12065,7 @@ index e887e390..a9cc90c7 100644
  }
  
  /**
-@@ -886,10 +1017,10 @@ export async function connectToServer(
+@@ -886,10 +1059,10 @@ export async function connectToServer(
    const repoInfo = await fetchRepoInfo(repoName, { awaitAnalysis: opts?.awaitAnalysis });
  
    onProgress?.('downloading', 0, null);
