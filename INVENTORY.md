@@ -1,6 +1,6 @@
 # GitNexus — État des lieux
 
-**Snapshot daté : 2026-06-14 (post-bump v1.6.7)**
+**Snapshot daté : 2026-06-15 (post-Tier-3.7 Phase D Hardening scaffold)**
 **Base upstream : `v1.6.7`** (latest stable, bumped from v1.6.5 — v1.6.6 mega-release ~190 PRs + v1.6.7 patch fixes)
 **Fork interne : [github.com/RoJLD/GitNexus](https://github.com/RoJLD/GitNexus) → branche `deployment`**
 
@@ -124,7 +124,7 @@ Le diff monolithique unique a été supprimé et remplacé par deux artefacts di
 
 | Fichier | Contenu | Risque de conflit au bump |
 |---|---|---|
-| [`patches/additive-files.diff`](patches/additive-files.diff) | ~99 fichiers neufs que nous possédons entièrement (tous les `docker-server-*.mjs`, les composants React additifs, les pure-function libs, les scripts, etc.) | **Nul** — ce sont des fichiers créés par nous, upstream ne les touche pas |
+| [`patches/additive-files.diff`](patches/additive-files.diff) | ~138 fichiers neufs que nous possédons entièrement (tous les `docker-server-*.mjs`, les composants React additifs, les pure-function libs, les scripts, etc.) | **Nul** — ce sont des fichiers créés par nous, upstream ne les touche pas |
 | [`patches/inplace-edits.diff`](patches/inplace-edits.diff) | 17 fichiers upstream modifiés en place (`docker-server.mjs`, `Dockerfile.web`, `App.tsx`, `useAppState.tsx`, `useSigma.ts`, `GraphCanvas.tsx`, `package.json`, `package-lock.json`, etc.) | **Toute la surface** — ces fichiers peuvent diverger à chaque bump |
 
 **Shim `docker-server-routes.mjs` (additif)** : le câblage de routes (chaîne de dispatch + imports + lancement du cron) qui résidait en place dans `docker-server.mjs` a été extrait dans un fichier neuf `upstream/docker-server-routes.mjs` (exports `registerGitnexusRoutes` + `startGitnexusCron`). `docker-server.mjs` reste un fichier in-place mais son footprint est réduit — seuls les handlers utilitaires inline (`handleExport`/`handleImport`/`/listdir`) y demeurent par design.
@@ -337,7 +337,7 @@ Pure frontend extension de la Timeline existante — aucune route serveur, réut
 | [CLAUDE.md](CLAUDE.md) | Règles pour l'agent : maintenir ROADMAP + INVENTORY à chaque feature, rebuild after upstream edits |
 | [../CLAUDE.md](../CLAUDE.md) | Règle workspace : tests CI/CD si module en a déjà |
 | [patches/README.md](patches/README.md) | Comment ré-appliquer les patches sur un clone frais + procédure de bump dry-run |
-| [patches/additive-files.diff](patches/additive-files.diff) | ~99 fichiers neufs que nous possédons (risque de conflit nul) |
+| [patches/additive-files.diff](patches/additive-files.diff) | 135 fichiers neufs que nous possédons (risque de conflit nul) |
 | [patches/inplace-edits.diff](patches/inplace-edits.diff) | 17 édits in-place de fichiers upstream (vraie surface de conflit au bump) |
 | [patches/bump-dry-run-main.md](patches/bump-dry-run-main.md) | Rapport du premier dry-run de bump contre `main` (107 clean / 0 conflict / 9 fail) |
 | [scripts/bump-upstream.mjs](scripts/bump-upstream.mjs) | Outil de bump dry-run : clone la cible, applique les deux diffs, écrit le rapport |
@@ -395,7 +395,7 @@ Pure frontend extension de la Timeline existante — aucune route serveur, réut
 **Pending — Tier 3 étendu (R&D + stratégique)** :
 - ⏳ 3.1 à 3.5 : voir [ROADMAP.md](ROADMAP.md) (inchangé)
 - ⏳ 3.6 Architectural CI (concurrence Akon Labs commercial)
-- ⏳ 3.7 AI-guided tour / Architect's Copilot (requiert 2bis.1)
+- 🟢 3.7 AI-guided tour / Architect's Copilot — Phase A+B+C livré, Phase D Hardening **scaffolded 2026-06-15** (metrics + E2E + INVENTORY +7 → ~138). Consumers : `docker-server-copilot.mjs` (REST gate) + `docker-server-copilot-core.mjs` (inventory) + `docker-server-copilot-blt.mjs` (BLT) + `docker-server-copilot-cluster.mjs` (hash-chain) + `docker-server-copilot-forge.mjs` (ASTKG) + `docker-server-copilot-metrics.mjs` (Prometheus) + `CopilotPanel.tsx` (4 sub-panels UI) + `tests/e2e/specs/copilot-panel.spec.ts` (Playwright). Iron Rules : COPILOT-1..5 (spec) + COPILOT-UI-1..3 (Phase C) + COPILOT-HARDENING-1..3 (Phase D).
 - ⏳ 3.8 Domain-specific AST extractors (requiert 3.10)
 - ⏳ 3.9 Public reference dataset / industry baselines (Chemin C)
 - ⏳ 3.10 Plugin architecture pour analytics (lève le goulot horizontal)
@@ -404,6 +404,14 @@ Pure frontend extension de la Timeline existante — aucune route serveur, réut
 - 🛠️ Section "Optimisations d'existant à programmer" — 8 items (storage, cache, bundle, smoke tests, perf metrics, etc.)
 - 🎯 Section "Vision architecturale — trois chemins" — A (Architectural CI) / B (Architect's Copilot, recommandé) / C (Galaxie OSS)
 - 🚨 Section "Refactos structurels à surveiller" — 7 issues identifiées dans la revue 2026-05-26
+
+### B.sec — Wiki prompt-injection guard (P0-5, 2026-07-06)
+
+Durcissement sécurité du chemin LLM du wiki (contenu de dépôt non-fiable → prompt) :
+
+- **Cadrage anti-injection** : `ANTI_INJECTION_DIRECTIVE` + `appendAntiInjectionFrame` ([`upstream/gitnexus/src/core/wiki/prompts.ts`](upstream/gitnexus/src/core/wiki/prompts.ts)) apposés **systématiquement** par `buildSystemPrompt` ([`generator.ts`](upstream/gitnexus/src/core/wiki/generator.ts)) sur module/parent/overview — le contenu du dépôt est déclaré donnée, jamais instruction.
+- **Parité read-only `claude`** : `callClaudeLLM` ([`local-cli-client.ts`](upstream/gitnexus/src/core/wiki/local-cli-client.ts)) passe `--disallowedTools` (Bash/Write/Edit/WebFetch/…) via le module pur `local-cli-args.ts` — levier non-contournable, parité avec le `--sandbox read-only` de `codex`, ferme le vecteur injection→exécution de commande.
+- Test [`tests/unit/wiki-prompt-injection-guard.test.mjs`](tests/unit/wiki-prompt-injection-guard.test.mjs) (6/6). Résiduels documentés (GROUPING, cluster-enricher, délimiteur nonce). Spec : [`docs/superpowers/specs/2026-07-06-wiki-prompt-injection-guard.md`](docs/superpowers/specs/2026-07-06-wiki-prompt-injection-guard.md).
 
 ---
 

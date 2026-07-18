@@ -1,0 +1,63 @@
+# Tier 3.7 Phase B'6 - PyPI publish CI workflow stub for gitnexus-copilot-sdk.
+#
+# Iron Rule Sigma-COPILOT-SDK-PUBLISH-1 (Sigma-TAG-DRIVEN-CI-PUBLISH) :
+#   the SDK is published EXCLUSIVELY by tag-driven CI ; no operator may
+#   `twine upload` from a workstation. Tagging is the audit trail.
+#
+# Tag convention : `sdk-py-v<semver>` (e.g. `sdk-py-v0.1.0`, `sdk-py-v1.2.3`).
+# Required secret : `PYPI_API_TOKEN` (PyPI API token, scope = project).
+
+name: publish-pypi
+
+on:
+  push:
+    tags:
+      - "sdk-py-v*"
+
+permissions:
+  contents: read
+  id-token: write  # reserved for future PyPI trusted publishers (OIDC)
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: mcp-server/sdk-py
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install build + twine
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install build twine
+
+      - name: Install package + dev deps
+        run: pip install -e ".[dev]"
+
+      - name: Run tests
+        run: python -m pytest tests/ -v
+
+      - name: Verify tag matches pyproject version
+        run: |
+          PKG_VERSION=$(python -c "import tomllib,pathlib;data=tomllib.loads(pathlib.Path('pyproject.toml').read_text());print(data['project']['version'])")
+          TAG_VERSION="${GITHUB_REF_NAME#sdk-py-v}"
+          if [ "$PKG_VERSION" != "$TAG_VERSION" ]; then
+            echo "Tag $GITHUB_REF_NAME ($TAG_VERSION) does not match pyproject.toml ($PKG_VERSION)"
+            exit 1
+          fi
+
+      - name: Build sdist + wheel
+        run: python -m build
+
+      - name: Upload to PyPI
+        env:
+          TWINE_USERNAME: __token__
+          TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
+        run: twine upload dist/*

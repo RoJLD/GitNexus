@@ -1,0 +1,58 @@
+# Tier 3.7 Phase B'6 - npm publish CI workflow stub for @gitnexus/copilot-sdk.
+#
+# Iron Rule Sigma-COPILOT-SDK-PUBLISH-1 (Sigma-TAG-DRIVEN-CI-PUBLISH) :
+#   the SDK is published EXCLUSIVELY by tag-driven CI ; no operator may
+#   `npm publish` from a workstation. Tagging is the audit trail.
+#
+# Tag convention : `sdk-ts-v<semver>` (e.g. `sdk-ts-v0.1.0`, `sdk-ts-v1.2.3`).
+# Required secret : `NPM_TOKEN` (npm automation token, scope = publish).
+
+name: publish-npm
+
+on:
+  push:
+    tags:
+      - "sdk-ts-v*"
+
+permissions:
+  contents: read
+  id-token: write  # reserved for future npm provenance attestation
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: mcp-server/sdk-ts
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Build
+        run: npm run build
+
+      - name: Verify tag matches package version
+        run: |
+          PKG_VERSION=$(node -p "require('./package.json').version")
+          TAG_VERSION="${GITHUB_REF_NAME#sdk-ts-v}"
+          if [ "$PKG_VERSION" != "$TAG_VERSION" ]; then
+            echo "Tag $GITHUB_REF_NAME ($TAG_VERSION) does not match package.json ($PKG_VERSION)"
+            exit 1
+          fi
+
+      - name: Publish to npm
+        run: npm publish --access public --provenance
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
