@@ -13,9 +13,11 @@ vi.mock('../../upstream/gitnexus-web/src/services/backend-client', () => ({
     toSnapshot: 'b',
     computedAt: '2026-05-27T00:00:00Z',
   }),
+  fetchLensFreshness: vi.fn().mockResolvedValue(null),
 }));
 
 import { useAppState, AppStateProvider } from '../../upstream/gitnexus-web/src/hooks/useAppState';
+import { fetchLensFreshness } from '../../upstream/gitnexus-web/src/services/backend-client';
 import type { ReactNode } from 'react';
 
 const wrapper = ({ children }: { children: ReactNode }) => (
@@ -26,6 +28,7 @@ beforeEach(() => {
   if (typeof window !== 'undefined') {
     window.localStorage.clear();
   }
+  vi.mocked(fetchLensFreshness).mockClear();
 });
 
 // Covers the state slice exposed for LensInsightsPanel: default values +
@@ -97,6 +100,56 @@ describe('useAppState — lens freshness slice', () => {
     act(() => {
       result.current.setLensFreshness(null);
     });
+    expect(result.current.lensFreshness).toBeNull();
+  });
+});
+
+// Covers the shared positive-capture helper (hooks/app-state/graph.tsx)
+// used by all three ConnectResult producers — switchRepo's cache-hit and
+// slow-path sites, and App.tsx's handleServerConnect (the ?server=&project=
+// deep-link entry, which previously dropped lens metadata entirely). Unlike
+// the slices above, this exercises the actual capture logic directly
+// (not just the setter plumbing), since applyLensMetadata is now the
+// single source of truth for it.
+describe('useAppState — applyLensMetadata', () => {
+  it('populates insights/meaning and fetches freshness when repoInfo.family is set', async () => {
+    const { result } = renderHook(() => useAppState(), { wrapper });
+    vi.mocked(fetchLensFreshness).mockResolvedValueOnce({
+      stale: false,
+      age_hours: 2,
+      ttl_hours: 24,
+    });
+
+    await act(async () => {
+      result.current.applyLensMetadata(
+        {
+          insights: [{ id: 'i1', name: 'n', value: 3 }],
+          meaning: 'M',
+          repoInfo: { family: 'E. Immune' },
+        },
+        'health::critical_services',
+      );
+      // Flush the fetchLensFreshness(...).then(setLensFreshness) microtask.
+      await Promise.resolve();
+    });
+
+    expect(result.current.lensInsights).toEqual([{ id: 'i1', name: 'n', value: 3 }]);
+    expect(result.current.lensMeaning).toBe('M');
+    expect(fetchLensFreshness).toHaveBeenCalledTimes(1);
+    expect(fetchLensFreshness).toHaveBeenCalledWith('health::critical_services');
+    expect(result.current.lensFreshness).toEqual({ stale: false, age_hours: 2, ttl_hours: 24 });
+  });
+
+  it('defaults insights/meaning and skips the freshness fetch when repoInfo.family is absent', () => {
+    const { result } = renderHook(() => useAppState(), { wrapper });
+
+    act(() => {
+      result.current.applyLensMetadata({ repoInfo: {} }, 'ordinary-repo');
+    });
+
+    expect(result.current.lensInsights).toEqual([]);
+    expect(result.current.lensMeaning).toBeUndefined();
+    expect(fetchLensFreshness).not.toHaveBeenCalled();
     expect(result.current.lensFreshness).toBeNull();
   });
 });
