@@ -4631,10 +4631,10 @@ index c09ad428..6a9e8a43 100644
      "@vitejs/plugin-react": "^5.1.4",
      "@vitest/coverage-v8": "^4.1.5",
 diff --git a/gitnexus-web/src/App.tsx b/gitnexus-web/src/App.tsx
-index 68f7d496..c542e69f 100644
+index 68f7d496..5086da69 100644
 --- a/gitnexus-web/src/App.tsx
 +++ b/gitnexus-web/src/App.tsx
-@@ -1,11 +1,29 @@
+@@ -1,11 +1,30 @@
 -import { useCallback, useEffect, useRef, useState } from 'react';
 +import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
  import { AppStateProvider, useAppState } from './hooks/useAppState';
@@ -4654,6 +4654,7 @@ index 68f7d496..c542e69f 100644
 +import GanttPanel from './components/GanttPanel';
  import { LoadingOverlay } from './components/LoadingOverlay';
  import { Header } from './components/Header';
++import { LensStudioModal } from './components/LensStudioModal';
 +import { Timeline } from './components/Timeline';
 +import { EntropyCommitTimeline } from './components/EntropyCommitTimeline';
  import { GraphCanvas, GraphCanvasHandle } from './components/GraphCanvas';
@@ -4665,7 +4666,14 @@ index 68f7d496..c542e69f 100644
  import { StatusBar } from './components/StatusBar';
  import { FileTreePanel } from './components/FileTreePanel';
  import { CodeReferencesPanel } from './components/CodeReferencesPanel';
-@@ -23,6 +41,8 @@ import {
+@@ -17,12 +36,15 @@ import {
+   normalizeServerUrl,
+   connectHeartbeat,
+   BackendError,
++  proposeLens,
+   type ConnectResult,
+   type BackendRepo,
+ } from './services/backend-client';
  import { ERROR_RESET_DELAY_MS } from './config/ui-constants';
  import { formatBackendError } from './i18n/error-messages';
  import { useTranslation } from 'react-i18next';
@@ -4674,7 +4682,7 @@ index 68f7d496..c542e69f 100644
  
  const AppContent = () => {
    const { t } = useTranslation(['common', 'errors']);
-@@ -32,10 +52,15 @@ const AppContent = () => {
+@@ -32,10 +54,15 @@ const AppContent = () => {
      setGraph,
      setProgress,
      setProjectName,
@@ -4690,10 +4698,11 @@ index 68f7d496..c542e69f 100644
      refreshLLMSettings,
      initializeAgent,
      startEmbeddingsWithFallback,
-@@ -48,10 +73,41 @@ const AppContent = () => {
+@@ -48,10 +75,54 @@ const AppContent = () => {
      setAvailableRepos,
      switchRepo,
      setCurrentRepo,
++    previewLens,
 +    viewDimension,
 +    lensInsights,
 +    lensMeaning,
@@ -4729,10 +4738,22 @@ index 68f7d496..c542e69f 100644
 +  // Same rationale as auditPanelOpen — self-fetching against /ghosts,
 +  // pure frontend, kept out of useAppState to minimize patch surface.
 +  const [ganttOpen, setGanttOpen] = useState(false);
++  // Lens Studio (authoring) — expert JSON textarea modal, opened from the
++  // Header's "+ New lens" dropdown entry. Local state (same rationale as
++  // auditPanelOpen/ganttOpen — self-contained, kept out of useAppState).
++  const [lensStudioOpen, setLensStudioOpen] = useState(false);
++  // proposeLens's token acquisition in the browser is a gate-live concern
++  // (see brief's Hors scope) — reads localStorage best-effort, never blocks
++  // the UI. The fork stays client-pure: no persistence, POST-only.
++  const proposeLensCb = useCallback(
++    (spec: Record<string, unknown>, autoApprove: boolean) =>
++      proposeLens(spec, autoApprove, localStorage.getItem('elysium_bridge_token') ?? ''),
++    [],
++  );
  
    const handleServerConnect = useCallback(
      async (result: ConnectResult): Promise<void> => {
-@@ -75,6 +131,12 @@ const AppContent = () => {
+@@ -75,6 +146,12 @@ const AppContent = () => {
          graph.addRelationship(rel);
        }
        setGraph(graph);
@@ -4745,7 +4766,7 @@ index 68f7d496..c542e69f 100644
  
        // Persist the active project in the URL for bookmarkability and F5 refresh resilience
        const urlObj = new URL(window.location.href);
-@@ -101,6 +163,7 @@ const AppContent = () => {
+@@ -101,6 +178,7 @@ const AppContent = () => {
        setCurrentRepo,
        initializeAgent,
        startEmbeddingsWithFallback,
@@ -4753,7 +4774,7 @@ index 68f7d496..c542e69f 100644
      ],
    );
  
-@@ -111,6 +174,20 @@ const AppContent = () => {
+@@ -111,6 +189,20 @@ const AppContent = () => {
      tRef.current = t;
    }, [t]);
  
@@ -4774,7 +4795,7 @@ index 68f7d496..c542e69f 100644
    useEffect(() => {
      if (autoConnectRan.current) return;
      const params = new URLSearchParams(window.location.search);
-@@ -194,6 +271,26 @@ const AppContent = () => {
+@@ -194,6 +286,26 @@ const AppContent = () => {
      graphCanvasRef.current?.focusNode(nodeId);
    }, []);
  
@@ -4801,7 +4822,7 @@ index 68f7d496..c542e69f 100644
    // Handle settings saved - refresh and reinitialize agent
    // NOTE: Must be defined BEFORE any conditional returns (React hooks rule)
    const handleSettingsSaved = useCallback(() => {
-@@ -201,6 +298,21 @@ const AppContent = () => {
+@@ -201,6 +313,21 @@ const AppContent = () => {
      initializeAgent();
    }, [refreshLLMSettings, initializeAgent]);
  
@@ -4823,7 +4844,15 @@ index 68f7d496..c542e69f 100644
    // ── Server heartbeat: detect when server goes down while exploring ────────
    // Uses SSE (EventSource) for instant detection — no polling delay.
    // On disconnect: show a reconnecting banner instead of resetting to onboarding.
-@@ -257,22 +369,84 @@ const AppContent = () => {
+@@ -250,6 +377,7 @@ const AppContent = () => {
+         onFocusNode={handleFocusNode}
+         availableRepos={availableRepos}
+         onSwitchRepo={switchRepo}
++        onAddLens={() => setLensStudioOpen(true)}
+         onReposChanged={(repos) => setAvailableRepos(repos)}
+         onAnalyzeComplete={async (repoName) => {
+           // A new repo was just indexed via the header dropdown.
+@@ -257,22 +385,84 @@ const AppContent = () => {
            // Retry once after 1s if the repo isn't found yet (server may still
            // be reinitializing after the worker completed).
            const url = serverBaseUrl ?? 'http://localhost:4747';
@@ -4909,7 +4938,7 @@ index 68f7d496..c542e69f 100644
                fetchRepos()
                  .then((repos) => setAvailableRepos(repos))
                  .catch(() => {});
-@@ -288,7 +462,158 @@ const AppContent = () => {
+@@ -288,7 +478,158 @@ const AppContent = () => {
  
          {/* Graph area - takes remaining space */}
          <div className="relative min-w-0 flex-1">
@@ -5069,7 +5098,7 @@ index 68f7d496..c542e69f 100644
  
            {/* Code References Panel (overlay) - does NOT resize the graph, it overlaps on top */}
            {isCodePanelOpen && (codeReferences.length > 0 || !!selectedNode) && (
-@@ -296,12 +621,31 @@ const AppContent = () => {
+@@ -296,12 +637,31 @@ const AppContent = () => {
                <CodeReferencesPanel onFocusNode={handleFocusNode} />
              </div>
            )}
@@ -5101,7 +5130,7 @@ index 68f7d496..c542e69f 100644
        <StatusBar />
  
        {serverDisconnected && (
-@@ -316,6 +660,38 @@ const AppContent = () => {
+@@ -316,6 +676,46 @@ const AppContent = () => {
          onClose={() => setSettingsPanelOpen(false)}
          onSettingsSaved={handleSettingsSaved}
        />
@@ -5137,6 +5166,14 @@ index 68f7d496..c542e69f 100644
 +          </div>
 +        </div>
 +      )}
++
++      {/* Lens Studio (modal) */}
++      <LensStudioModal
++        isOpen={lensStudioOpen}
++        onClose={() => setLensStudioOpen(false)}
++        onPreview={previewLens}
++        onPropose={proposeLensCb}
++      />
      </div>
    );
  };
@@ -6560,7 +6597,7 @@ index d0880dbe..12d04a4b 100644
    );
  });
 diff --git a/gitnexus-web/src/components/Header.tsx b/gitnexus-web/src/components/Header.tsx
-index 3fae0c48..4aa44d5a 100644
+index 3fae0c48..0a48dc23 100644
 --- a/gitnexus-web/src/components/Header.tsx
 +++ b/gitnexus-web/src/components/Header.tsx
 @@ -1,4 +1,5 @@
@@ -6569,7 +6606,7 @@ index 3fae0c48..4aa44d5a 100644
    Search,
    Settings,
    HelpCircle,
-@@ -10,7 +11,14 @@ import {
+@@ -10,7 +11,15 @@ import {
    Trash2,
    RefreshCw,
    Loader2,
@@ -6579,20 +6616,33 @@ index 3fae0c48..4aa44d5a 100644
 +  Camera,
 +  Network,
 +  Layers,
++  Plus,
  } from '@/lib/lucide-icons';
 +import { SnapshotsPanel } from './SnapshotsPanel';
  import { useAppState } from '../hooks/useAppState';
  import {
    deleteRepo,
-@@ -59,6 +67,7 @@ export const Header = ({
+@@ -49,6 +58,8 @@ interface HeaderProps {
+   onAnalyzeComplete?: (repoName: string) => void;
+   /** Called after a repo is deleted or list needs refresh. */
+   onReposChanged?: (repos: BackendRepo[]) => void;
++  /** Called when the user wants to open the Lens Studio authoring modal. */
++  onAddLens?: () => void;
+ }
+ 
+ export const Header = ({
+@@ -57,8 +68,10 @@ export const Header = ({
+   onSwitchRepo,
+   onAnalyzeComplete,
    onReposChanged,
++  onAddLens,
  }: HeaderProps) => {
    const { t } = useTranslation(['common', 'header']);
 +  const appState = useAppState();
    const {
      projectName,
      graph,
-@@ -66,14 +75,30 @@ export const Header = ({
+@@ -66,14 +79,30 @@ export const Header = ({
      isRightPanelOpen,
      rightPanelTab,
      setSettingsPanelOpen,
@@ -6624,7 +6674,7 @@ index 3fae0c48..4aa44d5a 100644
    const repoDropdownRef = useRef<HTMLDivElement>(null);
    const [isSearchOpen, setIsSearchOpen] = useState(false);
    const [selectedIndex, setSelectedIndex] = useState(0);
-@@ -93,6 +118,38 @@ export const Header = ({
+@@ -93,6 +122,38 @@ export const Header = ({
        .slice(0, 10); // Limit to 10 results
    }, [graph, searchQuery]);
  
@@ -6663,7 +6713,7 @@ index 3fae0c48..4aa44d5a 100644
    // Handle clicking outside search or repo dropdown to close them
    useEffect(() => {
      const handleClickOutside = (e: MouseEvent) => {
-@@ -115,6 +172,24 @@ export const Header = ({
+@@ -115,6 +176,24 @@ export const Header = ({
      };
    }, []);
  
@@ -6688,7 +6738,7 @@ index 3fae0c48..4aa44d5a 100644
    // Keyboard shortcut (Cmd+K / Ctrl+K)
    useEffect(() => {
      const handleKeyDown = (e: KeyboardEvent) => {
-@@ -208,13 +283,18 @@ export const Header = ({
+@@ -208,13 +287,18 @@ export const Header = ({
                    </div>
                  ) : (
                    <>
@@ -6713,7 +6763,7 @@ index 3fae0c48..4aa44d5a 100644
                            <div
                              key={repo.name}
                              className={`group flex items-center gap-2 px-4 py-2 transition-colors ${
-@@ -240,6 +320,102 @@ export const Header = ({
+@@ -240,6 +324,102 @@ export const Header = ({
                                  </span>
                                )}
                              </button>
@@ -6816,7 +6866,7 @@ index 3fae0c48..4aa44d5a 100644
                              {/* Re-analyze */}
                              <button
                                onClick={async (e) => {
-@@ -282,7 +458,7 @@ export const Header = ({
+@@ -282,7 +462,7 @@ export const Header = ({
                                className={`cursor-pointer rounded p-1 transition-all ${
                                  reanalyzing === repo.name
                                    ? 'text-accent'
@@ -6825,7 +6875,7 @@ index 3fae0c48..4aa44d5a 100644
                                }`}
                                title={
                                  reanalyzing === repo.name
-@@ -320,16 +496,42 @@ export const Header = ({
+@@ -320,16 +500,42 @@ export const Header = ({
                                    console.error('Failed to delete repo:', err);
                                  }
                                }}
@@ -6869,7 +6919,29 @@ index 3fae0c48..4aa44d5a 100644
                      {/* Re-analyze progress bar */}
                      {reanalyzing && reanalyzeProgress && (
                        <div className="border-t border-border-subtle bg-accent/5 px-4 py-2.5">
-@@ -467,6 +669,34 @@ export const Header = ({
+@@ -370,6 +576,21 @@ export const Header = ({
+                         </span>
+                       </button>
+                     </div>
++
++                    {/* Add lens (Lens Studio authoring modal) */}
++                    <div className="border-t border-border-subtle">
++                      <button
++                        type="button"
++                        onClick={() => {
++                          onAddLens?.();
++                          setIsRepoDropdownOpen(false);
++                        }}
++                        className="flex w-full items-center gap-2 px-4 py-2 text-left text-sm text-accent transition-colors hover:bg-hover"
++                      >
++                        <Plus className="h-3.5 w-3.5 shrink-0" />
++                        {t('header:addLens')}
++                      </button>
++                    </div>
+                   </>
+                 )}
+               </div>
+@@ -467,6 +688,34 @@ export const Header = ({
          <LanguageSwitcher />
  
          {/* Icon buttons */}
@@ -8169,7 +8241,7 @@ index aa6524a5..964c3f64 100644
    );
  
 diff --git a/gitnexus-web/src/hooks/useAppState.tsx b/gitnexus-web/src/hooks/useAppState.tsx
-index 5c118450..e903d7f1 100644
+index 5c118450..c3c6c397 100644
 --- a/gitnexus-web/src/hooks/useAppState.tsx
 +++ b/gitnexus-web/src/hooks/useAppState.tsx
 @@ -8,7 +8,12 @@ import {
@@ -8195,7 +8267,12 @@ index 5c118450..e903d7f1 100644
    runQuery as backendRunQuery,
    search as backendSearch,
    grep as backendGrep,
-@@ -39,11 +46,32 @@ import {
+@@ -35,15 +42,37 @@ import {
+   startEmbeddings as backendStartEmbeddings,
+   streamEmbeddingProgress,
+   probeBackend,
++  previewLens as previewLensApi,
+   type BackendRepo,
    type ConnectResult,
    type JobProgress,
  } from '../services/backend-client';
@@ -8229,7 +8306,7 @@ index 5c118450..e903d7f1 100644
  
  export const AUTO_START_EMBEDDINGS_STORAGE_KEY = 'gitnexus.autoStartEmbeddings';
  
-@@ -53,6 +81,7 @@ export const shouldAutoStartEmbeddings = (): boolean => {
+@@ -53,6 +82,7 @@ export const shouldAutoStartEmbeddings = (): boolean => {
  };
  
  export type ViewMode = 'onboarding' | 'loading' | 'exploring';
@@ -8237,7 +8314,7 @@ index 5c118450..e903d7f1 100644
  export type RightPanelTab = 'code' | 'chat';
  export type EmbeddingStatus = 'idle' | 'loading' | 'embedding' | 'indexing' | 'ready' | 'error';
  
-@@ -94,11 +123,37 @@ interface AppState {
+@@ -94,11 +124,37 @@ interface AppState {
    // View state
    viewMode: ViewMode;
    setViewMode: (mode: ViewMode) => void;
@@ -8275,7 +8352,22 @@ index 5c118450..e903d7f1 100644
    // Selection
    selectedNode: GraphNode | null;
    setSelectedNode: (node: GraphNode | null) => void;
-@@ -184,6 +239,8 @@ interface AppState {
+@@ -164,6 +220,14 @@ interface AppState {
+   switchRepo: (repoName: string) => Promise<void>;
+   setCurrentRepo: (repoName: string) => void;
+ 
++  // Lens Studio (authoring) — WYSIWYG preview: fetches the gateway's
++  // /lens/preview braingraph and renders it into the REAL canvas via the
++  // SAME contract as switchRepo's slow-path (createKnowledgeGraph -> addNode
++  // /addRelationship -> setGraph -> applyLensMetadata). Omitting
++  // applyLensMetadata here would leave the lens insights panel inert (gap
++  // #7 class of bug).
++  previewLens: (spec: Record<string, unknown>) => Promise<{ ok: boolean; errors?: string[] }>;
++
+   // Worker API (shared across app)
+   runQuery: (cypher: string) => Promise<any[]>;
+   isDatabaseReady: () => Promise<boolean>;
+@@ -184,6 +248,8 @@ interface AppState {
    updateLLMSettings: (updates: Partial<LLMSettings>) => void;
    isSettingsPanelOpen: boolean;
    setSettingsPanelOpen: (open: boolean) => void;
@@ -8284,7 +8376,7 @@ index 5c118450..e903d7f1 100644
    isAgentReady: boolean;
    isAgentInitializing: boolean;
    agentError: string | null;
-@@ -209,6 +266,491 @@ interface AppState {
+@@ -209,6 +275,491 @@ interface AppState {
    clearAICodeReferences: () => void;
    clearCodeReferences: () => void;
    codeReferenceFocus: CodeReferenceFocus | null;
@@ -8776,7 +8868,7 @@ index 5c118450..e903d7f1 100644
  }
  
  const AppStateContext = createContext<AppState | null>(null);
-@@ -222,6 +764,10 @@ export const AppStateProvider = ({ children }: { children: ReactNode }) => (
+@@ -222,6 +773,10 @@ export const AppStateProvider = ({ children }: { children: ReactNode }) => (
  const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
    // View state
    const [viewMode, setViewMode] = useState<ViewMode>('onboarding');
@@ -8787,7 +8879,7 @@ index 5c118450..e903d7f1 100644
  
    const {
      graph,
-@@ -238,6 +784,13 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
+@@ -238,6 +793,13 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
      setHighlightedNodeIds,
      graphViewMode,
      setGraphViewMode,
@@ -8801,7 +8893,7 @@ index 5c118450..e903d7f1 100644
    } = useGraphState();
  
    // Right Panel
-@@ -348,6 +901,7 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
+@@ -348,6 +910,7 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
    // LLM/Agent state
    const [llmSettings, setLLMSettings] = useState<LLMSettings>(loadSettings);
    const [isSettingsPanelOpen, setSettingsPanelOpen] = useState(false);
@@ -8809,7 +8901,7 @@ index 5c118450..e903d7f1 100644
    const [isAgentReady, setIsAgentReady] = useState(false);
    const [isAgentInitializing, setIsAgentInitializing] = useState(false);
    const [agentError, setAgentError] = useState<string | null>(null);
-@@ -362,6 +916,179 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
+@@ -362,6 +925,179 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
    const [isCodePanelOpen, setCodePanelOpen] = useState(false);
    const [codeReferenceFocus, setCodeReferenceFocus] = useState<CodeReferenceFocus | null>(null);
  
@@ -8989,7 +9081,7 @@ index 5c118450..e903d7f1 100644
    // Map of normalized file path → node ID for graph-based lookups
    const fileNodeByPath = useMemo(() => {
      if (!graph) return new Map<string, string>();
-@@ -1133,6 +1860,81 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
+@@ -1133,6 +1869,81 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
      async (repoName: string) => {
        if (!serverBaseUrl) return;
  
@@ -9071,7 +9163,7 @@ index 5c118450..e903d7f1 100644
        setProgress({
          phase: 'extracting',
          percent: 0,
-@@ -1153,6 +1955,12 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
+@@ -1153,6 +1964,12 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
        setCodeReferences([]);
        setCodePanelOpen(false);
        setCodeReferenceFocus(null);
@@ -9084,7 +9176,7 @@ index 5c118450..e903d7f1 100644
  
        let connectedRepo: BackendRepo | undefined;
        let pNameStr = repoName || 'server-project';
-@@ -1209,6 +2017,26 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
+@@ -1209,6 +2026,26 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
          for (const node of result.nodes) newGraph.addNode(node);
          for (const rel of result.relationships) newGraph.addRelationship(rel);
          setGraph(newGraph);
@@ -9111,7 +9203,7 @@ index 5c118450..e903d7f1 100644
        } catch (err: unknown) {
          console.error('Repo switch failed:', err);
          setProgress({
-@@ -1273,6 +2101,7 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
+@@ -1273,9 +2110,41 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
        setCodePanelOpen,
        setCodeReferenceFocus,
        setChatMessages,
@@ -9119,7 +9211,41 @@ index 5c118450..e903d7f1 100644
      ],
    );
  
-@@ -1311,11 +2140,1300 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
++  // Lens Studio (authoring) — WYSIWYG preview. Reuses switchRepo's slow-path
++  // contract exactly: createKnowledgeGraph() -> addNode/addRelationship ->
++  // setGraph -> applyLensMetadata. See the AppState interface doc comment
++  // (gap #7: a setGraph WITHOUT applyLensMetadata leaves the lens insights
++  // panel inert).
++  const previewLens = useCallback(
++    async (spec: Record<string, unknown>): Promise<{ ok: boolean; errors?: string[] }> => {
++      const result = await previewLensApi(spec);
++      if (!result.ok || !result.braingraph) return { ok: false, errors: result.errors };
++      const bg = result.braingraph as {
++        nodes?: unknown[];
++        relationships?: unknown[];
++        insights?: unknown[];
++        meaning?: string;
++        lens?: { name?: string };
++      };
++      const newGraph = createKnowledgeGraph();
++      for (const node of bg.nodes ?? []) newGraph.addNode(node as never);
++      for (const rel of bg.relationships ?? []) newGraph.addRelationship(rel as never);
++      setGraph(newGraph);
++      // MÊME contrat que switchRepo — sinon le panneau insights/meaning
++      // reste inerte (gap #7).
++      applyLensMetadata(
++        { insights: (bg.insights ?? []) as never, meaning: bg.meaning, repoInfo: { family: 'authoring' } },
++        bg.lens?.name ?? 'preview',
++      );
++      return { ok: true };
++    },
++    [setGraph, applyLensMetadata],
++  );
++
+   const removeCodeReference = useCallback(
+     (id: string) => {
+       setCodeReferences((prev) => {
+@@ -1311,11 +2180,1300 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
      setCodeReferenceFocus(null);
    }, []);
  
@@ -10420,7 +10546,15 @@ index 5c118450..e903d7f1 100644
      selectedNode,
      setSelectedNode,
      isRightPanelOpen,
-@@ -1377,6 +3495,8 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
+@@ -1362,6 +3520,7 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
+     setAvailableRepos,
+     switchRepo,
+     setCurrentRepo,
++    previewLens,
+     runQuery,
+     isDatabaseReady,
+     // Embedding state and methods
+@@ -1377,6 +3536,8 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
      updateLLMSettings,
      isSettingsPanelOpen,
      setSettingsPanelOpen,
@@ -10429,7 +10563,7 @@ index 5c118450..e903d7f1 100644
      isAgentReady,
      isAgentInitializing,
      agentError,
-@@ -1399,6 +3519,171 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
+@@ -1399,6 +3560,171 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
      clearAICodeReferences,
      clearCodeReferences,
      codeReferenceFocus,
@@ -11746,7 +11880,7 @@ index bb3f5f11..12dbd1bc 100644
        nodeType: node.label,
        filePath: node.properties.filePath,
 diff --git a/gitnexus-web/src/lib/lucide-icons.tsx b/gitnexus-web/src/lib/lucide-icons.tsx
-index 7d9b5fc7..d0ed22ec 100644
+index 7d9b5fc7..0c1dd702 100644
 --- a/gitnexus-web/src/lib/lucide-icons.tsx
 +++ b/gitnexus-web/src/lib/lucide-icons.tsx
 @@ -42,20 +42,25 @@ import { forwardRef } from 'react';
@@ -11794,7 +11928,15 @@ index 7d9b5fc7..d0ed22ec 100644
    MousePointerClick,
    Network,
    PanelLeft,
-@@ -92,6 +100,7 @@ export {
+@@ -85,6 +93,7 @@ export {
+   PanelRightClose,
+   Pause,
+   Play,
++  Plus,
+   RefreshCw,
+   Rocket,
+   RotateCcw,
+@@ -92,6 +101,7 @@ export {
    Send,
    Server,
    Settings,
@@ -11802,7 +11944,7 @@ index 7d9b5fc7..d0ed22ec 100644
    SkipForward,
    Snail,
    Sparkles,
-@@ -101,9 +110,12 @@ export {
+@@ -101,9 +111,12 @@ export {
    Target,
    Terminal,
    Trash2,
@@ -11815,6 +11957,54 @@ index 7d9b5fc7..d0ed22ec 100644
    Variable,
    X,
    Zap,
+diff --git a/gitnexus-web/src/locales/en/header.json b/gitnexus-web/src/locales/en/header.json
+index 3b531831..e4593866 100644
+--- a/gitnexus-web/src/locales/en/header.json
++++ b/gitnexus-web/src/locales/en/header.json
+@@ -12,5 +12,18 @@
+   "aiSettings": "AI Settings",
+   "help": "Help",
+   "language": "Language",
+-  "selectLanguage": "Select language"
++  "selectLanguage": "Select language",
++  "addLens": "+ New lens",
++  "lensStudio": {
++    "title": "Lens Studio",
++    "preview": "Preview",
++    "propose": "Propose",
++    "autoApprove": "Auto-approve (approver role required)",
++    "proposed": "Proposed",
++    "proposeFailed": "Propose failed",
++    "jsonError": "Invalid JSON",
++    "notObject": "The spec must be a JSON object",
++    "unknownError": "Unknown error",
++    "close": "Close"
++  }
+ }
+diff --git a/gitnexus-web/src/locales/zh-CN/header.json b/gitnexus-web/src/locales/zh-CN/header.json
+index 303ba02c..6b36c5f6 100644
+--- a/gitnexus-web/src/locales/zh-CN/header.json
++++ b/gitnexus-web/src/locales/zh-CN/header.json
+@@ -12,5 +12,18 @@
+   "aiSettings": "AI 设置",
+   "help": "帮助",
+   "language": "语言",
+-  "selectLanguage": "选择语言"
++  "selectLanguage": "选择语言",
++  "addLens": "+ 新建镜头",
++  "lensStudio": {
++    "title": "镜头工作室",
++    "preview": "预览",
++    "propose": "提交",
++    "autoApprove": "自动批准（需要审批者角色）",
++    "proposed": "已提交",
++    "proposeFailed": "提交失败",
++    "jsonError": "JSON 格式无效",
++    "notObject": "规范必须是一个 JSON 对象",
++    "unknownError": "未知错误",
++    "close": "关闭"
++  }
+ }
 diff --git a/gitnexus-web/src/services/backend-client.ts b/gitnexus-web/src/services/backend-client.ts
 index e887e390..4d3cb89b 100644
 --- a/gitnexus-web/src/services/backend-client.ts
