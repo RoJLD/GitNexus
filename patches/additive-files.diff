@@ -19844,6 +19844,122 @@ index 00000000..1c2982e6
 +    </div>
 +  );
 +};
+diff --git a/gitnexus-web/src/components/LensStudioModal.tsx b/gitnexus-web/src/components/LensStudioModal.tsx
+new file mode 100644
+index 00000000..3b6908a6
+--- /dev/null
++++ b/gitnexus-web/src/components/LensStudioModal.tsx
+@@ -0,0 +1,110 @@
++import { useState } from 'react';
++import { X, Eye, Send, AlertCircle } from '@/lib/lucide-icons';
++import { useTranslation } from 'react-i18next';
++
++interface LensStudioModalProps {
++  isOpen: boolean;
++  onClose: () => void;
++  onPreview: (spec: Record<string, unknown>) => Promise<{ ok: boolean; errors?: string[] }>;
++  onPropose: (spec: Record<string, unknown>, autoApprove: boolean) => Promise<{ id: string; status: string }>;
++}
++
++const EXAMPLE = `{
++  "name": "my_lens",
++  "source": { "lens": "sigil" },
++  "select": { "node_where": "inLens == true" },
++  "color": { "by": "domainType", "scale": "categorical" },
++  "meaning": "Ma lentille."
++}`;
++
++export const LensStudioModal = ({ isOpen, onClose, onPreview, onPropose }: LensStudioModalProps) => {
++  const { t } = useTranslation(['header']);
++  const [text, setText] = useState(EXAMPLE);
++  const [errors, setErrors] = useState<string[]>([]);
++  const [toast, setToast] = useState<string | null>(null);
++  const [autoApprove, setAutoApprove] = useState(false);
++  const [busy, setBusy] = useState(false);
++
++  if (!isOpen) return null;
++
++  const parse = (): Record<string, unknown> | null => {
++    try {
++      const spec = JSON.parse(text);
++      if (!spec || typeof spec !== 'object' || Array.isArray(spec)) {
++        setErrors([t('header:lensStudio.notObject')]);
++        return null;
++      }
++      setErrors([]);
++      return spec as Record<string, unknown>;
++    } catch (e) {
++      setErrors([`${t('header:lensStudio.jsonError')}: ${(e as Error).message}`]);
++      return null;
++    }
++  };
++
++  const handlePreview = async () => {
++    const spec = parse();
++    if (!spec) return;
++    setBusy(true); setToast(null);
++    try {
++      const r = await onPreview(spec);
++      if (!r.ok) setErrors(r.errors ?? [t('header:lensStudio.unknownError')]);
++    } finally { setBusy(false); }
++  };
++
++  const handlePropose = async () => {
++    const spec = parse();
++    if (!spec) return;
++    setBusy(true); setToast(null);
++    try {
++      const r = await onPropose(spec, autoApprove);
++      setToast(`${t('header:lensStudio.proposed')}: ${r.id} (${r.status})`);
++    } catch (e) {
++      setErrors([`${t('header:lensStudio.proposeFailed')}: ${(e as Error).message}`]);
++    } finally { setBusy(false); }
++  };
++
++  return (
++    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
++      <div className="w-[min(680px,calc(100vw-2rem))] max-h-[min(760px,calc(100vh-4rem))] overflow-hidden rounded-2xl border border-border-subtle bg-surface shadow-2xl flex flex-col">
++        <div className="flex shrink-0 items-center gap-2 border-b border-border-subtle px-4 py-3">
++          <Eye className="h-4 w-4 text-accent" />
++          <span className="font-medium text-text-primary">{t('header:lensStudio.title')}</span>
++          <button type="button" onClick={onClose} className="ml-auto cursor-pointer rounded p-1 text-text-muted transition-colors hover:bg-hover hover:text-text-primary" title={t('header:lensStudio.close')}>
++            <X className="h-4 w-4" />
++          </button>
++        </div>
++        <div className="space-y-3 p-4 overflow-y-auto">
++          <textarea
++            value={text}
++            onChange={(e) => setText(e.target.value)}
++            spellCheck={false}
++            className="h-64 w-full resize-y rounded-lg border border-border-subtle bg-void px-3 py-2 font-mono text-xs text-text-primary focus:border-accent focus:outline-none"
++          />
++          {errors.length > 0 && (
++            <div className="rounded-lg border border-red-500/40 bg-red-500/10 p-2 text-xs text-red-300">
++              {errors.map((err, i) => (
++                <div key={i} className="flex items-start gap-1.5"><AlertCircle className="mt-0.5 h-3 w-3 shrink-0" /><span>{err}</span></div>
++              ))}
++            </div>
++          )}
++          {toast && <div className="rounded-lg border border-accent/40 bg-accent/10 p-2 text-xs text-accent">{toast}</div>}
++          <label className="flex items-center gap-2 text-xs text-text-secondary">
++            <input type="checkbox" checked={autoApprove} onChange={(e) => setAutoApprove(e.target.checked)} />
++            {t('header:lensStudio.autoApprove')}
++          </label>
++        </div>
++        <div className="flex shrink-0 items-center gap-2 border-t border-border-subtle px-4 py-3">
++          <button type="button" data-testid="lens-preview-btn" onClick={handlePreview} disabled={busy}
++            className="flex items-center gap-2 rounded-lg border border-border-subtle px-3 py-2 text-sm text-text-primary transition-colors hover:bg-hover disabled:opacity-50">
++            <Eye className="h-4 w-4" />{t('header:lensStudio.preview')}
++          </button>
++          <button type="button" onClick={handlePropose} disabled={busy}
++            className="ml-auto flex items-center gap-2 rounded-lg bg-accent px-4 py-2 text-sm font-medium text-white transition-all hover:bg-accent/90 disabled:opacity-50">
++            <Send className="h-4 w-4" />{t('header:lensStudio.propose')}
++          </button>
++        </div>
++      </div>
++    </div>
++  );
++};
 diff --git a/gitnexus-web/src/components/LifespanPanel.tsx b/gitnexus-web/src/components/LifespanPanel.tsx
 new file mode 100644
 index 00000000..24dd9d90
