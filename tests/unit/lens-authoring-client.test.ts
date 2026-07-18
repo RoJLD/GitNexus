@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { previewLens, proposeLens } from '@/services/backend-client';
+import { previewLens, proposeLens, setBridgeUrl, getBridgeUrl } from '@/services/backend-client';
 
 const okResp = (status: number, body: unknown) =>
   ({ ok: status >= 200 && status < 300, status, json: async () => body, text: async () => JSON.stringify(body) }) as Response;
@@ -31,5 +31,12 @@ describe('lens authoring client', () => {
     const sent = JSON.parse(init.body as string);
     expect(sent).toEqual({ spec: { name: 'x', source: { lens: 'sigil' } }, auto_approve: true });
     expect('author' in sent).toBe(false);
+  });
+
+  it('setBridgeUrl rejects a dangerous scheme (SSRF guard)', () => {
+    expect(() => setBridgeUrl('javascript:alert(1)')).toThrow();
+    // and a valid URL is accepted + trailing slash stripped:
+    setBridgeUrl('http://bridge.local/');
+    expect(getBridgeUrl()).toBe('http://bridge.local');
   });
 });

@@ -11816,7 +11816,7 @@ index 7d9b5fc7..d0ed22ec 100644
    X,
    Zap,
 diff --git a/gitnexus-web/src/services/backend-client.ts b/gitnexus-web/src/services/backend-client.ts
-index e887e390..0f59488c 100644
+index e887e390..4d3cb89b 100644
 --- a/gitnexus-web/src/services/backend-client.ts
 +++ b/gitnexus-web/src/services/backend-client.ts
 @@ -11,12 +11,31 @@ import { CircuitOpenError, ResilientFetchExhaustedError, resilientFetch } from '
@@ -11930,7 +11930,7 @@ index e887e390..0f59488c 100644
    }
  
    // Streaming download with progress
-@@ -578,6 +630,123 @@ export const fetchGraph = async (
+@@ -578,6 +630,127 @@ export const fetchGraph = async (
    return JSON.parse(new TextDecoder().decode(combined));
  };
  
@@ -12012,7 +12012,11 @@ index e887e390..0f59488c 100644
 +// ── Lens Atelier (authoring) — POST preview (gateway, no auth) + propose (bridge-api, Bearer) ──
 +let _bridgeUrl = 'http://localhost:8000'; // ELYSIUM bridge-api; override via setBridgeUrl (prod: https://bridge.elysium.local)
 +
-+export const setBridgeUrl = (url: string): void => { _bridgeUrl = url.replace(/\/$/, ''); };
++export const setBridgeUrl = (url: string): void => {
++  const trimmed = url.replace(/\/$/, '');
++  validateBackendUrl(trimmed); // same scheme guard as setBackendUrl (anti-SSRF/CSRF)
++  _bridgeUrl = trimmed;
++};
 +export const getBridgeUrl = (): string => _bridgeUrl;
 +
 +export interface LensPreviewResult {
@@ -12054,7 +12058,7 @@ index e887e390..0f59488c 100644
  const parseNdjsonGraphResponse = async (
    response: Response,
    onProgress?: (downloaded: number, total: number | null) => void,
-@@ -864,6 +1033,10 @@ export interface ConnectResult {
+@@ -864,6 +1037,10 @@ export interface ConnectResult {
    nodes: GraphNode[];
    relationships: GraphRelationship[];
    repoInfo: BackendRepo;
@@ -12065,7 +12069,7 @@ index e887e390..0f59488c 100644
  }
  
  /**
-@@ -886,10 +1059,10 @@ export async function connectToServer(
+@@ -886,10 +1063,10 @@ export async function connectToServer(
    const repoInfo = await fetchRepoInfo(repoName, { awaitAnalysis: opts?.awaitAnalysis });
  
    onProgress?.('downloading', 0, null);
