@@ -8241,7 +8241,7 @@ index aa6524a5..964c3f64 100644
    );
  
 diff --git a/gitnexus-web/src/hooks/useAppState.tsx b/gitnexus-web/src/hooks/useAppState.tsx
-index 5c118450..c3c6c397 100644
+index 5c118450..f8d5e017 100644
 --- a/gitnexus-web/src/hooks/useAppState.tsx
 +++ b/gitnexus-web/src/hooks/useAppState.tsx
 @@ -8,7 +8,12 @@ import {
@@ -9203,7 +9203,7 @@ index 5c118450..c3c6c397 100644
        } catch (err: unknown) {
          console.error('Repo switch failed:', err);
          setProgress({
-@@ -1273,9 +2110,41 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
+@@ -1273,9 +2110,49 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
        setCodePanelOpen,
        setCodeReferenceFocus,
        setChatMessages,
@@ -9232,9 +9232,17 @@ index 5c118450..c3c6c397 100644
 +      for (const rel of bg.relationships ?? []) newGraph.addRelationship(rel as never);
 +      setGraph(newGraph);
 +      // MÊME contrat que switchRepo — sinon le panneau insights/meaning
-+      // reste inerte (gap #7).
++      // reste inerte (gap #7). repoInfo.family is intentionally OMITTED
++      // (not 'authoring'): per graph.tsx's applyLensMetadata, insights/
++      // meaning are captured unconditionally, but a truthy `family` also
++      // triggers an additional fetchLensFreshness(pName) call against the
++      // `/lens/<name>` route — there is no `/lens/preview`-created registry
++      // entry for a preview spec to fetch, so that call is a guaranteed
++      // 404 whose (best-effort, discarded-on-failure) result is never
++      // displayed. Omitting family skips that spurious fetch while keeping
++      // insights/meaning intact (final review Fix 4).
 +      applyLensMetadata(
-+        { insights: (bg.insights ?? []) as never, meaning: bg.meaning, repoInfo: { family: 'authoring' } },
++        { insights: (bg.insights ?? []) as never, meaning: bg.meaning, repoInfo: {} },
 +        bg.lens?.name ?? 'preview',
 +      );
 +      return { ok: true };
@@ -9245,7 +9253,7 @@ index 5c118450..c3c6c397 100644
    const removeCodeReference = useCallback(
      (id: string) => {
        setCodeReferences((prev) => {
-@@ -1311,11 +2180,1300 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
+@@ -1311,11 +2188,1300 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
      setCodeReferenceFocus(null);
    }, []);
  
@@ -10546,7 +10554,7 @@ index 5c118450..c3c6c397 100644
      selectedNode,
      setSelectedNode,
      isRightPanelOpen,
-@@ -1362,6 +3520,7 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
+@@ -1362,6 +3528,7 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
      setAvailableRepos,
      switchRepo,
      setCurrentRepo,
@@ -10554,7 +10562,7 @@ index 5c118450..c3c6c397 100644
      runQuery,
      isDatabaseReady,
      // Embedding state and methods
-@@ -1377,6 +3536,8 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
+@@ -1377,6 +3544,8 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
      updateLLMSettings,
      isSettingsPanelOpen,
      setSettingsPanelOpen,
@@ -10563,7 +10571,7 @@ index 5c118450..c3c6c397 100644
      isAgentReady,
      isAgentInitializing,
      agentError,
-@@ -1399,6 +3560,171 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
+@@ -1399,6 +3568,171 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
      clearAICodeReferences,
      clearCodeReferences,
      codeReferenceFocus,
@@ -11958,10 +11966,10 @@ index 7d9b5fc7..0c1dd702 100644
    X,
    Zap,
 diff --git a/gitnexus-web/src/locales/en/header.json b/gitnexus-web/src/locales/en/header.json
-index 3b531831..e4593866 100644
+index 3b531831..8e6aa3f6 100644
 --- a/gitnexus-web/src/locales/en/header.json
 +++ b/gitnexus-web/src/locales/en/header.json
-@@ -12,5 +12,18 @@
+@@ -12,5 +12,19 @@
    "aiSettings": "AI Settings",
    "help": "Help",
    "language": "Language",
@@ -11975,6 +11983,7 @@ index 3b531831..e4593866 100644
 +    "autoApprove": "Auto-approve (approver role required)",
 +    "proposed": "Proposed",
 +    "proposeFailed": "Propose failed",
++    "previewRendered": "Preview rendered — close to view",
 +    "jsonError": "Invalid JSON",
 +    "notObject": "The spec must be a JSON object",
 +    "unknownError": "Unknown error",
@@ -11982,10 +11991,10 @@ index 3b531831..e4593866 100644
 +  }
  }
 diff --git a/gitnexus-web/src/locales/zh-CN/header.json b/gitnexus-web/src/locales/zh-CN/header.json
-index 303ba02c..6b36c5f6 100644
+index 303ba02c..0b831019 100644
 --- a/gitnexus-web/src/locales/zh-CN/header.json
 +++ b/gitnexus-web/src/locales/zh-CN/header.json
-@@ -12,5 +12,18 @@
+@@ -12,5 +12,19 @@
    "aiSettings": "AI 设置",
    "help": "帮助",
    "language": "语言",
@@ -11999,6 +12008,7 @@ index 303ba02c..6b36c5f6 100644
 +    "autoApprove": "自动批准（需要审批者角色）",
 +    "proposed": "已提交",
 +    "proposeFailed": "提交失败",
++    "previewRendered": "预览已渲染 — 关闭以查看",
 +    "jsonError": "JSON 格式无效",
 +    "notObject": "规范必须是一个 JSON 对象",
 +    "unknownError": "未知错误",
@@ -12006,7 +12016,7 @@ index 303ba02c..6b36c5f6 100644
 +  }
  }
 diff --git a/gitnexus-web/src/services/backend-client.ts b/gitnexus-web/src/services/backend-client.ts
-index e887e390..4d3cb89b 100644
+index e887e390..b5b0c345 100644
 --- a/gitnexus-web/src/services/backend-client.ts
 +++ b/gitnexus-web/src/services/backend-client.ts
 @@ -11,12 +11,31 @@ import { CircuitOpenError, ResilientFetchExhaustedError, resilientFetch } from '
@@ -12055,7 +12065,20 @@ index e887e390..4d3cb89b 100644
  }
  
  export interface EnrichedSearchResult {
-@@ -500,9 +526,14 @@ export const probeBackend = async (): Promise<boolean> => {
+@@ -368,6 +394,12 @@ const assertOk = async (response: Response): Promise<void> => {
+       message = body.error;
+     } else if (body && typeof body.message === 'string') {
+       message = body.message;
++    } else if (body && typeof body.detail === 'string') {
++      // FastAPI's HTTPException(detail=...) shape (bridge-api propose route)
++      // — e.g. 403 "auto_approve requires an approver role" or 422 "spec
++      // must be a non-empty object". Without this branch those reasons are
++      // swallowed and the caller only sees "Forbidden"/"Unprocessable Entity".
++      message = body.detail;
+     }
+   } catch {
+     // Response body was not JSON
+@@ -500,9 +532,14 @@ export const probeBackend = async (): Promise<boolean> => {
    }
  };
  
@@ -12072,7 +12095,7 @@ index e887e390..4d3cb89b 100644
    await assertOk(response);
    return response.json() as Promise<BackendRepo[]>;
  };
-@@ -528,7 +559,18 @@ export const fetchRepoInfo = async (
+@@ -528,7 +565,18 @@ export const fetchRepoInfo = async (
    return { ...data, repoPath: data.repoPath ?? data.path };
  };
  
@@ -12092,7 +12115,7 @@ index e887e390..4d3cb89b 100644
  export const fetchGraph = async (
    repo?: string,
    opts?: {
-@@ -536,7 +578,12 @@ export const fetchGraph = async (
+@@ -536,7 +584,12 @@ export const fetchGraph = async (
      signal?: AbortSignal;
      onProgress?: (downloaded: number, total: number | null) => void;
    },
@@ -12106,7 +12129,7 @@ index e887e390..4d3cb89b 100644
    const params = [repoParam(repo), opts?.includeContent ? 'includeContent=true' : '', 'stream=true']
      .filter(Boolean)
      .join('&');
-@@ -551,7 +598,12 @@ export const fetchGraph = async (
+@@ -551,7 +604,12 @@ export const fetchGraph = async (
    }
  
    if (!opts?.onProgress || !response.body) {
@@ -12120,7 +12143,7 @@ index e887e390..4d3cb89b 100644
    }
  
    // Streaming download with progress
-@@ -578,6 +630,127 @@ export const fetchGraph = async (
+@@ -578,6 +636,142 @@ export const fetchGraph = async (
    return JSON.parse(new TextDecoder().decode(combined));
  };
  
@@ -12215,20 +12238,35 @@ index e887e390..4d3cb89b 100644
 +  braingraph?: Record<string, unknown>; // {lens,nodes,relationships,meta,insights,meaning} on 200
 +}
 +
++/**
++ * Preview a lens spec against the gateway's `/lens/preview` endpoint.
++ *
++ * Wrapped in try/catch to honor its own type — `fetchWithTimeout` THROWS
++ * (`BackendError`/`TimeoutError`/`CircuitOpenError`) on a transport
++ * failure (gateway down, DNS failure, timeout), but the declared return
++ * type `Promise<LensPreviewResult>` claims to always resolve. Without
++ * this guard, a gateway-unreachable Preview would reject uncaught —
++ * `LensStudioModal.handlePreview` has no `catch` around `onPreview`, so
++ * the failure would silently show nothing instead of surfacing an error.
++ */
 +export const previewLens = async (spec: Record<string, unknown>): Promise<LensPreviewResult> => {
-+  const response = await fetchWithTimeout(`${_backendUrl}/lens/preview`, {
-+    method: 'POST',
-+    headers: { 'Content-Type': 'application/json' },
-+    body: JSON.stringify(spec),
-+  });
-+  if (response.status === 200) {
-+    return { ok: true, braingraph: (await response.json()) as Record<string, unknown> };
++  try {
++    const response = await fetchWithTimeout(`${_backendUrl}/lens/preview`, {
++      method: 'POST',
++      headers: { 'Content-Type': 'application/json' },
++      body: JSON.stringify(spec),
++    });
++    if (response.status === 200) {
++      return { ok: true, braingraph: (await response.json()) as Record<string, unknown> };
++    }
++    const body = await response.json().catch(() => ({} as Record<string, unknown>));
++    const errors = Array.isArray((body as { errors?: unknown }).errors)
++      ? ((body as { errors: string[] }).errors)
++      : [String((body as { error?: unknown }).error ?? `HTTP ${response.status}`)];
++    return { ok: false, errors };
++  } catch (e) {
++    return { ok: false, errors: [(e as Error).message || 'preview request failed'] };
 +  }
-+  const body = await response.json().catch(() => ({} as Record<string, unknown>));
-+  const errors = Array.isArray((body as { errors?: unknown }).errors)
-+    ? ((body as { errors: string[] }).errors)
-+    : [String((body as { error?: unknown }).error ?? `HTTP ${response.status}`)];
-+  return { ok: false, errors };
 +};
 +
 +export const proposeLens = async (
@@ -12248,7 +12286,7 @@ index e887e390..4d3cb89b 100644
  const parseNdjsonGraphResponse = async (
    response: Response,
    onProgress?: (downloaded: number, total: number | null) => void,
-@@ -864,6 +1037,10 @@ export interface ConnectResult {
+@@ -864,6 +1058,10 @@ export interface ConnectResult {
    nodes: GraphNode[];
    relationships: GraphRelationship[];
    repoInfo: BackendRepo;
@@ -12259,7 +12297,7 @@ index e887e390..4d3cb89b 100644
  }
  
  /**
-@@ -886,10 +1063,10 @@ export async function connectToServer(
+@@ -886,10 +1084,10 @@ export async function connectToServer(
    const repoInfo = await fetchRepoInfo(repoName, { awaitAnalysis: opts?.awaitAnalysis });
  
    onProgress?.('downloading', 0, null);

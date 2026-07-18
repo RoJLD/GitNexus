@@ -104,6 +104,20 @@ describe('LensStudioModal', () => {
     expect(onPreview).not.toHaveBeenCalled();
   });
 
+  // Fix 3 (final review): the modal renders as a full-screen backdrop over
+  // the canvas, so a successful Preview (canvas recolor happening behind
+  // the modal) is otherwise invisible to the user — no feedback at all.
+  // On the ok path, handlePreview must set a success toast.
+  it('shows a success toast on {ok:true} Preview (canvas recolor is hidden behind the modal)', async () => {
+    const onPreview = vi.fn(async () => ({ ok: true }));
+    render(
+      <LensStudioModal isOpen onClose={() => {}} onPreview={onPreview} onPropose={async () => ({ id: 'i', status: 's' })} />,
+    );
+    fireEvent.change(screen.getByRole('textbox'), { target: { value: specText } });
+    fireEvent.click(screen.getByTestId('lens-preview-btn'));
+    await waitFor(() => expect(screen.getByText(/lensStudio\.previewRendered/i)).toBeInTheDocument());
+  });
+
   it('calls onPropose with (spec, autoApprove)', async () => {
     const onPropose = vi.fn(async () => ({ id: 'abc', status: 'approved' }));
     render(<LensStudioModal isOpen onClose={() => {}} onPreview={noop} onPropose={onPropose} />);

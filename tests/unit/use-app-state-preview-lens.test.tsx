@@ -78,6 +78,28 @@ describe('useAppState — previewLens', () => {
     expect(result.current.lensMeaning).toBe('m');
   });
 
+  // Fix 4 (final review): previewLens used to pass repoInfo:{family:'authoring'}
+  // to applyLensMetadata, which (per graph.tsx) fires fetchLensFreshness
+  // whenever repoInfo.family is truthy. There is no `/lens/preview`-created
+  // registry entry named 'preview'/<lens-name> on the backend, so that fetch
+  // is a guaranteed 404 whose (discarded, best-effort) result is never
+  // displayed — a spurious network call on every Preview click. insights/
+  // meaning must still be applied (Test A above), but the freshness fetch
+  // must be skipped.
+  it('Fix 4: does NOT trigger fetchLensFreshness (no /lens/preview registry entry to fetch)', async () => {
+    const { result } = renderHook(() => useAppState(), { wrapper });
+    const freshnessMock = vi.mocked(
+      (await import('../../upstream/gitnexus-web/src/services/backend-client')).fetchLensFreshness,
+    );
+    freshnessMock.mockClear();
+
+    await act(async () => {
+      await result.current.previewLens({ name: 'my_lens' });
+    });
+
+    expect(freshnessMock).not.toHaveBeenCalled();
+  });
+
   it('Test B: {ok:false} does not touch the graph and returns {ok:false, errors}', async () => {
     vi.mocked(previewLensApi).mockResolvedValueOnce({ ok: false, errors: ['bad spec'] });
     const { result } = renderHook(() => useAppState(), { wrapper });

@@ -19846,10 +19846,10 @@ index 00000000..1c2982e6
 +};
 diff --git a/gitnexus-web/src/components/LensStudioModal.tsx b/gitnexus-web/src/components/LensStudioModal.tsx
 new file mode 100644
-index 00000000..3b6908a6
+index 00000000..9e8fc651
 --- /dev/null
 +++ b/gitnexus-web/src/components/LensStudioModal.tsx
-@@ -0,0 +1,110 @@
+@@ -0,0 +1,111 @@
 +import { useState } from 'react';
 +import { X, Eye, Send, AlertCircle } from '@/lib/lucide-icons';
 +import { useTranslation } from 'react-i18next';
@@ -19901,6 +19901,7 @@ index 00000000..3b6908a6
 +    try {
 +      const r = await onPreview(spec);
 +      if (!r.ok) setErrors(r.errors ?? [t('header:lensStudio.unknownError')]);
++      else setToast(t('header:lensStudio.previewRendered'));
 +    } finally { setBusy(false); }
 +  };
 +

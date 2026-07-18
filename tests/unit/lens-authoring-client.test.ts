@@ -39,4 +39,40 @@ describe('lens authoring client', () => {
     setBridgeUrl('http://bridge.local/');
     expect(getBridgeUrl()).toBe('http://bridge.local');
   });
+
+  // Fix 1 (final review): previewLens's declared type is
+  // `Promise<LensPreviewResult>` (claims to always resolve), but the
+  // underlying `fetchWithTimeout` call can THROW (BackendError/TimeoutError/
+  // CircuitOpenError) on a transport failure — e.g. the gateway is down.
+  // Before the fix, that throw propagated out of previewLens uncaught, and
+  // LensStudioModal.handlePreview has no try/catch around `onPreview`, so a
+  // gateway-unreachable Preview silently showed nothing. previewLens must
+  // honor its own type: resolve to {ok:false, errors:[...]} on ANY throw.
+  it('previewLens resolves to {ok:false, errors} (never rejects) when fetch throws (gateway down/timeout)', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        throw new TypeError('Failed to fetch');
+      }),
+    );
+    const r = await previewLens({ name: 'x', source: { lens: 'sigil' } });
+    expect(r.ok).toBe(false);
+    expect(r.errors?.length).toBeGreaterThan(0);
+  });
+
+  // Fix 2 (final review): assertOk (used by proposeLens) only reads
+  // `body.error`/`body.message`, but the bridge-api raises FastAPI
+  // `HTTPException(detail=...)`, whose JSON body is `{"detail": "..."}`.
+  // Without a `detail` branch, a 403 "auto_approve requires an approver
+  // role" (or a 422 spec-validation reason) is swallowed and the user sees
+  // only "Forbidden"/"Unprocessable Entity" instead of the real reason.
+  it('proposeLens surfaces FastAPI {detail} on 403 (auto_approve requires an approver role)', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => okResp(403, { detail: 'auto_approve requires an approver role' })),
+    );
+    await expect(proposeLens({ name: 'x' }, true, 'TOK')).rejects.toThrow(
+      /auto_approve requires an approver role/,
+    );
+  });
 });
