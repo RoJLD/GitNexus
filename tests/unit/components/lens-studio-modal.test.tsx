@@ -159,4 +159,103 @@ describe('LensStudioModal', () => {
     fireEvent.click(screen.getByTestId('lens-mode-guided'));
     expect(screen.queryByText(/json/i)).toBeNull();
   });
+
+  // Final-review fix (F4.c): the mirror of the test above. The mutation
+  // `setErrors([])` -> `if (next === 'guided') setErrors([])` left the suite
+  // fully green because only the expert -> guided direction was covered.
+  it('clears a stale guided validation error when switching to expert mode', async () => {
+    render(<LensStudioModal isOpen onClose={() => {}} onPreview={async () => ({ ok: true })} onPropose={async () => ({ id: 'i', status: 's' })} />);
+    fireEvent.click(screen.getByTestId('lens-mode-guided'));
+    fireEvent.click(screen.getByTestId('lens-preview-btn'));
+    await waitFor(() => expect(screen.getByText(/errors\.nameRequired/i)).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId('lens-mode-expert'));
+    expect(screen.queryByText(/errors\.nameRequired/i)).toBeNull();
+  });
+
+  // Final-review fix (F4.b): removing `setToast(null)` from switchMode left the
+  // suite green. A success toast from the other surface ("Preview rendered")
+  // must not linger over a form the user has not previewed yet.
+  it('clears a toast when switching mode', async () => {
+    render(<LensStudioModal isOpen onClose={() => {}} onPreview={async () => ({ ok: true })} onPropose={async () => ({ id: 'i', status: 's' })} />);
+    fireEvent.change(screen.getByRole('textbox'), { target: { value: specText } });
+    fireEvent.click(screen.getByTestId('lens-preview-btn'));
+    await waitFor(() => expect(screen.getByText(/lensStudio\.previewRendered/i)).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId('lens-mode-guided'));
+    expect(screen.queryByText(/lensStudio\.previewRendered/i)).toBeNull();
+  });
+
+  // Final-review fix (F4.a): Propose is the ONLY action on this whole surface
+  // with a persistent side effect (it writes to the sovereign canon), and it
+  // was the one action never covered in guided mode. The mutation
+  // `const spec = parse()` -> `const spec = JSON.parse(text)` in handlePropose
+  // left the suite 22/22 green while sending the untouched EXAMPLE constant.
+  it('in guided mode, Propose receives the spec BUILT BY THE FORM', async () => {
+    const onPropose = vi.fn(async () => ({ id: 'abc', status: 'pending' }));
+    render(<LensStudioModal isOpen onClose={() => {}} onPreview={noop} onPropose={onPropose} />);
+    fireEvent.click(screen.getByTestId('lens-mode-guided'));
+    fireEvent.change(screen.getByTestId('guided-name'), { target: { value: 'my_view' } });
+    fireEvent.change(screen.getByTestId('guided-source'), { target: { value: 'sigil' } });
+    fireEvent.click(screen.getByText(/propose/i));
+    await waitFor(() =>
+      expect(onPropose).toHaveBeenCalledWith({ name: 'my_view', source: { lens: 'sigil' } }, false));
+  });
+
+  // Final-review fix (F2 — CRITICAL path): `parse()` returned
+  // `formStateToSpec(form)` unconditionally in guided mode, so `if (!spec)
+  // return;` never fired and a pristine form POSTed
+  // {"name":"","source":{"lens":""}} into the canon. Measured, not theorised.
+  it('in guided mode, an empty form shows errors and does NOT call onPropose', async () => {
+    const onPropose = vi.fn(async () => ({ id: 'abc', status: 'pending' }));
+    render(<LensStudioModal isOpen onClose={() => {}} onPreview={noop} onPropose={onPropose} />);
+    fireEvent.click(screen.getByTestId('lens-mode-guided'));
+    fireEvent.click(screen.getByText(/propose/i));
+    await waitFor(() => expect(screen.getByText(/errors\.nameRequired/i)).toBeInTheDocument());
+    expect(screen.getByText(/errors\.sourceRequired/i)).toBeInTheDocument();
+    expect(onPropose).not.toHaveBeenCalled();
+  });
+
+  it('in guided mode, a missing source lens alone blocks Preview', async () => {
+    const onPreview = vi.fn(async () => ({ ok: true }));
+    render(<LensStudioModal isOpen onClose={() => {}} onPreview={onPreview} onPropose={async () => ({ id: 'i', status: 's' })} />);
+    fireEvent.click(screen.getByTestId('lens-mode-guided'));
+    fireEvent.change(screen.getByTestId('guided-name'), { target: { value: 'my_view' } });
+    fireEvent.click(screen.getByTestId('lens-preview-btn'));
+    await waitFor(() => expect(screen.getByText(/errors\.sourceRequired/i)).toBeInTheDocument());
+    expect(onPreview).not.toHaveBeenCalled();
+  });
+
+  // Final-review fix (F1 — CRITICAL): the guard tested only the DIRECTION of
+  // the switch, never whether the form held anything. Round-tripping through
+  // guided mode without typing a character replaced 40 lines of hand-written
+  // JSON with {"name":"","source":{"lens":""}} — no warning, no undo.
+  it('expert -> guided -> expert leaves hand-written JSON intact when the form was never touched', () => {
+    const precious = '{"name":"precious","source":{"lens":"sigil"},"meaning":"40 lines of work"}';
+    render(<LensStudioModal isOpen onClose={() => {}} onPreview={noop} onPropose={async () => ({ id: 'i', status: 's' })} />);
+    fireEvent.change(screen.getByRole('textbox'), { target: { value: precious } });
+    fireEvent.click(screen.getByTestId('lens-mode-guided'));
+    fireEvent.click(screen.getByTestId('lens-mode-expert'));
+    expect((screen.getByRole('textbox') as HTMLTextAreaElement).value).toBe(precious);
+  });
+
+  // ...and the isomorphism proof still holds the moment the form IS touched
+  // (Σ-SWITCHING-TO-EXPERT-REVEALS-THE-EMITTED-JSON is preserved, not traded away).
+  it('expert -> guided -> expert DOES serialize once the form has been edited', () => {
+    render(<LensStudioModal isOpen onClose={() => {}} onPreview={noop} onPropose={async () => ({ id: 'i', status: 's' })} />);
+    fireEvent.change(screen.getByRole('textbox'), { target: { value: '{"name":"old","source":{"lens":"old"}}' } });
+    fireEvent.click(screen.getByTestId('lens-mode-guided'));
+    fireEvent.change(screen.getByTestId('guided-name'), { target: { value: 'my_view' } });
+    fireEvent.click(screen.getByTestId('lens-mode-expert'));
+    expect(JSON.parse((screen.getByRole('textbox') as HTMLTextAreaElement).value))
+      .toEqual({ name: 'my_view', source: { lens: '' } });
+  });
+
+  // F6: the segmented control communicated its state through a CSS class only.
+  it('exposes the active mode through aria-pressed on the segmented control', () => {
+    render(<LensStudioModal isOpen onClose={() => {}} onPreview={noop} onPropose={async () => ({ id: 'i', status: 's' })} />);
+    expect(screen.getByTestId('lens-mode-expert')).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByTestId('lens-mode-guided')).toHaveAttribute('aria-pressed', 'false');
+    fireEvent.click(screen.getByTestId('lens-mode-guided'));
+    expect(screen.getByTestId('lens-mode-guided')).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByTestId('lens-mode-expert')).toHaveAttribute('aria-pressed', 'false');
+  });
 });

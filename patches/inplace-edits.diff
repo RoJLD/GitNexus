@@ -11966,10 +11966,10 @@ index 7d9b5fc7..0c1dd702 100644
    X,
    Zap,
 diff --git a/gitnexus-web/src/locales/en/header.json b/gitnexus-web/src/locales/en/header.json
-index 3b531831..62e0b663 100644
+index 3b531831..8eaa9d50 100644
 --- a/gitnexus-web/src/locales/en/header.json
 +++ b/gitnexus-web/src/locales/en/header.json
-@@ -12,5 +12,24 @@
+@@ -12,5 +12,32 @@
    "aiSettings": "AI Settings",
    "help": "Help",
    "language": "Language",
@@ -11991,15 +11991,23 @@ index 3b531831..62e0b663 100644
 +    "guided": {
 +      "tab": "Guided", "expertTab": "Expert", "name": "Lens name", "source": "Refines lens",
 +      "meaning": "Meaning", "filter": "Filter", "field": "field", "value": "value",
-+      "color": "Color", "colorBy": "color by", "insight": "Insight", "topN": "top N", "by": "by metric"
++      "color": "Color", "colorBy": "color by", "insight": "Insight", "topN": "top N", "by": "by metric",
++      "op": "Operator", "scale": "Color scale",
++      "errors": {
++        "nameRequired": "Lens name is required.",
++        "sourceRequired": "Refines lens is required — a lens must name the upstream lens it composes.",
++        "predicateOperatorChar": "Filter field and values cannot contain < > = or ! — the backend predicate grammar would mis-read the expression and match no node at all.",
++        "insightTopN": "Top N must be a whole number of 1 or more.",
++        "insightBy": "Insight metric must be a single word (letters, digits, underscore) — e.g. pagerank, not in-degree."
++      }
 +    }
 +  }
  }
 diff --git a/gitnexus-web/src/locales/zh-CN/header.json b/gitnexus-web/src/locales/zh-CN/header.json
-index 303ba02c..5f863509 100644
+index 303ba02c..1c106fd7 100644
 --- a/gitnexus-web/src/locales/zh-CN/header.json
 +++ b/gitnexus-web/src/locales/zh-CN/header.json
-@@ -12,5 +12,24 @@
+@@ -12,5 +12,32 @@
    "aiSettings": "AI 设置",
    "help": "帮助",
    "language": "语言",
@@ -12021,7 +12029,15 @@ index 303ba02c..5f863509 100644
 +    "guided": {
 +      "tab": "引导式", "expertTab": "专家模式", "name": "镜头名称", "source": "细化自镜头",
 +      "meaning": "含义", "filter": "过滤条件", "field": "字段", "value": "值",
-+      "color": "颜色", "colorBy": "着色依据", "insight": "洞察", "topN": "前 N 项", "by": "依据指标"
++      "color": "颜色", "colorBy": "着色依据", "insight": "洞察", "topN": "前 N 项", "by": "依据指标",
++      "op": "运算符", "scale": "配色方案",
++      "errors": {
++        "nameRequired": "镜头名称为必填项。",
++        "sourceRequired": "必须填写「细化自镜头」——镜头必须指明其所组合的上游镜头。",
++        "predicateOperatorChar": "过滤条件的字段和值不能包含 < > = 或 ! ——后端谓词语法会错误解析该表达式，导致没有任何节点匹配。",
++        "insightTopN": "「前 N 项」必须是大于等于 1 的整数。",
++        "insightBy": "洞察指标必须是单个词（字母、数字、下划线）——例如 pagerank，而不是 in-degree。"
++      }
 +    }
 +  }
  }
