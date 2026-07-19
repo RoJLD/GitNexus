@@ -8,7 +8,7 @@
 **Fork interne : [github.com/RoJLD/GitNexus](https://github.com/RoJLD/GitNexus) → branche active `feat/classdiagram-export-and-class-lens`** (le code v7 live ; `deployment` = base de réconciliation, fast-forwardée sur cette branche).
 
 <!-- Compteurs autogénérés (source de vérité = le code). `node scripts/check-doc-counters.mjs --write` régénère ; `--check` échoue en CI si un compteur dérive. NE PAS éditer les nombres à la main entre les marqueurs COUNTER. -->
-**Compteurs (autogénérés)** : MCP tools = <!-- COUNTER:mcp-tools -->36<!-- /COUNTER --> · additive-files = <!-- COUNTER:additive-files -->138<!-- /COUNTER --> · inplace-files = <!-- COUNTER:inplace-files -->21<!-- /COUNTER -->.
+**Compteurs (autogénérés)** : MCP tools = <!-- COUNTER:mcp-tools -->36<!-- /COUNTER --> · additive-files = <!-- COUNTER:additive-files -->141<!-- /COUNTER --> · inplace-files = <!-- COUNTER:inplace-files -->25<!-- /COUNTER -->.
 
 Document figé dans le temps, vocation : servir de base de brainstorming
 pour les évolutions futures. À ré-éditer quand on bump la version
@@ -311,6 +311,15 @@ Pure frontend overlay — aucune route serveur, consomme `/ghosts?repo=` du CORE
 - **Out** : XMI, SysML v2, rendering PNG/SVG (le user rend chez lui), composant frontend.
 - **Class diagram (Tier 3, 2026-07-11)** : `GET /sysml-export?repo=<name>&format=mermaid-class` — rend un mermaid `classDiagram` du **graphe de symboles réel** (pas des ghosts). Lit `/api/graph` (comme la lens route), projette via `projectClassDiagram` (`docker-server-graph-lens-core.mjs` : Class/Interface + membres HAS_METHOD/HAS_PROPERTY/MEMBER_OF + associations CALLS remontées) puis `renderMermaidClass` (`docker-server-sysml-export-core.mjs`). Cap 150 classes (par nb de membres, `%% truncated`). **Héritage (v3 2026-07-12, mesure LIVE)** : consomme les arêtes **`EXTENDS`** (classe→superclasse) + **`IMPLEMENTS`** (classe→interface) — les VRAIS types émis par l'ingestion, mesurés en ingérant une sonde à héritage interne (v1 « unavailable » ET v2 « INHERITS » étaient tous deux FAUX : la v2 rendait 0 flèche sur données réelles) ; `INHERITS` gardé en fallback. Entre classes rendues → `kind:'extends'|'implements'` → mermaid `Parent <|-- Child` (solide) + `Interface <|.. Class` (pointillé) ; `meta.inheritance='rendered'|'none-in-graph'` (dit POURQUOI pas de flèches : bases externes/non-indexées, Zero Masking). HMMstudio = `none-in-graph` (Protocol/ABC hors-graphe) ; le fixture `sample-repo` (commit 13, hiérarchie TS interne) rend des flèches → assertion CI **déterministe**. Tests : `tests/unit/class-diagram.test.mjs` (15) + `tests/integration/endpoints/sysml-export-class.test.mjs` (flèches EXTENDS+IMPLEMENTS). Spec `docs/superpowers/specs/2026-07-11-classdiagram-export-and-class-lens.md`.
 - **Usage** : `curl :4173/sysml-export?repo=hmm_studio > diagram.puml` puis ouvrir dans PlantUML server / VSCode extension.
+
+#### Lens Studio — authoring de lentilles souveraines (SIGIL-1711 Phase 2, 2026-07-19)
+Versant UI du « Atelier des Lentilles » ELYSIUM. Le fork reste un **client pur** : il POST vers le monorepo hôte et ne persiste jamais (il ne connaît pas `lens_registry.yaml`). Consomme le backend ELYSIUM (gateway `POST /lens/preview` sans auth ; bridge-api `POST /elysium/lens/propose` avec Bearer) — aucune route serveur ajoutée ici.
+- `upstream/gitnexus-web/src/components/LensStudioModal.tsx` (**additif**) — modale expert : textarea de spec JSON (pré-garde `JSON.parse` native, pas de zod), panneau d'erreurs, toast, case « auto-approve ». Composant pur piloté par 2 callbacks (`onPreview`/`onPropose`) — zéro accès backend direct.
+- `upstream/gitnexus-web/src/services/backend-client.ts` — `previewLens(spec)` (POST gateway ; **ne rejette jamais** : un transport down retourne `{ok:false,errors}`), `proposeLens(spec,autoApprove,token)` (Bearer, body `{spec,auto_approve}` **sans `author`** — dérivé server-side), base `_bridgeUrl` + `getBridgeUrl`/`setBridgeUrl` (réutilise la garde SSRF `validateBackendUrl`), `assertOk` surface aussi le `{detail}` FastAPI.
+- `upstream/gitnexus-web/src/hooks/useAppState.tsx` — `previewLens(spec)` : rend le BrainGraph retourné dans le **vrai canvas** (`createKnowledgeGraph` → `addNode`/`addRelationship` → `setGraph`) **puis `applyLensMetadata`** (sans quoi le panneau insights reste inerte — régression gap #7).
+- `upstream/gitnexus-web/src/components/Header.tsx` + `App.tsx` — entrée « + New lens » dans le switcher (prop `onAddLens`) ; App tient l'état de la modale + `proposeLensCb` (token depuis `localStorage.elysium_bridge_token`).
+- i18n `locales/{en,zh-CN}/header.json` — 12 clés `header:addLens` + `header:lensStudio.*`.
+- **Gate live** (non couvert par les tests) : acquisition du token Dex/K8s dans le navigateur + stack gateway/bridge-api en cluster.
 
 #### Roadmap-predictive Augmented Timeline (Tier 3.x, 2026-05-27)
 Pure frontend extension de la Timeline existante — aucune route serveur, réutilise `/ghosts/at` du CORE :
