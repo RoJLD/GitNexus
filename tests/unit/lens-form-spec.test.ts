@@ -39,6 +39,15 @@ describe('formStateToSpec', () => {
       .toEqual({ node_where: 'status == critical' });
   });
 
+  it('OMITS select when an `in` row has no real items (commas/whitespace only)', () => {
+    expect('select' in formStateToSpec({ ...base, predicates: [{ field: 'kind', op: 'in', value: ' , , ' }] })).toBe(false);
+  });
+
+  it('still emits select for an `in` row with real items', () => {
+    expect(formStateToSpec({ ...base, predicates: [{ field: 'kind', op: 'in', value: 'a, b' }] }).select)
+      .toEqual({ node_where: 'kind in [a, b]' });
+  });
+
   it('OMITS insight unless BOTH topN and by are set', () => {
     expect('insight' in formStateToSpec({ ...base, insightTopN: 5, insightBy: '' })).toBe(false);
     expect('insight' in formStateToSpec({ ...base, insightTopN: '', insightBy: 'pagerank' })).toBe(false);

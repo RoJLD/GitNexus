@@ -26721,10 +26721,10 @@ index 00000000..9fb3e02b
 +};
 diff --git a/gitnexus-web/src/lib/lens-form-spec.ts b/gitnexus-web/src/lib/lens-form-spec.ts
 new file mode 100644
-index 00000000..27bceda7
+index 00000000..a4159707
 --- /dev/null
 +++ b/gitnexus-web/src/lib/lens-form-spec.ts
-@@ -0,0 +1,65 @@
+@@ -0,0 +1,69 @@
 +export type PredicateOp = '==' | '!=' | '>=' | '<=' | '>' | '<' | 'in';
 +
 +export interface PredicateRow {
@@ -26780,7 +26780,11 @@ index 00000000..27bceda7
 +  };
 +  if (s.meaning.trim()) spec.meaning = s.meaning.trim();
 +
-+  const row = s.predicates.find((p) => p.field.trim() && (p.op === 'in' ? p.value.trim() : p.value.trim()));
++  const row = s.predicates.find((p) => {
++    if (!p.field.trim()) return false;
++    if (p.op === 'in') return p.value.split(',').map((v) => v.trim()).filter(Boolean).length > 0;
++    return p.value.trim() !== '';
++  });
 +  if (row) spec.select = { node_where: predicateRowToExpr(row) };
 +
 +  if (s.colorBy.trim()) spec.color = { by: s.colorBy.trim(), scale: s.colorScale };
