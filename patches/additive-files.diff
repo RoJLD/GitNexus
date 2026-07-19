@@ -19658,6 +19658,95 @@ index 00000000..cedd9395
 +    </div>
 +  );
 +};
+diff --git a/gitnexus-web/src/components/GuidedLensForm.tsx b/gitnexus-web/src/components/GuidedLensForm.tsx
+new file mode 100644
+index 00000000..2fec9d0e
+--- /dev/null
++++ b/gitnexus-web/src/components/GuidedLensForm.tsx
+@@ -0,0 +1,83 @@
++import { useTranslation } from 'react-i18next';
++import type { LensFormState, PredicateOp } from '@/lib/lens-form-spec';
++
++const OPS: PredicateOp[] = ['==', '!=', '>=', '<=', '>', '<', 'in'];
++const SCALES = ['categorical', 'heat', 'community'] as const;
++
++const inputCls =
++  'w-full rounded-lg border border-border-subtle bg-void px-2 py-1.5 text-xs text-text-primary focus:border-accent focus:outline-none';
++
++interface GuidedLensFormProps {
++  state: LensFormState;
++  onChange: (next: LensFormState) => void;
++}
++
++export const GuidedLensForm = ({ state, onChange }: GuidedLensFormProps) => {
++  const { t } = useTranslation(['header']);
++  const set = (patch: Partial<LensFormState>) => onChange({ ...state, ...patch });
++  const row = state.predicates[0] ?? { field: '', op: '==' as PredicateOp, value: '' };
++  const setRow = (patch: Partial<typeof row>) => set({ predicates: [{ ...row, ...patch }] });
++
++  return (
++    <div className="space-y-3">
++      <label className="block text-xs text-text-secondary">
++        {t('header:lensStudio.guided.name')}
++        <input data-testid="guided-name" className={inputCls} value={state.name}
++          onChange={(e) => set({ name: e.target.value })} />
++      </label>
++      <label className="block text-xs text-text-secondary">
++        {t('header:lensStudio.guided.source')}
++        <input data-testid="guided-source" className={inputCls} value={state.sourceLens}
++          onChange={(e) => set({ sourceLens: e.target.value })} />
++      </label>
++      <label className="block text-xs text-text-secondary">
++        {t('header:lensStudio.guided.meaning')}
++        <input data-testid="guided-meaning" className={inputCls} value={state.meaning}
++          onChange={(e) => set({ meaning: e.target.value })} />
++      </label>
++
++      <fieldset className="rounded-lg border border-border-subtle p-2">
++        <legend className="px-1 text-[10px] uppercase tracking-wider text-text-muted">
++          {t('header:lensStudio.guided.filter')}
++        </legend>
++        <div className="flex gap-2">
++          <input data-testid="guided-pred-field" className={inputCls} placeholder={t('header:lensStudio.guided.field')}
++            value={row.field} onChange={(e) => setRow({ field: e.target.value })} />
++          <select data-testid="guided-pred-op" className={inputCls} value={row.op}
++            onChange={(e) => setRow({ op: e.target.value as PredicateOp })}>
++            {OPS.map((op) => <option key={op} value={op}>{op}</option>)}
++          </select>
++          <input data-testid="guided-pred-value" className={inputCls} placeholder={t('header:lensStudio.guided.value')}
++            value={row.value} onChange={(e) => setRow({ value: e.target.value })} />
++        </div>
++      </fieldset>
++
++      <fieldset className="rounded-lg border border-border-subtle p-2">
++        <legend className="px-1 text-[10px] uppercase tracking-wider text-text-muted">
++          {t('header:lensStudio.guided.color')}
++        </legend>
++        <div className="flex gap-2">
++          <input data-testid="guided-color-by" className={inputCls} placeholder={t('header:lensStudio.guided.colorBy')}
++            value={state.colorBy} onChange={(e) => set({ colorBy: e.target.value })} />
++          <select data-testid="guided-color-scale" className={inputCls} value={state.colorScale}
++            onChange={(e) => set({ colorScale: e.target.value as LensFormState['colorScale'] })}>
++            {SCALES.map((s) => <option key={s} value={s}>{s}</option>)}
++          </select>
++        </div>
++      </fieldset>
++
++      <fieldset className="rounded-lg border border-border-subtle p-2">
++        <legend className="px-1 text-[10px] uppercase tracking-wider text-text-muted">
++          {t('header:lensStudio.guided.insight')}
++        </legend>
++        <div className="flex gap-2">
++          <input data-testid="guided-insight-n" type="number" min={1} className={inputCls}
++            placeholder={t('header:lensStudio.guided.topN')} value={state.insightTopN}
++            onChange={(e) => set({ insightTopN: e.target.value === '' ? '' : Number(e.target.value) })} />
++          <input data-testid="guided-insight-by" className={inputCls} placeholder={t('header:lensStudio.guided.by')}
++            value={state.insightBy} onChange={(e) => set({ insightBy: e.target.value })} />
++        </div>
++      </fieldset>
++    </div>
++  );
++};
 diff --git a/gitnexus-web/src/components/LensFreshnessBadge.tsx b/gitnexus-web/src/components/LensFreshnessBadge.tsx
 new file mode 100644
 index 00000000..7338d863
@@ -19846,13 +19935,15 @@ index 00000000..1c2982e6
 +};
 diff --git a/gitnexus-web/src/components/LensStudioModal.tsx b/gitnexus-web/src/components/LensStudioModal.tsx
 new file mode 100644
-index 00000000..9e8fc651
+index 00000000..fe14938c
 --- /dev/null
 +++ b/gitnexus-web/src/components/LensStudioModal.tsx
-@@ -0,0 +1,111 @@
+@@ -0,0 +1,135 @@
 +import { useState } from 'react';
 +import { X, Eye, Send, AlertCircle } from '@/lib/lucide-icons';
 +import { useTranslation } from 'react-i18next';
++import { GuidedLensForm } from './GuidedLensForm';
++import { EMPTY_FORM_STATE, formStateToSpec, type LensFormState } from '@/lib/lens-form-spec';
 +
 +interface LensStudioModalProps {
 +  isOpen: boolean;
@@ -19876,10 +19967,13 @@ index 00000000..9e8fc651
 +  const [toast, setToast] = useState<string | null>(null);
 +  const [autoApprove, setAutoApprove] = useState(false);
 +  const [busy, setBusy] = useState(false);
++  const [mode, setMode] = useState<'guided' | 'expert'>('expert');
++  const [form, setForm] = useState<LensFormState>(EMPTY_FORM_STATE);
 +
 +  if (!isOpen) return null;
 +
 +  const parse = (): Record<string, unknown> | null => {
++    if (mode === 'guided') { setErrors([]); return formStateToSpec(form); }
 +    try {
 +      const spec = JSON.parse(text);
 +      if (!spec || typeof spec !== 'object' || Array.isArray(spec)) {
@@ -19892,6 +19986,11 @@ index 00000000..9e8fc651
 +      setErrors([`${t('header:lensStudio.jsonError')}: ${(e as Error).message}`]);
 +      return null;
 +    }
++  };
++
++  const switchMode = (next: 'guided' | 'expert') => {
++    if (next === 'expert' && mode === 'guided') setText(JSON.stringify(formStateToSpec(form), null, 2));
++    setMode(next);
 +  };
 +
 +  const handlePreview = async () => {
@@ -19923,17 +20022,31 @@ index 00000000..9e8fc651
 +        <div className="flex shrink-0 items-center gap-2 border-b border-border-subtle px-4 py-3">
 +          <Eye className="h-4 w-4 text-accent" />
 +          <span className="font-medium text-text-primary">{t('header:lensStudio.title')}</span>
++          <div className="ml-3 flex overflow-hidden rounded-lg border border-border-subtle text-xs">
++            <button type="button" data-testid="lens-mode-guided" onClick={() => switchMode('guided')}
++              className={`px-2 py-1 ${mode === 'guided' ? 'bg-accent text-white' : 'text-text-muted hover:bg-hover'}`}>
++              {t('header:lensStudio.guided.tab')}
++            </button>
++            <button type="button" data-testid="lens-mode-expert" onClick={() => switchMode('expert')}
++              className={`px-2 py-1 ${mode === 'expert' ? 'bg-accent text-white' : 'text-text-muted hover:bg-hover'}`}>
++              {t('header:lensStudio.guided.expertTab')}
++            </button>
++          </div>
 +          <button type="button" onClick={onClose} className="ml-auto cursor-pointer rounded p-1 text-text-muted transition-colors hover:bg-hover hover:text-text-primary" title={t('header:lensStudio.close')}>
 +            <X className="h-4 w-4" />
 +          </button>
 +        </div>
 +        <div className="space-y-3 p-4 overflow-y-auto">
-+          <textarea
-+            value={text}
-+            onChange={(e) => setText(e.target.value)}
-+            spellCheck={false}
-+            className="h-64 w-full resize-y rounded-lg border border-border-subtle bg-void px-3 py-2 font-mono text-xs text-text-primary focus:border-accent focus:outline-none"
-+          />
++          {mode === 'guided' ? (
++            <GuidedLensForm state={form} onChange={setForm} />
++          ) : (
++            <textarea
++              value={text}
++              onChange={(e) => setText(e.target.value)}
++              spellCheck={false}
++              className="h-64 w-full resize-y rounded-lg border border-border-subtle bg-void px-3 py-2 font-mono text-xs text-text-primary focus:border-accent focus:outline-none"
++            />
++          )}
 +          {errors.length > 0 && (
 +            <div className="rounded-lg border border-red-500/40 bg-red-500/10 p-2 text-xs text-red-300">
 +              {errors.map((err, i) => (

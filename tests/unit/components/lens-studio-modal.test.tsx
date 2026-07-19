@@ -126,4 +126,25 @@ describe('LensStudioModal', () => {
     fireEvent.click(screen.getByText(/propose/i));
     await waitFor(() => expect(onPropose).toHaveBeenCalledWith(JSON.parse(specText), true));
   });
+
+  it('in guided mode, Preview receives the spec BUILT BY THE FORM', async () => {
+    const onPreview = vi.fn(async () => ({ ok: true }));
+    render(<LensStudioModal isOpen onClose={() => {}} onPreview={onPreview} onPropose={async () => ({ id: 'i', status: 's' })} />);
+    fireEvent.click(screen.getByTestId('lens-mode-guided'));
+    fireEvent.change(screen.getByTestId('guided-name'), { target: { value: 'my_view' } });
+    fireEvent.change(screen.getByTestId('guided-source'), { target: { value: 'sigil' } });
+    fireEvent.click(screen.getByTestId('lens-preview-btn'));
+    await waitFor(() =>
+      expect(onPreview).toHaveBeenCalledWith({ name: 'my_view', source: { lens: 'sigil' } }));
+  });
+
+  it('switching guided -> expert serializes the built spec into the textarea', () => {
+    render(<LensStudioModal isOpen onClose={() => {}} onPreview={async () => ({ ok: true })} onPropose={async () => ({ id: 'i', status: 's' })} />);
+    fireEvent.click(screen.getByTestId('lens-mode-guided'));
+    fireEvent.change(screen.getByTestId('guided-name'), { target: { value: 'my_view' } });
+    fireEvent.change(screen.getByTestId('guided-source'), { target: { value: 'sigil' } });
+    fireEvent.click(screen.getByTestId('lens-mode-expert'));
+    expect(JSON.parse((screen.getByRole('textbox') as HTMLTextAreaElement).value))
+      .toEqual({ name: 'my_view', source: { lens: 'sigil' } });
+  });
 });

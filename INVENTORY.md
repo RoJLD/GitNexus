@@ -8,7 +8,7 @@
 **Fork interne : [github.com/RoJLD/GitNexus](https://github.com/RoJLD/GitNexus) → branche active `feat/classdiagram-export-and-class-lens`** (le code v7 live ; `deployment` = base de réconciliation, fast-forwardée sur cette branche).
 
 <!-- Compteurs autogénérés (source de vérité = le code). `node scripts/check-doc-counters.mjs --write` régénère ; `--check` échoue en CI si un compteur dérive. NE PAS éditer les nombres à la main entre les marqueurs COUNTER. -->
-**Compteurs (autogénérés)** : MCP tools = <!-- COUNTER:mcp-tools -->36<!-- /COUNTER --> · additive-files = <!-- COUNTER:additive-files -->141<!-- /COUNTER --> · inplace-files = <!-- COUNTER:inplace-files -->25<!-- /COUNTER -->.
+**Compteurs (autogénérés)** : MCP tools = <!-- COUNTER:mcp-tools -->36<!-- /COUNTER --> · additive-files = <!-- COUNTER:additive-files -->143<!-- /COUNTER --> · inplace-files = <!-- COUNTER:inplace-files -->25<!-- /COUNTER -->.
 
 Document figé dans le temps, vocation : servir de base de brainstorming
 pour les évolutions futures. À ré-éditer quand on bump la version
@@ -320,6 +320,7 @@ Versant UI du « Atelier des Lentilles » ELYSIUM. Le fork reste un **client pur
 - `upstream/gitnexus-web/src/components/Header.tsx` + `App.tsx` — entrée « + New lens » dans le switcher (prop `onAddLens`) ; App tient l'état de la modale + `proposeLensCb` (token depuis `localStorage.elysium_bridge_token`).
 - i18n `locales/{en,zh-CN}/header.json` — 12 clés `header:addLens` + `header:lensStudio.*`.
 - **Gate live** (non couvert par les tests) : acquisition du token Dex/K8s dans le navigateur + stack gateway/bridge-api en cluster.
+- **Formulaire guidé (2ᵉ surface d'entrée, 2026-07-19)** : traducteur pur `upstream/gitnexus-web/src/lib/lens-form-spec.ts` (`formStateToSpec` — omet un bloc plutôt que de l'émettre vide : `color` sans `by` casse la grammaire backend E6, un `select`/`insight` vide n'a pas de sens ; un seul prédicat émis, `eval_predicate` n'a pas de conjonction) + composant **additif** `GuidedLensForm.tsx` (champs contrôlés `{state,onChange}` : name/source/meaning/predicat/color/insight). Toggle `guided|expert` dans `LensStudioModal` (les boutons Preview/Propose restent **partagés** — `parse()` devient conscient du mode, en guidé la spec vient toujours du formulaire, jamais d'erreur JSON) ; basculer guidé→expert **sérialise** la spec construite dans le textarea (`JSON.stringify(formStateToSpec(form), null, 2)` — preuve visible que les deux surfaces émettent le même objet canonique) ; basculer expert→guidé ne tente **aucun reverse-parsing** (une spec JSON arbitraire n'est pas toujours représentable dans le formulaire ; prétendre le contraire droppererait silencieusement des champs). 20 unit (11 pures + 3 formulaire + 2 toggle + 4 modal préexistants inchangés). | `upstream/gitnexus-web/src/lib/lens-form-spec.ts` (additif), `upstream/gitnexus-web/src/components/GuidedLensForm.tsx` (additif), `upstream/gitnexus-web/src/components/LensStudioModal.tsx` (édit), `upstream/gitnexus-web/src/locales/{en,zh-CN}/header.json`, `tests/unit/lens-form-spec.test.ts`, `tests/unit/components/guided-lens-form.test.tsx`
 
 #### Roadmap-predictive Augmented Timeline (Tier 3.x, 2026-05-27)
 Pure frontend extension de la Timeline existante — aucune route serveur, réutilise `/ghosts/at` du CORE :

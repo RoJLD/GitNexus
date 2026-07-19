@@ -11966,10 +11966,10 @@ index 7d9b5fc7..0c1dd702 100644
    X,
    Zap,
 diff --git a/gitnexus-web/src/locales/en/header.json b/gitnexus-web/src/locales/en/header.json
-index 3b531831..8e6aa3f6 100644
+index 3b531831..62e0b663 100644
 --- a/gitnexus-web/src/locales/en/header.json
 +++ b/gitnexus-web/src/locales/en/header.json
-@@ -12,5 +12,19 @@
+@@ -12,5 +12,24 @@
    "aiSettings": "AI Settings",
    "help": "Help",
    "language": "Language",
@@ -11987,14 +11987,19 @@ index 3b531831..8e6aa3f6 100644
 +    "jsonError": "Invalid JSON",
 +    "notObject": "The spec must be a JSON object",
 +    "unknownError": "Unknown error",
-+    "close": "Close"
++    "close": "Close",
++    "guided": {
++      "tab": "Guided", "expertTab": "Expert", "name": "Lens name", "source": "Refines lens",
++      "meaning": "Meaning", "filter": "Filter", "field": "field", "value": "value",
++      "color": "Color", "colorBy": "color by", "insight": "Insight", "topN": "top N", "by": "by metric"
++    }
 +  }
  }
 diff --git a/gitnexus-web/src/locales/zh-CN/header.json b/gitnexus-web/src/locales/zh-CN/header.json
-index 303ba02c..0b831019 100644
+index 303ba02c..5f863509 100644
 --- a/gitnexus-web/src/locales/zh-CN/header.json
 +++ b/gitnexus-web/src/locales/zh-CN/header.json
-@@ -12,5 +12,19 @@
+@@ -12,5 +12,24 @@
    "aiSettings": "AI 设置",
    "help": "帮助",
    "language": "语言",
@@ -12012,7 +12017,12 @@ index 303ba02c..0b831019 100644
 +    "jsonError": "JSON 格式无效",
 +    "notObject": "规范必须是一个 JSON 对象",
 +    "unknownError": "未知错误",
-+    "close": "关闭"
++    "close": "关闭",
++    "guided": {
++      "tab": "引导式", "expertTab": "专家模式", "name": "镜头名称", "source": "细化自镜头",
++      "meaning": "含义", "filter": "过滤条件", "field": "字段", "value": "值",
++      "color": "颜色", "colorBy": "着色依据", "insight": "洞察", "topN": "前 N 项", "by": "依据指标"
++    }
 +  }
  }
 diff --git a/gitnexus-web/src/services/backend-client.ts b/gitnexus-web/src/services/backend-client.ts
