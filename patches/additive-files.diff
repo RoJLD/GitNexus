@@ -19935,10 +19935,10 @@ index 00000000..1c2982e6
 +};
 diff --git a/gitnexus-web/src/components/LensStudioModal.tsx b/gitnexus-web/src/components/LensStudioModal.tsx
 new file mode 100644
-index 00000000..fe14938c
+index 00000000..f0220983
 --- /dev/null
 +++ b/gitnexus-web/src/components/LensStudioModal.tsx
-@@ -0,0 +1,135 @@
+@@ -0,0 +1,137 @@
 +import { useState } from 'react';
 +import { X, Eye, Send, AlertCircle } from '@/lib/lucide-icons';
 +import { useTranslation } from 'react-i18next';
@@ -19990,6 +19990,8 @@ index 00000000..fe14938c
 +
 +  const switchMode = (next: 'guided' | 'expert') => {
 +    if (next === 'expert' && mode === 'guided') setText(JSON.stringify(formStateToSpec(form), null, 2));
++    setErrors([]);   // a parse error from the other surface must not leak across the switch
++    setToast(null);
 +    setMode(next);
 +  };
 +

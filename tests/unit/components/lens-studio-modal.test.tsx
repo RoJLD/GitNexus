@@ -147,4 +147,16 @@ describe('LensStudioModal', () => {
     expect(JSON.parse((screen.getByRole('textbox') as HTMLTextAreaElement).value))
       .toEqual({ name: 'my_view', source: { lens: 'sigil' } });
   });
+
+  // Review fix: a JSON parse error is impossible in guided mode (parse() never
+  // JSON.parse's in that branch), so a stale error banner from a prior expert
+  // attempt must not survive the switch INTO guided mode.
+  it('clears a stale expert JSON error when switching to guided mode', async () => {
+    render(<LensStudioModal isOpen onClose={() => {}} onPreview={async () => ({ ok: true })} onPropose={async () => ({ id: 'i', status: 's' })} />);
+    fireEvent.change(screen.getByRole('textbox'), { target: { value: '{not valid' } });
+    fireEvent.click(screen.getByTestId('lens-preview-btn'));
+    await waitFor(() => expect(screen.getByText(/json/i)).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId('lens-mode-guided'));
+    expect(screen.queryByText(/json/i)).toBeNull();
+  });
 });
