@@ -19658,6 +19658,104 @@ index 00000000..cedd9395
 +    </div>
 +  );
 +};
+diff --git a/gitnexus-web/src/components/GuidedLensForm.tsx b/gitnexus-web/src/components/GuidedLensForm.tsx
+new file mode 100644
+index 00000000..e8d4b48b
+--- /dev/null
++++ b/gitnexus-web/src/components/GuidedLensForm.tsx
+@@ -0,0 +1,92 @@
++import { useTranslation } from 'react-i18next';
++import type { LensFormState, PredicateOp } from '@/lib/lens-form-spec';
++
++const OPS: PredicateOp[] = ['==', '!=', '>=', '<=', '>', '<', 'in'];
++const SCALES = ['categorical', 'heat', 'community'] as const;
++
++const inputCls =
++  'w-full rounded-lg border border-border-subtle bg-void px-2 py-1.5 text-xs text-text-primary focus:border-accent focus:outline-none';
++
++interface GuidedLensFormProps {
++  state: LensFormState;
++  onChange: (next: LensFormState) => void;
++}
++
++export const GuidedLensForm = ({ state, onChange }: GuidedLensFormProps) => {
++  const { t } = useTranslation(['header']);
++  const set = (patch: Partial<LensFormState>) => onChange({ ...state, ...patch });
++  const row = state.predicates[0] ?? { field: '', op: '==' as PredicateOp, value: '' };
++  const setRow = (patch: Partial<typeof row>) => set({ predicates: [{ ...row, ...patch }] });
++
++  return (
++    <div className="space-y-3">
++      <label className="block text-xs text-text-secondary">
++        {t('header:lensStudio.guided.name')}
++        <input data-testid="guided-name" className={inputCls} value={state.name}
++          onChange={(e) => set({ name: e.target.value })} />
++      </label>
++      <label className="block text-xs text-text-secondary">
++        {t('header:lensStudio.guided.source')}
++        <input data-testid="guided-source" className={inputCls} value={state.sourceLens}
++          onChange={(e) => set({ sourceLens: e.target.value })} />
++      </label>
++      <label className="block text-xs text-text-secondary">
++        {t('header:lensStudio.guided.meaning')}
++        <input data-testid="guided-meaning" className={inputCls} value={state.meaning}
++          onChange={(e) => set({ meaning: e.target.value })} />
++      </label>
++
++      <fieldset className="rounded-lg border border-border-subtle p-2">
++        <legend className="px-1 text-[10px] uppercase tracking-wider text-text-muted">
++          {t('header:lensStudio.guided.filter')}
++        </legend>
++        <div className="flex gap-2">
++          <input data-testid="guided-pred-field" className={inputCls} placeholder={t('header:lensStudio.guided.field')}
++            value={row.field} onChange={(e) => setRow({ field: e.target.value })} />
++          {/* Unlike the three fields above, a <select> has no wrapping <label>
++              to name it — without a title a screen reader announces "listbox,
++              ==" and never says what it drives. */}
++          <select data-testid="guided-pred-op" className={inputCls} value={row.op}
++            title={t('header:lensStudio.guided.op')}
++            onChange={(e) => setRow({ op: e.target.value as PredicateOp })}>
++            {OPS.map((op) => <option key={op} value={op}>{op}</option>)}
++          </select>
++          <input data-testid="guided-pred-value" className={inputCls} placeholder={t('header:lensStudio.guided.value')}
++            value={row.value} onChange={(e) => setRow({ value: e.target.value })} />
++        </div>
++      </fieldset>
++
++      <fieldset className="rounded-lg border border-border-subtle p-2">
++        <legend className="px-1 text-[10px] uppercase tracking-wider text-text-muted">
++          {t('header:lensStudio.guided.color')}
++        </legend>
++        <div className="flex gap-2">
++          <input data-testid="guided-color-by" className={inputCls} placeholder={t('header:lensStudio.guided.colorBy')}
++            value={state.colorBy} onChange={(e) => set({ colorBy: e.target.value })} />
++          <select data-testid="guided-color-scale" className={inputCls} value={state.colorScale}
++            title={t('header:lensStudio.guided.scale')}
++            onChange={(e) => set({ colorScale: e.target.value as LensFormState['colorScale'] })}>
++            {SCALES.map((s) => <option key={s} value={s}>{s}</option>)}
++          </select>
++        </div>
++      </fieldset>
++
++      <fieldset className="rounded-lg border border-border-subtle p-2">
++        <legend className="px-1 text-[10px] uppercase tracking-wider text-text-muted">
++          {t('header:lensStudio.guided.insight')}
++        </legend>
++        <div className="flex gap-2">
++          {/* min/step are advisory only — no <form> wraps this and the buttons
++              are type="button", so HTML constraint validation never fires.
++              `validateFormState` is the real gate (a fractional or zero N
++              renders an empty insights panel with no error at all). */}
++          <input data-testid="guided-insight-n" type="number" min={1} step={1} className={inputCls}
++            placeholder={t('header:lensStudio.guided.topN')} value={state.insightTopN}
++            onChange={(e) => set({ insightTopN: e.target.value === '' ? '' : Number(e.target.value) })} />
++          <input data-testid="guided-insight-by" className={inputCls} placeholder={t('header:lensStudio.guided.by')}
++            value={state.insightBy} onChange={(e) => set({ insightBy: e.target.value })} />
++        </div>
++      </fieldset>
++    </div>
++  );
++};
 diff --git a/gitnexus-web/src/components/LensFreshnessBadge.tsx b/gitnexus-web/src/components/LensFreshnessBadge.tsx
 new file mode 100644
 index 00000000..7338d863
@@ -19841,6 +19939,175 @@ index 00000000..1c2982e6
 +          ))}
 +        </ul>
 +      )}
++    </div>
++  );
++};
+diff --git a/gitnexus-web/src/components/LensStudioModal.tsx b/gitnexus-web/src/components/LensStudioModal.tsx
+new file mode 100644
+index 00000000..72ac9efb
+--- /dev/null
++++ b/gitnexus-web/src/components/LensStudioModal.tsx
+@@ -0,0 +1,163 @@
++import { useState } from 'react';
++import { X, Eye, Send, AlertCircle } from '@/lib/lucide-icons';
++import { useTranslation } from 'react-i18next';
++import { GuidedLensForm } from './GuidedLensForm';
++import {
++  EMPTY_FORM_STATE,
++  formStateToSpec,
++  isFormPristine,
++  validateFormState,
++  type LensFormState,
++} from '@/lib/lens-form-spec';
++
++interface LensStudioModalProps {
++  isOpen: boolean;
++  onClose: () => void;
++  onPreview: (spec: Record<string, unknown>) => Promise<{ ok: boolean; errors?: string[] }>;
++  onPropose: (spec: Record<string, unknown>, autoApprove: boolean) => Promise<{ id: string; status: string }>;
++}
++
++const EXAMPLE = `{
++  "name": "my_lens",
++  "source": { "lens": "sigil" },
++  "select": { "node_where": "inLens == true" },
++  "color": { "by": "domainType", "scale": "categorical" },
++  "meaning": "Ma lentille."
++}`;
++
++export const LensStudioModal = ({ isOpen, onClose, onPreview, onPropose }: LensStudioModalProps) => {
++  const { t } = useTranslation(['header']);
++  const [text, setText] = useState(EXAMPLE);
++  const [errors, setErrors] = useState<string[]>([]);
++  const [toast, setToast] = useState<string | null>(null);
++  const [autoApprove, setAutoApprove] = useState(false);
++  const [busy, setBusy] = useState(false);
++  const [mode, setMode] = useState<'guided' | 'expert'>('expert');
++  const [form, setForm] = useState<LensFormState>(EMPTY_FORM_STATE);
++
++  if (!isOpen) return null;
++
++  const parse = (): Record<string, unknown> | null => {
++    if (mode === 'guided') {
++      // The guided branch cannot fail on JSON, but it CAN produce a spec the
++      // canon must never see (no name, no upstream lens, an insight the backend
++      // silently drops, a predicate its grammar mis-partitions). Returning null
++      // hands the existing `if (!spec) return;` guard its job back — for
++      // Propose, the only action on this surface with a persistent side effect,
++      // as much as for Preview.
++      const issues = validateFormState(form);
++      if (issues.length > 0) {
++        setErrors(issues.map((code) => t(`header:lensStudio.guided.errors.${code}`)));
++        return null;
++      }
++      setErrors([]);
++      return formStateToSpec(form);
++    }
++    try {
++      const spec = JSON.parse(text);
++      if (!spec || typeof spec !== 'object' || Array.isArray(spec)) {
++        setErrors([t('header:lensStudio.notObject')]);
++        return null;
++      }
++      setErrors([]);
++      return spec as Record<string, unknown>;
++    } catch (e) {
++      setErrors([`${t('header:lensStudio.jsonError')}: ${(e as Error).message}`]);
++      return null;
++    }
++  };
++
++  const switchMode = (next: 'guided' | 'expert') => {
++    // Switching to expert reveals the JSON the form just produced — but ONLY if
++    // the form actually holds something. The direction alone is not consent:
++    // an expert -> guided -> expert round-trip on an untouched form would
++    // otherwise replace hand-written JSON with `{"name":"","source":{"lens":""}}`.
++    if (next === 'expert' && mode === 'guided' && !isFormPristine(form)) {
++      setText(JSON.stringify(formStateToSpec(form), null, 2));
++    }
++    setErrors([]);   // a parse error from the other surface must not leak across the switch
++    setToast(null);
++    setMode(next);
++  };
++
++  const handlePreview = async () => {
++    const spec = parse();
++    if (!spec) return;
++    setBusy(true); setToast(null);
++    try {
++      const r = await onPreview(spec);
++      if (!r.ok) setErrors(r.errors ?? [t('header:lensStudio.unknownError')]);
++      else setToast(t('header:lensStudio.previewRendered'));
++    } finally { setBusy(false); }
++  };
++
++  const handlePropose = async () => {
++    const spec = parse();
++    if (!spec) return;
++    setBusy(true); setToast(null);
++    try {
++      const r = await onPropose(spec, autoApprove);
++      setToast(`${t('header:lensStudio.proposed')}: ${r.id} (${r.status})`);
++    } catch (e) {
++      setErrors([`${t('header:lensStudio.proposeFailed')}: ${(e as Error).message}`]);
++    } finally { setBusy(false); }
++  };
++
++  return (
++    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
++      <div className="w-[min(680px,calc(100vw-2rem))] max-h-[min(760px,calc(100vh-4rem))] overflow-hidden rounded-2xl border border-border-subtle bg-surface shadow-2xl flex flex-col">
++        <div className="flex shrink-0 items-center gap-2 border-b border-border-subtle px-4 py-3">
++          <Eye className="h-4 w-4 text-accent" />
++          <span className="font-medium text-text-primary">{t('header:lensStudio.title')}</span>
++          <div className="ml-3 flex overflow-hidden rounded-lg border border-border-subtle text-xs">
++            <button type="button" data-testid="lens-mode-guided" aria-pressed={mode === 'guided'} onClick={() => switchMode('guided')}
++              className={`px-2 py-1 ${mode === 'guided' ? 'bg-accent text-white' : 'text-text-muted hover:bg-hover'}`}>
++              {t('header:lensStudio.guided.tab')}
++            </button>
++            <button type="button" data-testid="lens-mode-expert" aria-pressed={mode === 'expert'} onClick={() => switchMode('expert')}
++              className={`px-2 py-1 ${mode === 'expert' ? 'bg-accent text-white' : 'text-text-muted hover:bg-hover'}`}>
++              {t('header:lensStudio.guided.expertTab')}
++            </button>
++          </div>
++          <button type="button" onClick={onClose} className="ml-auto cursor-pointer rounded p-1 text-text-muted transition-colors hover:bg-hover hover:text-text-primary" title={t('header:lensStudio.close')}>
++            <X className="h-4 w-4" />
++          </button>
++        </div>
++        <div className="space-y-3 p-4 overflow-y-auto">
++          {mode === 'guided' ? (
++            <GuidedLensForm state={form} onChange={setForm} />
++          ) : (
++            <textarea
++              value={text}
++              onChange={(e) => setText(e.target.value)}
++              spellCheck={false}
++              className="h-64 w-full resize-y rounded-lg border border-border-subtle bg-void px-3 py-2 font-mono text-xs text-text-primary focus:border-accent focus:outline-none"
++            />
++          )}
++          {errors.length > 0 && (
++            <div className="rounded-lg border border-red-500/40 bg-red-500/10 p-2 text-xs text-red-300">
++              {errors.map((err, i) => (
++                <div key={i} className="flex items-start gap-1.5"><AlertCircle className="mt-0.5 h-3 w-3 shrink-0" /><span>{err}</span></div>
++              ))}
++            </div>
++          )}
++          {toast && <div className="rounded-lg border border-accent/40 bg-accent/10 p-2 text-xs text-accent">{toast}</div>}
++          <label className="flex items-center gap-2 text-xs text-text-secondary">
++            <input type="checkbox" checked={autoApprove} onChange={(e) => setAutoApprove(e.target.checked)} />
++            {t('header:lensStudio.autoApprove')}
++          </label>
++        </div>
++        <div className="flex shrink-0 items-center gap-2 border-t border-border-subtle px-4 py-3">
++          <button type="button" data-testid="lens-preview-btn" onClick={handlePreview} disabled={busy}
++            className="flex items-center gap-2 rounded-lg border border-border-subtle px-3 py-2 text-sm text-text-primary transition-colors hover:bg-hover disabled:opacity-50">
++            <Eye className="h-4 w-4" />{t('header:lensStudio.preview')}
++          </button>
++          <button type="button" onClick={handlePropose} disabled={busy}
++            className="ml-auto flex items-center gap-2 rounded-lg bg-accent px-4 py-2 text-sm font-medium text-white transition-all hover:bg-accent/90 disabled:opacity-50">
++            <Send className="h-4 w-4" />{t('header:lensStudio.propose')}
++          </button>
++        </div>
++      </div>
 +    </div>
 +  );
 +};
@@ -26602,6 +26869,186 @@ index 00000000..9fb3e02b
 +    durationMs: end - start,
 +  } satisfies WorkerOutput);
 +};
+diff --git a/gitnexus-web/src/lib/lens-form-spec.ts b/gitnexus-web/src/lib/lens-form-spec.ts
+new file mode 100644
+index 00000000..57cf337a
+--- /dev/null
++++ b/gitnexus-web/src/lib/lens-form-spec.ts
+@@ -0,0 +1,174 @@
++export type PredicateOp = '==' | '!=' | '>=' | '<=' | '>' | '<' | 'in';
++
++export interface PredicateRow {
++  field: string;
++  op: PredicateOp;
++  value: string;
++}
++
++export interface LensFormState {
++  name: string;
++  sourceLens: string;
++  meaning: string;
++  predicates: PredicateRow[];
++  colorBy: string;
++  colorScale: 'heat' | 'categorical' | 'community';
++  insightTopN: number | '';
++  insightBy: string;
++}
++
++export const EMPTY_FORM_STATE: LensFormState = {
++  name: '',
++  sourceLens: '',
++  meaning: '',
++  predicates: [{ field: '', op: '==', value: '' }],
++  colorBy: '',
++  colorScale: 'categorical',
++  insightTopN: '',
++  insightBy: '',
++};
++
++/** Items of an `in` list: `a, b ,c` -> ['a','b','c'] (blanks dropped). */
++const inItems = (value: string): string[] => value.split(',').map((v) => v.trim()).filter(Boolean);
++
++/** `status == critical` | `kind in [a, b, c]` — mirrors the backend's eval_predicate grammar. */
++export const predicateRowToExpr = (r: PredicateRow): string => {
++  const field = r.field.trim();
++  if (r.op === 'in') return `${field} in [${inItems(r.value).join(', ')}]`;
++  return `${field} ${r.op} ${r.value.trim()}`;
++};
++
++/**
++ * The predicate row `formStateToSpec` would emit: a row becomes usable once it
++ * has a field AND at least one real value. Shared with `validateFormState` so
++ * the surface that validates and the surface that emits can never disagree
++ * about *which* row is under discussion.
++ */
++const usablePredicateRow = (s: LensFormState): PredicateRow | undefined =>
++  s.predicates.find((p) => {
++    if (!p.field.trim()) return false;
++    return p.op === 'in' ? inItems(p.value).length > 0 : p.value.trim() !== '';
++  });
++
++/**
++ * `insight.rank` is read back by the backend with
++ * `re.match(r"top\s+(\d+)\s+by\s+(\w+)")`, and when it does NOT match — or
++ * matches with N=0 — the engine returns `[]` with no error whatsoever
++ * (lens_engine.py:117-119). `top 0 by pagerank`, `top -3 by x`, `top 2.5 by x`
++ * and `top 5 by in-degree` therefore all render a green, empty, unexplained
++ * insights panel. Neither half may reach the spec.
++ */
++const isValidTopN = (n: number | ''): boolean => Number.isInteger(n) && (n as number) >= 1;
++const isValidInsightBy = (by: string): boolean => /^\w+$/.test(by.trim());
++const isEmittableInsight = (s: LensFormState): boolean =>
++  isValidTopN(s.insightTopN) && isValidInsightBy(s.insightBy);
++
++/**
++ * Translate the guided form into the SAME canonical lens spec the expert
++ * textarea produces. Cardinal rule: OMIT a block rather than emit it empty —
++ * the backend grammar rejects `color` without `color.by` (E6), and an empty
++ * `select`/`insight` would be meaningless. Only ONE predicate is emitted:
++ * eval_predicate has no conjunction, so joining rows would produce an
++ * unparseable expression.
++ *
++ * Emission is deliberately NOT the validation gate (see `validateFormState`):
++ * it only refuses to emit what the backend would silently mis-read anyway.
++ */
++export const formStateToSpec = (s: LensFormState): Record<string, unknown> => {
++  const spec: Record<string, unknown> = {
++    name: s.name.trim(),
++    source: { lens: s.sourceLens.trim() },
++  };
++  if (s.meaning.trim()) spec.meaning = s.meaning.trim();
++
++  const row = usablePredicateRow(s);
++  if (row) spec.select = { node_where: predicateRowToExpr(row) };
++
++  if (s.colorBy.trim()) spec.color = { by: s.colorBy.trim(), scale: s.colorScale };
++
++  if (isEmittableInsight(s)) {
++    spec.insight = { rank: `top ${s.insightTopN} by ${s.insightBy.trim()}` };
++  }
++  return spec;
++};
++
++/**
++ * Operand characters the backend's `eval_predicate` scans for by *containment
++ * over the whole expression*, in operator order, BEFORE it ever reaches the
++ * ` in ` branch (lens_expr.py:39-46). An operand carrying one of them
++ * mis-partitions the expression — `path in [a>b, c]` splits on `>` and yields
++ * the property name `path in [`, so every node evaluates False, `apply_select`
++ * sets `inLens=False` everywhere and the lens renders a fully dimmed graph
++ * with no error raised anywhere. Reject client-side until that grammar
++ * tokenises instead of scanning.
++ */
++const OPERATOR_CHAR = /[<>=!]/;
++
++/** i18n suffixes under `header:lensStudio.guided.errors.*`. */
++export type FormIssue =
++  | 'nameRequired'
++  | 'sourceRequired'
++  | 'predicateOperatorChar'
++  | 'insightTopN'
++  | 'insightBy';
++
++/**
++ * The single client-side gate of the guided surface — returns issue CODES, not
++ * sentences, so this module stays pure, React-free and locale-free.
++ *
++ * The expert surface is guarded de facto by `JSON.parse` + the object check;
++ * the guided one had nothing, so a pristine form could POST
++ * `{"name":"","source":{"lens":""}}` straight into the sovereign canon.
++ */
++export const validateFormState = (s: LensFormState): FormIssue[] => {
++  const issues: FormIssue[] = [];
++  if (!s.name.trim()) issues.push('nameRequired');
++  // `source.lens` is ALWAYS required — authoring is composition-based. An empty
++  // one is *falsy*, so the promoter's referential-integrity guard
++  // (`if upstream and upstream not in existing`) is skipped entirely and the
++  // lens enters the canon with its composition intent silently dropped; when
++  // the name happens to carry a legacy prefix the preview even renders, but
++  // rebuilt from scratch rather than composed.
++  if (!s.sourceLens.trim()) issues.push('sourceRequired');
++
++  const row = usablePredicateRow(s);
++  if (row) {
++    const operands = [row.field.trim(), ...(row.op === 'in' ? inItems(row.value) : [row.value.trim()])];
++    if (operands.some((o) => OPERATOR_CHAR.test(o))) issues.push('predicateOperatorChar');
++  }
++
++  // Both blank = the user simply wants no insight (omission, not an error).
++  // Anything else must be FULLY valid: silently dropping a half-filled or
++  // out-of-range block while the screen still shows its content is exactly the
++  // silent failure this gate exists to close.
++  if (s.insightTopN !== '' || s.insightBy.trim()) {
++    if (!isValidTopN(s.insightTopN)) issues.push('insightTopN');
++    if (!isValidInsightBy(s.insightBy)) issues.push('insightBy');
++  }
++
++  return issues;
++};
++
++/**
++ * True when nothing has been entered in the form.
++ *
++ * Guards the guided -> expert serialization: the mode toggle only knows the
++ * DIRECTION of the switch, so an untouched expert -> guided -> expert
++ * round-trip would overwrite hand-written JSON with the empty form's
++ * `{"name":"","source":{"lens":""}}` — silent, un-undoable destruction of work
++ * the user never even typed a character into the form for.
++ *
++ * Keyed off `EMPTY_FORM_STATE`'s own keys so a new field cannot silently escape
++ * the comparison.
++ */
++export const isFormPristine = (s: LensFormState): boolean =>
++  (Object.keys(EMPTY_FORM_STATE) as (keyof LensFormState)[]).every((k) => {
++    if (k !== 'predicates') return s[k] === EMPTY_FORM_STATE[k];
++    return (
++      s.predicates.length === EMPTY_FORM_STATE.predicates.length &&
++      s.predicates.every((p, i) => {
++        const e = EMPTY_FORM_STATE.predicates[i];
++        return p.field === e.field && p.op === e.op && p.value === e.value;
++      })
++    );
++  });
 diff --git a/gitnexus-web/src/lib/metrics-view.ts b/gitnexus-web/src/lib/metrics-view.ts
 new file mode 100644
 index 00000000..a70ff336
