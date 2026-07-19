@@ -26719,6 +26719,77 @@ index 00000000..9fb3e02b
 +    durationMs: end - start,
 +  } satisfies WorkerOutput);
 +};
+diff --git a/gitnexus-web/src/lib/lens-form-spec.ts b/gitnexus-web/src/lib/lens-form-spec.ts
+new file mode 100644
+index 00000000..27bceda7
+--- /dev/null
++++ b/gitnexus-web/src/lib/lens-form-spec.ts
+@@ -0,0 +1,65 @@
++export type PredicateOp = '==' | '!=' | '>=' | '<=' | '>' | '<' | 'in';
++
++export interface PredicateRow {
++  field: string;
++  op: PredicateOp;
++  value: string;
++}
++
++export interface LensFormState {
++  name: string;
++  sourceLens: string;
++  meaning: string;
++  predicates: PredicateRow[];
++  colorBy: string;
++  colorScale: 'heat' | 'categorical' | 'community';
++  insightTopN: number | '';
++  insightBy: string;
++}
++
++export const EMPTY_FORM_STATE: LensFormState = {
++  name: '',
++  sourceLens: '',
++  meaning: '',
++  predicates: [{ field: '', op: '==', value: '' }],
++  colorBy: '',
++  colorScale: 'categorical',
++  insightTopN: '',
++  insightBy: '',
++};
++
++/** `status == critical` | `kind in [a, b, c]` — mirrors the backend's eval_predicate grammar. */
++export const predicateRowToExpr = (r: PredicateRow): string => {
++  const field = r.field.trim();
++  if (r.op === 'in') {
++    const items = r.value.split(',').map((v) => v.trim()).filter(Boolean);
++    return `${field} in [${items.join(', ')}]`;
++  }
++  return `${field} ${r.op} ${r.value.trim()}`;
++};
++
++/**
++ * Translate the guided form into the SAME canonical lens spec the expert
++ * textarea produces. Cardinal rule: OMIT a block rather than emit it empty —
++ * the backend grammar rejects `color` without `color.by` (E6), and an empty
++ * `select`/`insight` would be meaningless. Only ONE predicate is emitted:
++ * eval_predicate has no conjunction, so joining rows would produce an
++ * unparseable expression.
++ */
++export const formStateToSpec = (s: LensFormState): Record<string, unknown> => {
++  const spec: Record<string, unknown> = {
++    name: s.name.trim(),
++    source: { lens: s.sourceLens.trim() },
++  };
++  if (s.meaning.trim()) spec.meaning = s.meaning.trim();
++
++  const row = s.predicates.find((p) => p.field.trim() && (p.op === 'in' ? p.value.trim() : p.value.trim()));
++  if (row) spec.select = { node_where: predicateRowToExpr(row) };
++
++  if (s.colorBy.trim()) spec.color = { by: s.colorBy.trim(), scale: s.colorScale };
++
++  if (s.insightTopN !== '' && s.insightBy.trim()) {
++    spec.insight = { rank: `top ${s.insightTopN} by ${s.insightBy.trim()}` };
++  }
++  return spec;
++};
 diff --git a/gitnexus-web/src/lib/metrics-view.ts b/gitnexus-web/src/lib/metrics-view.ts
 new file mode 100644
 index 00000000..a70ff336
