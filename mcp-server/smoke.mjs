@@ -15,6 +15,7 @@
  */
 
 import { spawn } from 'node:child_process';
+import { createServer } from 'node:http';
 import { createInterface } from 'node:readline';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -83,12 +84,13 @@ try {
 
   notify('notifications/initialized');
 
-  // 2. tools/list — should list 36 tools (34 + 2 generic lens tools, Phase 1
-  //    chemin agent, north-star § Update 2026-07-10: list_lenses / get_lens_graph)
+  // 2. tools/list — should list 37 tools (34 + 3 generic lens tools, Phase 1
+  //    chemin agent, north-star § Update 2026-07-10: list_lenses / get_lens_graph
+  //    + narrate_lens, the narration surface wired to MCP)
   const list = await send('tools/list');
   if (list.error) fail(`tools/list: ${list.error.message}`);
   const tools = list.result?.tools || [];
-  if (tools.length !== 36) fail(`tools/list: expected 36 tools, got ${tools.length}`);
+  if (tools.length !== 37) fail(`tools/list: expected 37 tools, got ${tools.length}`);
   for (const expected of [
     'gitnexus_list_repos', 'gitnexus_entropy', 'gitnexus_churn', 'gitnexus_coupling',
     'gitnexus_growth', 'gitnexus_lifespan', 'gitnexus_ownership', 'gitnexus_dissonance',
@@ -107,6 +109,7 @@ try {
     // Phase 1 chemin agent — generic lens tools over the /lens contract.
     'gitnexus_list_lenses',
     'gitnexus_get_lens_graph',
+    'gitnexus_narrate_lens',
   ]) {
     if (!tools.find((t) => t.name === expected)) fail(`tools/list: missing ${expected}`);
   }
@@ -256,6 +259,372 @@ try {
   }
   pass(`gitnexus_copilot_forge_context → mode=${forgePayload.mode}, nodes=${forgePayload.nodes.length}, edges=${forgePayload.edges.length}`);
 
+  // 4i. tools/call gitnexus_narrate_lens — the narration surface (/lens/<name>/narrate).
+  // Env-aware but falsifiable either way, so the tool is never left unexercised:
+  //   - no INTER_GRAPH_URL → MUST be the documented stub (stub:true, markdown:null),
+  //     never a crash and never a fabricated brief;
+  //   - INTER_GRAPH_URL set → MUST be real markdown carrying the lens heading.
+  const narr = await send('tools/call', { name: 'gitnexus_narrate_lens', arguments: { name: 'sigil' } });
+  if (narr.result?.isError) fail(`gitnexus_narrate_lens(sigil): ${narr.result.content[0]?.text}`);
+  if (!Array.isArray(narr.result?.content) || narr.result.content[0]?.type !== 'text') {
+    fail('gitnexus_narrate_lens: unexpected response shape');
+  }
+  const narrPayload = JSON.parse(narr.result.content[0].text);
+  if (narrPayload.format !== 'markdown') fail(`gitnexus_narrate_lens: format='${narrPayload.format}', expected 'markdown'`);
+  if (!process.env.INTER_GRAPH_URL) {
+    if (narrPayload.stub !== true) fail('gitnexus_narrate_lens: no INTER_GRAPH_URL but payload is not a stub');
+    if (narrPayload.markdown !== null) fail('gitnexus_narrate_lens: stub must carry markdown:null, not a fabricated brief');
+    if (typeof narrPayload.concern !== 'string') fail('gitnexus_narrate_lens: stub is missing its documented `concern`');
+    pass('gitnexus_narrate_lens(sigil) → documented stub (INTER_GRAPH_URL unset)');
+  } else {
+    if (narrPayload.stub) fail(`gitnexus_narrate_lens: INTER_GRAPH_URL set but got a stub: ${narrPayload.concern}`);
+    if (typeof narrPayload.markdown !== 'string' || !narrPayload.markdown.startsWith('# Lentille : sigil')) {
+      fail(`gitnexus_narrate_lens: markdown does not start with the lens heading (got: ${String(narrPayload.markdown).slice(0, 60)})`);
+    }
+    if ('synthesis' in narrPayload) fail('gitnexus_narrate_lens: the removed `synthesis` option must not reappear in the payload');
+    pass(`gitnexus_narrate_lens(sigil) → ${narrPayload.bytes} bytes of markdown`);
+  }
+
+  // 4j. gitnexus_narrate_lens on an UNKNOWN lens → the gateway 404 must surface
+  // as a tool error. Only meaningful against a live gateway; the stub path has
+  // no upstream to 404. Zero Masking: an unknown name is not an empty brief.
+  if (process.env.INTER_GRAPH_URL) {
+    const narrBad = await send('tools/call', {
+      name: 'gitnexus_narrate_lens',
+      arguments: { name: '__does_not_exist__' },
+    });
+    if (!narrBad.result?.isError) {
+      fail(`gitnexus_narrate_lens(__does_not_exist__): expected an error, got ${narrBad.result?.content?.[0]?.text?.slice(0, 120)}`);
+    }
+    pass(`gitnexus_narrate_lens(unknown lens) → error surfaced: ${narrBad.result.content[0].text.slice(0, 60)}`);
+  }
+
+  // 4k. The gateway-backed tools against a FAKE gateway we control end-to-end.
+  //
+  // Why a fake and not the live gateway: the assertions below have to pin down
+  // (a) that no `synthesis` param leaves the process, (b) that the markdown comes
+  // back WHOLE, (c) that `bytes` is derived from that markdown and not a constant,
+  // (d) that the contract-drift guard actually fires, and (e) that ALL FOUR
+  // gateway routes name the gateway in their failure message. Against the live
+  // gateway (b)/(c) are unverifiable — the smoke does not know the expected body —
+  // and (e) would require taking the real gateway down. A fake makes all five
+  // free, deterministic, and falsifiable.
+  //
+  // Each assertion was written against a mutation that previously survived BOTH
+  // smoke modes:
+  //   R1  handler reads `synthesis` again → a removed option silently returns
+  //   M2  markdown.slice(0, 300)          → the brief is truncated, nobody notices
+  //   M3  bytes: 1                        → the provenance envelope lies
+  //   M6  remedy dropped on any one route → operator sent to the wrong service
+  {
+    const FIXTURE = [
+      '# Lentille : fake — fixture de smoke.',
+      '',
+      '**Provenance** : source `2026-07-21T00:00:00` · fraîcheur **FRAÎCHE** · schéma `deadbeef` · 3 nœuds / 2 arêtes',
+      '',
+      '## Ce que dit la lentille',
+      '- métrique A = 1',
+      '- métrique B = 2',
+      '',
+      '## Répartition',
+      '- `alpha` : 1 nœud',
+      '- `beta` : 2 nœuds',
+      '',
+      // Padding so the body is comfortably longer than any plausible truncation
+      // constant — a 300-char slice MUST lose the sentinel line below.
+      'x'.repeat(400),
+      '',
+      'FIXTURE_TAIL_SENTINEL',
+    ].join('\n');
+    if (FIXTURE.length <= 300) fail('smoke bug: FIXTURE must exceed 300 chars for the truncation assertion to bite');
+
+    /** Query strings the fake gateway saw, in order. */
+    const seen = [];
+    /** Flip to make /narrate answer application/json → exercises the drift guard. */
+    let driftMode = false;
+    /** Artificial server-side latency, used to prove the two timeout budgets differ. */
+    let delayMs = 0;
+
+    const fake = createServer((req, res) => {
+      seen.push(req.url);
+      const reply = () => {
+        if (!/\/lens\/[^/]+\/narrate/.test(req.url)) {
+          res.writeHead(404, { 'content-type': 'application/json' });
+          res.end(JSON.stringify({ error: 'unknown route' }));
+          return;
+        }
+        if (driftMode) {
+          // Contract drift: the route stops serving text/markdown.
+          res.writeHead(200, { 'content-type': 'application/json' });
+          res.end(JSON.stringify({ lens: 'fake', markdown: ['not', 'a', 'string'] }));
+          return;
+        }
+        res.writeHead(200, { 'content-type': 'text/markdown; charset=utf-8' });
+        res.end(FIXTURE);
+      };
+      if (delayMs > 0) setTimeout(reply, delayMs); else reply();
+    });
+    await new Promise((resolve) => fake.listen(0, '127.0.0.1', resolve));
+    const fakePort = fake.address().port;
+
+    // A second server.mjs, wired to the fake gateway. The outer server keeps the
+    // ambient env (possibly no INTER_GRAPH_URL) — this one always has one, so the
+    // gateway path is exercised regardless of how the smoke was invoked.
+    const child = spawn(process.execPath, [join(here, 'server.mjs')], {
+      stdio: ['pipe', 'pipe', 'inherit'],
+      env: { ...process.env, INTER_GRAPH_URL: `http://127.0.0.1:${fakePort}` },
+    });
+    const childPending = new Map();
+    let childId = 1;
+    createInterface({ input: child.stdout }).on('line', (line) => {
+      try {
+        const msg = JSON.parse(line);
+        if (msg.id != null && childPending.has(msg.id)) {
+          childPending.get(msg.id)(msg);
+          childPending.delete(msg.id);
+        }
+      } catch { /* stderr carries the logs; ignore non-JSON */ }
+    });
+    const childSend = (method, params) => new Promise((resolve, reject) => {
+      const id = childId++;
+      childPending.set(id, resolve);
+      child.stdin.write(JSON.stringify({ jsonrpc: '2.0', id, method, params }) + '\n');
+      setTimeout(() => {
+        if (childPending.has(id)) {
+          childPending.delete(id);
+          reject(new Error(`Timeout on ${method} (fake-gateway child)`));
+        }
+      }, 15000);
+    });
+    const cleanup = () => { child.kill(); fake.close(); };
+
+    try {
+      await childSend('initialize', {
+        protocolVersion: '2024-11-05',
+        capabilities: {},
+        clientInfo: { name: 'smoke-fake-gateway', version: '0.0.0' },
+      });
+
+      const callNarrate = async (args) => {
+        const r = await childSend('tools/call', { name: 'gitnexus_narrate_lens', arguments: args });
+        return r.result;
+      };
+
+      // --- R1: `synthesis` is NOT a parameter of this tool, and cannot be
+      // smuggled back in. ---
+      //
+      // The option was removed (see server.mjs, the tool description): the
+      // gateway's synthesis branch is not a paid Claude call — it resolves to a
+      // local ollama model — and its latency is workstation scheduling, so no
+      // defensible cap exists. The HTTP route keeps the option for a human.
+      //
+      // Two halves, both necessary:
+      //   (a) the ordinary call must not send it — a reintroduced default would
+      //       block every narration for tens of seconds;
+      //   (b) an agent that sends it ANYWAY (nothing validates inputSchema on
+      //       this server — extra properties are simply ignored) must still get a
+      //       normal, fast narration, and the gateway must never see the param.
+      // (b) is the one that bites: it fails the moment the handler starts
+      // reading `synthesis` again, whatever the comparison used (`=== true`,
+      // `!!synthesis`, `!== false`).
+      seen.length = 0;
+      const noSynth = await callNarrate({ name: 'fake' });
+      if (noSynth?.isError) fail(`fake-gateway narrate(default): ${noSynth.content[0]?.text}`);
+      if (seen.length !== 1) fail(`fake-gateway: expected exactly 1 upstream request, saw ${seen.length}`);
+      if (/synthesis/.test(seen[0])) {
+        fail(`R1 REGRESSION: an ordinary narration put synthesis on the wire, gateway saw "${seen[0]}"`);
+      }
+      pass(`R1 covered: ordinary call sends no synthesis param ("${seen[0]}")`);
+
+      seen.length = 0;
+      const smuggled = await callNarrate({ name: 'fake', synthesis: true });
+      if (smuggled?.isError) {
+        fail(`R1: an ignored extra property must not break the call: ${smuggled.content[0]?.text}`);
+      }
+      if (/synthesis/.test(seen[0])) {
+        fail(`R1 REGRESSION: synthesis:true from a client reached the gateway ("${seen[0]}") — the option is supposed to be gone from this surface`);
+      }
+      const smuggledPayload = JSON.parse(smuggled.content[0].text);
+      if (smuggledPayload.markdown !== FIXTURE) fail('R1: smuggled-param call returned a different body');
+      if ('synthesis' in smuggledPayload) {
+        fail(`R1 REGRESSION: payload still carries a 'synthesis' field (${smuggledPayload.synthesis}) — a constant that only describes a removed option`);
+      }
+      pass(`R1 covered: client-sent synthesis:true is ignored, gateway saw "${seen[0]}"`);
+
+      // --- N3: the lens name must be PERCENT-ENCODED into the path. ---
+      //
+      // The tool is advertised (ROADMAP #74) as following "the exact pattern of
+      // the 2 existing lens tools (encodeURIComponent, …)" — yet dropping
+      // encodeURIComponent left both smoke modes green. Real lens names are not
+      // trivial identifiers: `health::graph_registry` already carries colons.
+      // A name holding `/`, `?` or `#` would silently build a DIFFERENT URL —
+      // route traversal, or an injected query parameter — with nothing to catch
+      // it. Unencoded, the request below reaches `/lens/a/b?c`, which the fake
+      // gateway 404s; encoded, it reaches one path segment as intended.
+      seen.length = 0;
+      const HOSTILE = 'a/b?c#d';
+      const encoded = await callNarrate({ name: HOSTILE });
+      if (seen.length !== 1) fail(`N3: expected exactly 1 upstream request, saw ${seen.length}`);
+      if (seen[0] !== `/lens/${encodeURIComponent(HOSTILE)}/narrate`) {
+        fail(
+          `N3 REGRESSION: lens name not percent-encoded into the path — gateway saw "${seen[0]}", `
+          + `expected "/lens/${encodeURIComponent(HOSTILE)}/narrate". A name containing / ? or # `
+          + 'silently rewrites the route.',
+        );
+      }
+      if (encoded?.isError) fail(`N3: encoded call should reach the fixture route, got ${encoded.content[0]?.text}`);
+      pass(`N3 covered: hostile lens name encoded into one segment ("${seen[0]}")`);
+
+      seen.length = 0;
+      await callNarrate({ name: 'fake' });
+
+      const payload = JSON.parse(noSynth.content[0].text);
+
+      // --- M2: the markdown must arrive WHOLE, not truncated. ---
+      if (payload.markdown !== FIXTURE) {
+        fail(
+          `M2 REGRESSION: markdown is not the byte-for-byte fixture `
+          + `(got ${payload.markdown?.length} chars, expected ${FIXTURE.length}; `
+          + `tail sentinel ${payload.markdown?.includes('FIXTURE_TAIL_SENTINEL') ? 'present' : 'MISSING'})`,
+        );
+      }
+      pass(`M2 covered: markdown returned whole (${FIXTURE.length} chars, tail sentinel intact)`);
+
+      // --- M3: `bytes` must be derived from the payload, not a constant. ---
+      // The JSON envelope is justified by carrying interrogable provenance; a
+      // hardcoded value would make that justification false.
+      // The fixture contains accented characters ON PURPOSE, so UTF-8 bytes and
+      // UTF-16 code units differ — which pins the UNIT too, not just the value.
+      const fixtureBytes = Buffer.byteLength(FIXTURE, 'utf8');
+      if (fixtureBytes === FIXTURE.length) fail('smoke bug: FIXTURE must contain non-ASCII so bytes and chars diverge');
+      if (payload.bytes !== fixtureBytes) {
+        fail(`M3 REGRESSION: bytes=${payload.bytes} but the markdown is ${fixtureBytes} UTF-8 bytes — provenance field is not derived from the content`);
+      }
+      if (payload.chars !== FIXTURE.length) {
+        fail(`M3 REGRESSION: chars=${payload.chars}, expected ${FIXTURE.length}`);
+      }
+      if (payload.bytes <= 1) fail(`M3 REGRESSION: bytes=${payload.bytes} is a constant, not a measurement`);
+      pass(`M3 covered: bytes=${payload.bytes} (UTF-8) / chars=${payload.chars} both derived from the content`);
+
+      if (payload.lens !== 'fake') fail(`fake-gateway: payload.lens='${payload.lens}', expected 'fake'`);
+      if (payload.format !== 'markdown') fail(`fake-gateway: payload.format='${payload.format}'`);
+
+      // --- Contract-drift guard: typeof markdown !== 'string' must FAIL LOUD. ---
+      // Presented as the Zero Masking net; until now nothing exercised it.
+      driftMode = true;
+      const drifted = await callNarrate({ name: 'fake' });
+      if (!drifted?.isError) {
+        fail(`drift guard REGRESSION: gateway served JSON on /narrate and the tool returned it as a success: ${drifted?.content?.[0]?.text?.slice(0, 160)}`);
+      }
+      if (!/contract drifted/i.test(drifted.content[0].text)) {
+        fail(`drift guard: errored but with the wrong message: ${drifted.content[0].text.slice(0, 160)}`);
+      }
+      pass(`drift guard covered: non-string body → isError "${drifted.content[0].text.slice(0, 70)}…"`);
+      driftMode = false;
+    } finally {
+      cleanup();
+    }
+
+    // --- Every gateway route must name the GATEWAY when it fails. ---
+    // doCall is shared by all 37 tools and defaults to advising `docker compose
+    // up -d`. For a gateway-backed route that sends an operator to restart a
+    // service that was never involved. The fix threads a per-call `remedy`; this
+    // block proves it reached ALL FOUR gateway routes of this file, not just the
+    // one that motivated it — dropping it on any single route must go red here.
+    //
+    // Rather than sleep 30 s, we shrink the budget: a server that stalls 600 ms
+    // must trip a 250 ms cap. Same failure branch, sub-second.
+    //
+    // Note the asymmetry this also pins: three routes surface the failure as an
+    // isError tool result, while query_meta_graph swallows it into a stub
+    // `concern` string. Both must carry the right remedy; only the *shape*
+    // differs, and a caller reading `concern` deserves the same guidance.
+    {
+      const slow = spawn(process.execPath, [join(here, 'server.mjs')], {
+        stdio: ['pipe', 'pipe', 'inherit'],
+        env: {
+          ...process.env,
+          INTER_GRAPH_URL: `http://127.0.0.1:${fakePort}`,
+          GITNEXUS_TIMEOUT: '250',
+        },
+      });
+      const slowPending = new Map();
+      let slowId = 1;
+      createInterface({ input: slow.stdout }).on('line', (line) => {
+        try {
+          const msg = JSON.parse(line);
+          if (msg.id != null && slowPending.has(msg.id)) {
+            slowPending.get(msg.id)(msg);
+            slowPending.delete(msg.id);
+          }
+        } catch { /* ignore non-JSON */ }
+      });
+      const slowSend = (method, params) => new Promise((resolve, reject) => {
+        const id = slowId++;
+        slowPending.set(id, resolve);
+        slow.stdin.write(JSON.stringify({ jsonrpc: '2.0', id, method, params }) + '\n');
+        setTimeout(() => {
+          if (slowPending.has(id)) { slowPending.delete(id); reject(new Error(`Timeout on ${method} (slow child)`)); }
+        }, 20000);
+      });
+
+      // Re-open the fake gateway for this second child (the finally above closed it).
+      await new Promise((resolve) => fake.listen(fakePort, '127.0.0.1', resolve));
+      delayMs = 600;
+      try {
+        await slowSend('initialize', {
+          protocolVersion: '2024-11-05',
+          capabilities: {},
+          clientInfo: { name: 'smoke-timeout-split', version: '0.0.0' },
+        });
+        // The four gateway routes reachable from THIS file, one tool each.
+        // `shape` says where the remedy has to land: 'isError' for the three lens
+        // tools, 'concern' for query_meta_graph, which catches and downgrades.
+        const GATEWAY_ROUTES = [
+          { tool: 'gitnexus_list_lenses', args: {}, route: '/lens', shape: 'isError' },
+          { tool: 'gitnexus_get_lens_graph', args: { name: 'fake' }, route: '/lens/<name>', shape: 'isError' },
+          { tool: 'gitnexus_narrate_lens', args: { name: 'fake' }, route: '/lens/<name>/narrate', shape: 'isError' },
+          { tool: 'query_meta_graph', args: {}, route: '/inter-graph', shape: 'concern' },
+        ];
+
+        for (const { tool, args, route, shape } of GATEWAY_ROUTES) {
+          const r = (await slowSend('tools/call', { name: tool, arguments: args })).result;
+          const text = r?.content?.[0]?.text ?? '';
+          let message;
+          if (shape === 'isError') {
+            if (!r?.isError) {
+              fail(`remedy: ${tool} (${route}) should have tripped the 250 ms cap on a 600 ms server, got: ${text.slice(0, 140)}`);
+            }
+            message = text;
+          } else {
+            // query_meta_graph catches the doCall error and returns a stub whose
+            // `concern` embeds the message. Assert we actually took that branch,
+            // otherwise the remedy check below could pass on unrelated prose.
+            const payload = JSON.parse(text);
+            if (payload.stub !== true || typeof payload.concern !== 'string') {
+              fail(`remedy: ${tool} (${route}) was expected to degrade to a stub carrying a concern, got: ${text.slice(0, 200)}`);
+            }
+            message = payload.concern;
+          }
+          if (!/Timeout \(250ms\)/.test(message)) {
+            fail(`remedy: ${tool} (${route}) did not report the 250 ms cap: ${message.slice(0, 160)}`);
+          }
+          if (/docker compose/i.test(message)) {
+            fail(`remedy REGRESSION: ${tool} (${route}) still advises \`docker compose up -d\`: ${message.slice(0, 200)}`);
+          }
+          if (!/BRAIN-GRAPH-GATEWAY/.test(message)) {
+            fail(`remedy REGRESSION: ${tool} (${route}) does not name the gateway: ${message.slice(0, 200)}`);
+          }
+          pass(`remedy covered: ${tool} → ${route} names the gateway (${shape})`);
+        }
+      } finally {
+        slow.kill();
+        fake.close();
+        delayMs = 0;
+      }
+    }
+  }
+
   // 5. Unknown tool → isError content
   const bad = await send('tools/call', { name: 'gitnexus_does_not_exist', arguments: {} });
   if (!bad.error) fail('Unknown tool should have returned an RPC error');
@@ -274,10 +643,12 @@ try {
     if (!process.env.INTER_GRAPH_URL) {
       fail('--live-gateway needs INTER_GRAPH_URL (start sigma_brain_graph_gateway.py --host 127.0.0.1 --port 4750)');
     }
-    const callJson = async (name, args = {}) => {
+    /** Raw MCP text of a tool result — this is what the agent's context pays for. */
+    const callRaw = async (name, args = {}) => {
       const r = await send('tools/call', { name, arguments: args });
-      return JSON.parse(r.result.content[0].text);
+      return r.result.content[0].text;
     };
+    const callJson = async (name, args = {}) => JSON.parse(await callRaw(name, args));
     // a. list_lenses advertises the registry incl. health::graph_registry (item 5).
     const lenses = await callJson('gitnexus_list_lenses');
     if (lenses.stub) fail(`live: gitnexus_list_lenses stub — gateway unreachable: ${lenses.concern}`);
@@ -320,6 +691,34 @@ try {
       fail('live: concurrent reads did not both succeed (contention)');
     }
     pass('live: 2 concurrent reads OK (read-only contention proxy)');
+    // f. narration surface: the whole point of gitnexus_narrate_lens is that it
+    //    is DRASTICALLY cheaper than the graph for a "what does it say" question.
+    //    Assert that empirically rather than assume it — same lens, both surfaces.
+    const narRaw = await callRaw('gitnexus_narrate_lens', { name: 'sigil' });
+    const nar = JSON.parse(narRaw);
+    if (nar.stub) fail(`live: gitnexus_narrate_lens stub — gateway unreachable: ${nar.concern}`);
+    if (!nar.markdown?.startsWith('# Lentille : sigil')) fail('live: narration missing its lens heading');
+    if (!nar.markdown.includes('**Provenance**')) fail('live: narration missing the Provenance line (freshness verdict)');
+    if ('synthesis' in nar) fail('live: the removed `synthesis` option reappeared in the payload');
+    // The self-reported byte count must match the body it describes.
+    const narrationBytes = Buffer.byteLength(nar.markdown, 'utf8');
+    if (nar.bytes !== narrationBytes) {
+      fail(`live: payload.bytes=${nar.bytes} disagrees with the actual UTF-8 length ${narrationBytes}`);
+    }
+    // The advertised saving is compared on the basis the AGENT actually pays:
+    // the UTF-8 bytes of the MCP text block, pretty-printed by tools/call. An
+    // earlier revision compared the raw markdown against a compact re-stringify
+    // of the graph — neither side was what either tool delivers, and the two
+    // bases differed from each other, so the published ratio described no real
+    // transaction. Measured 2026-07-21 on this basis: ~40×. The assertion pins
+    // the DIRECTION, since both sides grow with the lens.
+    const graphRaw = await callRaw('gitnexus_get_lens_graph', { name: 'sigil' });
+    const narDelivered = Buffer.byteLength(narRaw, 'utf8');
+    const graphDelivered = Buffer.byteLength(graphRaw, 'utf8');
+    if (!(narDelivered < graphDelivered)) {
+      fail(`live: narration (${narDelivered}B delivered) is not smaller than the graph (${graphDelivered}B delivered) — the tool has no reason to exist`);
+    }
+    pass(`live: narrate_lens(sigil) → ${narDelivered}B vs ${graphDelivered}B graph, as delivered to the agent (${(graphDelivered / narDelivered).toFixed(1)}× cheaper)`);
   }
 
   console.log('\nAll smoke checks passed.');

@@ -37,6 +37,8 @@
  *   GITNEXUS_API     (default: http://localhost:4747)  upstream API
  *   GITNEXUS_WEB     (default: http://localhost:4173)  our analytics
  *   GITNEXUS_TIMEOUT (default: 30000 ms)               per-tool fetch timeout
+ *   INTER_GRAPH_URL  (default: unset)                  ELYSIUM Σ-BRAIN-GRAPH-GATEWAY;
+ *                                                      5 tools use it (see README)
  *
  * --- Installation ---
  *
@@ -108,6 +110,14 @@ const WEB_URL = (process.env.GITNEXUS_WEB || 'http://localhost:4173').replace(/\
 // already targets. null → the lens tools return a documented stub (Zero Masking).
 const GATEWAY_URL = (process.env.INTER_GRAPH_URL || '').replace(/\/+$/, '') || null;
 const FETCH_TIMEOUT_MS = Number(process.env.GITNEXUS_TIMEOUT) || 30000;
+// doCall's default remediation names the gitnexus Docker stack. The gateway-backed
+// routes (/lens*, /inter-graph*) do NOT come from that stack — they come from the
+// ELYSIUM Σ-BRAIN-GRAPH-GATEWAY. Pointing an operator at `docker compose up -d`
+// for a gateway outage sends them to restart a service that was never involved.
+const GATEWAY_REMEDY =
+  'This route is served by the ELYSIUM Σ-BRAIN-GRAPH-GATEWAY (INTER_GRAPH_URL), not by the gitnexus Docker stack. '
+  + 'Start it with `python scripts/governance/sigma_brain_graph_gateway.py --host 127.0.0.1 --port 4750` '
+  + 'and check INTER_GRAPH_URL points at it.';
 const PROTOCOL_VERSION = '2024-11-05';
 const SERVER_NAME = 'gitnexus-analytics';
 const SERVER_VERSION = '0.1.0';
@@ -505,7 +515,7 @@ const TOOLS = [
           const params = { layer };
           if (source) params.source = source;
           if (target) params.target = target;
-          return await doCall(`${INTER_GRAPH_URL}/inter-graph${buildQs(params)}`, '/inter-graph');
+          return await doCall(`${INTER_GRAPH_URL}/inter-graph${buildQs(params)}`, '/inter-graph', { remedy: GATEWAY_REMEDY });
         } catch (err) {
           return {
             stub: true,
@@ -544,7 +554,8 @@ const TOOLS = [
       'lens appears here without a new tool. Pair with gitnexus_get_lens_graph to fetch one as a BrainGraph. ' +
       'Requires env INTER_GRAPH_URL; returns a documented stub otherwise (Zero Masking).',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
-    handler: async () => (GATEWAY_URL ? doCall(`${GATEWAY_URL}/lens`, '/lens') : lensStub('list')),
+    handler: async () =>
+      (GATEWAY_URL ? doCall(`${GATEWAY_URL}/lens`, '/lens', { remedy: GATEWAY_REMEDY }) : lensStub('list')),
   },
   {
     name: 'gitnexus_get_lens_graph',
@@ -560,7 +571,101 @@ const TOOLS = [
       additionalProperties: false,
     },
     handler: async ({ name }) =>
-      GATEWAY_URL ? doCall(`${GATEWAY_URL}/lens/${encodeURIComponent(name)}`, `/lens/${name}`) : lensStub('get', name),
+      GATEWAY_URL
+        ? doCall(`${GATEWAY_URL}/lens/${encodeURIComponent(name)}`, `/lens/${name}`, { remedy: GATEWAY_REMEDY })
+        : lensStub('get', name),
+  },
+  {
+    name: 'gitnexus_narrate_lens',
+    description:
+      'Read one governance lens as a HUMAN-READABLE MARKDOWN BRIEF (provenance, freshness verdict, salient ' +
+      'metrics, node distribution) from the Σ-BRAIN-GRAPH-GATEWAY (INTER_GRAPH_URL). ' +
+      'PREFER THIS over gitnexus_get_lens_graph when the question is "what does lens X say / what should I watch": ' +
+      'narrate returns a bounded prose brief, get_lens_graph returns the ENTIRE graph. Measured on the sigil lens ' +
+      '(2026-07-21, UTF-8 bytes of the MCP text block as actually delivered, 1474 nodes): ~43 kB versus ~1.7 MB — ' +
+      '~40× less. Both sides grow with the lens, so treat the ratio as an order of magnitude, not a constant. ' +
+      'Use get_lens_graph only when you actually need to traverse nodes and relationships. ' +
+      '`name` is a lens name from gitnexus_list_lenses. Returns {lens, format:"markdown", bytes, chars, markdown} ' +
+      '(bytes = UTF-8 byte length, chars = JS string length). ' +
+      'An unknown lens name is an ERROR, not an empty result. ' +
+      'This tool returns the DETERMINISTIC narration only — provenance, freshness verdict, salient metrics, ' +
+      'node distribution. It deliberately exposes no `synthesis` option (see the note in server.mjs); the HTTP ' +
+      'route GET /lens/<name>/narrate?synthesis=1 still offers one for a human at a browser who can wait. ' +
+      'Requires env INTER_GRAPH_URL; returns a documented stub otherwise (Zero Masking).',
+    // ── Why there is no `synthesis` parameter here (do NOT re-add it) ─────────
+    // The gateway's ?synthesis=1 branch appends an LLM-written "Synthèse"
+    // paragraph. It was exposed here, then removed on three measurements:
+    //
+    //  1. It is not a paid Claude call. _narration_synthesis() asks for
+    //     tier="claude-sonnet", but ELYSIUM's budget-aware router (SIGIL-529)
+    //     resolves that tier, and with no ANTHROPIC_API_KEY configured the call
+    //     lands on a local model. Measured 2026-07-21, the ledger line written by
+    //     an actual synthesis run: model=ollama/deepseek-r1:8b, tier=local-fast,
+    //     cost_eur=0.0. Every surface here used to announce "COSTS ONE PAID MODEL
+    //     CALL (claude-sonnet tier)" — wrong on both counts.
+    //  2. No timeout cap is defensible. Four end-to-end samples of the same
+    //     request: 31.3 s, 42.5 s, 43.8 s, 47.1 s, plus one that ran past 120 s
+    //     and was aborted. That is local-ollama latency, i.e. workstation
+    //     scheduling — variable by nature. Any cap either trips on a normal run
+    //     or is so wide it is not a cap. The previous "~4× the measurement"
+    //     margin sat INSIDE the spread.
+    //  3. The yield does not justify blocking an agent, and it is erratic. The
+    //     same request on the sigil lens returned 45, 450, 474 and 31 extra bytes
+    //     across four runs — a 15× spread on the payload itself. What was stable
+    //     is the failure: ALL FOUR were truncated mid-sentence ("Pour prioriser
+    //     la surveillance", "Pour assurer une", …). The local model is a
+    //     reasoning model; its reasoning tokens consume the 400-token budget
+    //     before the answer completes.
+    //     An earlier revision of this comment published "42.5 s bought 45 bytes"
+    //     as THE yield. That was a single draw near the floor of a distribution
+    //     this same block says one sample cannot characterise — it understated
+    //     the typical yield ~10×. The decision survives the correction (every
+    //     sample is slow AND truncated); the figure did not.
+    //
+    // A removed option beats an option that stalls an agent for a minute and then
+    // hands back an error. If you are tempted to restore it, re-measure 1-3 first;
+    // the smoke asserts that `synthesis` never reaches the gateway from this tool.
+    inputSchema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'Lens name from gitnexus_list_lenses (e.g. "sigil", "inter_graph").' },
+      },
+      required: ['name'],
+      additionalProperties: false,
+    },
+    handler: async ({ name }) => {
+      if (!GATEWAY_URL) return lensStub('narrate', name);
+      const path = `/lens/${name}/narrate`;
+      // The gateway answers this route with Content-Type: text/markdown, so
+      // doCall's non-JSON branch gives us the raw markdown string. Non-200
+      // (e.g. unknown lens → 404 {"error":"unknown lens"}) still throws there,
+      // which surfaces as an isError tool result — the error is not swallowed.
+      //
+      // No query string: the deterministic narration is the whole contract of this
+      // tool, so it runs on the shared FETCH_TIMEOUT_MS like every other read.
+      const markdown = await doCall(
+        `${GATEWAY_URL}/lens/${encodeURIComponent(name)}/narrate`,
+        path,
+        { remedy: GATEWAY_REMEDY },
+      );
+      if (typeof markdown !== 'string') {
+        // Contract drift: the route stopped serving text/markdown. Fail loudly
+        // rather than hand the agent a shape it cannot read (Zero Masking).
+        throw new Error(`${path}: expected a markdown string, got ${typeof markdown} — /lens narration contract drifted.`);
+      }
+      // `bytes` must be BYTES. markdown.length is UTF-16 code units, which
+      // undercounts every accented character in a French narration (measured on
+      // the sigil lens: 41012 code units vs 42663 UTF-8 bytes — a 4% understatement
+      // published under a byte label). `chars` keeps the other figure, named for
+      // what it is, since that is what an LLM context budget is actually spent in.
+      return {
+        lens: name,
+        format: 'markdown',
+        bytes: Buffer.byteLength(markdown, 'utf8'),
+        chars: markdown.length,
+        markdown,
+      };
+    },
   },
   {
     name: 'gitnexus_list_graph_templates',
@@ -843,15 +948,25 @@ async function callApi(path, params) {
   return doCall(`${API_URL}${path}${buildQs(params)}`, path);
 }
 
-async function doCall(url, path) {
+/**
+ * @param {string} url
+ * @param {string} path            label used in error messages
+ * @param {object} [opts]
+ * @param {string} [opts.remedy]    which service to restart when this route fails.
+ *                                  Defaults to the gitnexus Docker stack; gateway-backed
+ *                                  routes MUST pass GATEWAY_REMEDY instead, or the caller
+ *                                  is told to restart a service that was never involved.
+ */
+async function doCall(url, path, opts = {}) {
+  const remedy = opts.remedy ?? 'Is the gitnexus stack up? Try `docker compose up -d`.';
   let resp;
   try {
     resp = await fetchWithTimeout(url);
   } catch (err) {
     if (err.name === 'AbortError') {
-      throw new Error(`Timeout (${FETCH_TIMEOUT_MS}ms) on ${path}. Is the gitnexus stack up? Try \`docker compose up -d\`.`);
+      throw new Error(`Timeout (${FETCH_TIMEOUT_MS}ms) on ${path}. ${remedy}`);
     }
-    throw new Error(`Network error on ${path}: ${err.message}. Is the gitnexus stack up at ${url}?`);
+    throw new Error(`Network error on ${path}: ${err.message} (tried ${url}). ${remedy}`);
   }
   let body;
   const ct = resp.headers.get('content-type') || '';
@@ -914,9 +1029,11 @@ function lensStub(kind, name) {
       'Start it (python scripts/governance/sigma_brain_graph_gateway.py --host 127.0.0.1 --port 4750) ' +
       'and set env INTER_GRAPH_URL=http://127.0.0.1:4750 (see .agent/MCP/mcp_registry.json).',
   };
-  return kind === 'list'
-    ? { ...base, lenses: [] }
-    : { ...base, requested: name, nodes: [], relationships: [] };
+  if (kind === 'list') return { ...base, lenses: [] };
+  // narrate returns prose, not a graph — an empty nodes/relationships pair would
+  // be a lie about the shape the caller asked for.
+  if (kind === 'narrate') return { ...base, requested: name, format: 'markdown', markdown: null };
+  return { ...base, requested: name, nodes: [], relationships: [] };
 }
 
 async function handleMessage(msg) {
