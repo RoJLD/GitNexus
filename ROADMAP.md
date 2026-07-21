@@ -215,6 +215,13 @@ quelle, pas de publication marketplace/.vsix.
    des ~24 tests Timeline (`tests/quarantine.json` committé + plafond anti-croissance) avec **cible de
    résorption chiffrée datée** (≤8 fin (i), 0 fin (ii) — sinon suppression assumée avec verdict, jamais de
    quarantaine permanente).
+   ✅ **CIBLE ATTEINTE 2026-07-21 — quarantaine à 0**, par la seconde branche de l'alternative
+   (« suppression assumée avec verdict »), pas par dé-quarantaine. La dernière entrée était les 8 e2e
+   `copilot-panel` ; leur surface n'a jamais existé et son abandon est acté (cf. phase (ii) item 1).
+   `cap` passe de 8 à **0** : un plafond de 8 sur une liste vide aurait autorisé 8 nouvelles quarantaines
+   sans re-ratification, soit exactement le mécanisme que cette règle voulait empêcher. Toute quarantaine
+   future exige désormais de relever le plafond dans un commit — un acte délibéré et revu. Aucun
+   `describe.fixme` ne subsiste dans `tests/e2e/specs/`.
 4. **Séquence de réconciliation UNIQUE** ✅ **EXÉCUTÉE 2026-07-11** (re-bump v1.6.7 : 136 additive / 21 inplace, 12 conflits résolus à la main, copilot re-posé 4 modules sidecar ; vérifs Docker build-gate + boot-smoke + drift-check 0 + sidecar 34 tools VERTES. Note mesurée : le merge class-lens→deployment s'est avéré un **fast-forward** — deployment est un ancêtre — et copilot a été récupéré de `c560a852`, sans re-perte au merge.) (finding critical du panel — 3 opérations régénéraient les mêmes
    diffs depuis 3 bases différentes = 3e gutting garanti) :
    a. merge `feat/classdiagram-export-and-class-lens` → `deployment` (c'est le code v7 live ; extraire
@@ -239,7 +246,18 @@ quelle, pas de publication marketplace/.vsix.
    rend le shell SPA). **Décision user ratifiée : sidecar-only.** Les 8 e2e `copilot-panel.spec.ts` (panel web +
    metrics) **quarantinés `test.describe.fixme` avec verdict** (`tests/quarantine.json`, condition de dé-quarantaine
    falsifiable) → l'e2e est **vert** (8 skipped / 1 passed), enforçable sans rouge menteur. Le vrai gate copilot =
-   le smoke MCP. Dé-quarantaine future si le panel web est câblé (routes + COPY + panel React).
+   le smoke MCP.
+   ✅ **CLOS 2026-07-21 — les 8 tests sont RETIRÉS, pas dé-quarantinés.** Re-mesuré, l'état est inchangé
+   depuis le 11/07 : routes `/copilot/*` **0 occurrence**, `COPY` des modules **0 occurrence**, panel React
+   **aucun**. Garder indéfiniment 8 tests d'une surface abandonnée violait la règle que le registre énonce
+   lui-même (« jamais permanente »). Ce n'est **pas une perte de couverture** : ces tests assertaient une
+   *interface* (sous-panneaux, toast, onglets, indicateur de cache, endpoint Prometheus), pas la logique du
+   copilot — et le smoke MCP, qui reste le gate, couvre la *donnée*. Les deux ne sont pas équivalents ; il
+   n'y a pas de substitution, il y a un abandon assumé, et c'est écrit tel quel.
+   La **spécification est préservée** plutôt que jetée : `tests/quarantine.json` porte désormais une section
+   `retired` listant les 8 comportements un par un, les 3 conditions de renaissance, et le pointeur de
+   récupération `git show 8f1d19a3:tests/e2e/specs/copilot-panel.spec.ts` — **commande exécutée et vérifiée
+   (204 lignes)**, pas écrite de tête.
 2. **class-diagram export / class-lens** — **SPEC+DoD LIVRÉE 2026-07-11** ([spec](docs/superpowers/specs/2026-07-11-classdiagram-export-and-class-lens.md)),
    verdict du gate = **BUILD** (pas d'abandon → pas d'escalade). Mesuré sur `HMMstudio` live : le KnowledgeGraph
    A la donnée (Class ×60, Interface ×92, HAS_METHOD/HAS_PROPERTY/MEMBER_OF/CALLS) mais **PAS d'arête
