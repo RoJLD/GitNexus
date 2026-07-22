@@ -87,6 +87,29 @@ parameter**, on three measurements — re-measure them before restoring it:
    model; its reasoning tokens exhaust the 400-token budget before the
    answer completes.
 
+### ELYSIUM perimeter experts (`INTER_GRAPH_URL`, Task 10 expdoc)
+
+Two tools proxy the Σ-BRAIN-GRAPH-GATEWAY's `/expert` contract — ask a scoped
+semantic index a question instead of grepping the repo. Both degrade to a
+documented stub — never a crash, never a fabricated answer — when
+`INTER_GRAPH_URL` is unset.
+
+| Tool | Endpoint behind it | Use it when |
+|---|---|---|
+| `elysium_list_experts` | `GET /expert` | You need to discover which perimeters exist (name, index state, chunk count, calibrated confidence threshold). |
+| `elysium_ask_expert` | `POST /expert/<perimeter>` | You have a question in scope for a declared perimeter (e.g. `doctrine`). |
+
+`elysium_ask_expert`'s `mode="retrieve"` (default) returns cited chunks only and
+runs on the shared `GITNEXUS_TIMEOUT` budget; `mode="answer"` adds a
+citation-constrained local LLM synthesis over those chunks and needs a much
+longer budget of its own — measured routinely 30-150+ s on local hardware, vs.
+the 30 s default every other tool shares. That is why this tool alone carries a
+second timeout constant, `ELYSIUM_EXPERT_ANSWER_TIMEOUT_MS` (default 180000),
+applied only when `mode==="answer"`. When the synthesis model is unreachable or
+confidence is too low, the gateway itself degrades the response
+(`degraded:true`, chunks only) rather than fabricate an answer — this tool
+never papers over that with its own guess.
+
    > An earlier revision of this file published "42.5 s bought 45 bytes"
    > as *the* yield. That was a single draw near the floor of a
    > distribution point 2 above says one sample cannot characterise — it
@@ -120,7 +143,7 @@ project-scoped `.claude/mcp.json`):
 }
 ```
 
-Restart Claude Code; the tools above (<!-- COUNTER:mcp-tools -->37<!-- /COUNTER --> in
+Restart Claude Code; the tools above (<!-- COUNTER:mcp-tools -->39<!-- /COUNTER --> in
 total) will show up in the model's tool list. Try:
 
 > "Use gitnexus to list my repos, then show me the entropy timeline
@@ -137,13 +160,14 @@ Same shape — each client has its own MCP config location, but the
 |---|---|---|
 | `GITNEXUS_API` | `http://localhost:4747` | Upstream gitnexus API. Only `gitnexus_list_repos` hits it. |
 | `GITNEXUS_WEB` | `http://localhost:4173` | Our deployment (`docker-compose.yml`). Every analytics tool hits it. |
-| `GITNEXUS_TIMEOUT` | `30000` | Per-tool fetch timeout, milliseconds. Applies to every route — there is no second budget. |
-| `INTER_GRAPH_URL` | *(unset)* | Σ-BRAIN-GRAPH-GATEWAY base URL, e.g. `http://127.0.0.1:4750`. **Five tools hit it** (see below); unset → the three lens tools return a documented stub and the other two fall back. |
+| `GITNEXUS_TIMEOUT` | `30000` | Per-tool fetch timeout, milliseconds. Applies to every route except `elysium_ask_expert`'s `mode="answer"` (see `ELYSIUM_EXPERT_ANSWER_TIMEOUT_MS`). |
+| `ELYSIUM_EXPERT_ANSWER_TIMEOUT_MS` | `180000` | Timeout for `elysium_ask_expert` when `mode="answer"` only — a local LLM synthesis routinely exceeds `GITNEXUS_TIMEOUT`'s 30 s default. |
+| `INTER_GRAPH_URL` | *(unset)* | Σ-BRAIN-GRAPH-GATEWAY base URL, e.g. `http://127.0.0.1:4750`. **Seven tools hit it** (see below); unset → the lens + expert tools return a documented stub and the other two fall back. |
 
 ### Which tools actually use `INTER_GRAPH_URL`
 
 Enumerated empirically (fake gateway on a loopback port recording every inbound
-URL, all <!-- COUNTER:mcp-tools -->37<!-- /COUNTER --> tools invoked) — **not** by
+URL, all <!-- COUNTER:mcp-tools -->39<!-- /COUNTER --> tools invoked) — **not** by
 reading the source, because an earlier revision of this table claimed "only the
 three lens tools" and was wrong by two:
 
@@ -154,11 +178,14 @@ three lens tools" and was wrong by two:
 | `gitnexus_get_lens_graph` | `/lens/<name>` |
 | `gitnexus_narrate_lens` | `/lens/<name>/narrate` |
 | `gitnexus_copilot_forge_context` | `/inter-graph/concept?concept=…&depth=…` |
+| `elysium_list_experts` | `GET /expert` |
+| `elysium_ask_expert` | `POST /expert/<perimeter>` |
 
-Unsetting `INTER_GRAPH_URL` degrades **all five**, not three. The three lens tools
-degrade loudly (documented stub with a `concern`); `query_meta_graph` and
-`gitnexus_copilot_forge_context` fall back to a secondary path or a stub mode, so
-their degradation is quieter — check their `stub` / `mode` field.
+Unsetting `INTER_GRAPH_URL` degrades **all seven**, not three. The lens tools and
+the two expert tools degrade loudly (documented stub with a `concern`);
+`query_meta_graph` and `gitnexus_copilot_forge_context` fall back to a secondary
+path or a stub mode, so their degradation is quieter — check their `stub` /
+`mode` field.
 
 If your stack runs on different ports, set these in the `env` field of
 your MCP config:
@@ -185,7 +212,7 @@ node smoke.mjs
 What it checks:
 
 1. `initialize` returns the right `protocolVersion` + `serverInfo`.
-2. `tools/list` returns the expected tool count (<!-- COUNTER:mcp-tools -->37<!-- /COUNTER -->) and every
+2. `tools/list` returns the expected tool count (<!-- COUNTER:mcp-tools -->39<!-- /COUNTER -->) and every
    name the smoke pins by hand.
 3. `tools/call gitnexus_list_repos` returns a list (asserts the
    API host is reachable).

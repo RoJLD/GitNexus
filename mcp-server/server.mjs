@@ -110,6 +110,12 @@ const WEB_URL = (process.env.GITNEXUS_WEB || 'http://localhost:4173').replace(/\
 // already targets. null → the lens tools return a documented stub (Zero Masking).
 const GATEWAY_URL = (process.env.INTER_GRAPH_URL || '').replace(/\/+$/, '') || null;
 const FETCH_TIMEOUT_MS = Number(process.env.GITNEXUS_TIMEOUT) || 30000;
+// elysium_ask_expert's mode="answer" runs a local LLM synthesis over the retrieved
+// chunks — measured routinely past FETCH_TIMEOUT_MS (30s) on local hardware. A
+// separate, longer budget so mode="retrieve" callers keep the fast default while
+// mode="answer" callers don't abort mid-computation. Env-overrideable for exotic
+// hardware; the default (180s) has headroom above measured worst case (~150s).
+const ASKEXPERT_ANSWER_TIMEOUT_MS = Number(process.env.ELYSIUM_EXPERT_ANSWER_TIMEOUT_MS) || 180000;
 // doCall's default remediation names the gitnexus Docker stack. The gateway-backed
 // routes (/lens*, /inter-graph*) do NOT come from that stack — they come from the
 // ELYSIUM Σ-BRAIN-GRAPH-GATEWAY. Pointing an operator at `docker compose up -d`
@@ -576,6 +582,59 @@ const TOOLS = [
         : lensStub('get', name),
   },
   {
+    name: 'elysium_ask_expert',
+    description:
+      'Ask a perimeter expert instead of grepping the repo. A perimeter is a scoped semantic ' +
+      'index over an ELYSIUM corpus (currently "doctrine": ~1181 files / 8251 chunks). Returns ' +
+      'cited chunks (path + line range, score, confidence) from the Σ-BRAIN-GRAPH-GATEWAY ' +
+      '(INTER_GRAPH_URL). mode="retrieve" (default) is retrieval only; mode="answer" adds a ' +
+      'citation-constrained local synthesis over the same chunks and is markedly slower — a local ' +
+      '32B-class model routinely takes 30-150+ seconds, which is why this tool raises its own HTTP ' +
+      'timeout well above the other tools\' default (see GITNEXUS_TIMEOUT). When the synthesis ' +
+      'model or the confidence is too low, `mode="answer"` degrades to the retrieved chunks with ' +
+      '`degraded:true` rather than fabricate an answer. `perimeter` values come from ' +
+      'elysium_list_experts — call that first. Returns a documented stub if the ' +
+      'Σ-BRAIN-GRAPH-GATEWAY is not wired (Zero Masking).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        perimeter: { type: 'string', description: 'Perimeter name from elysium_list_experts, e.g. "doctrine".' },
+        question: { type: 'string', description: 'Natural-language question (French or English).' },
+        mode: { type: 'string', enum: ['retrieve', 'answer'], default: 'retrieve' },
+        top_k: { type: 'number', default: 5, maximum: 20, description: 'Max chunks to retrieve.' },
+      },
+      required: ['perimeter', 'question'],
+      additionalProperties: false,
+    },
+    handler: async (args) => {
+      if (!GATEWAY_URL) return expertStub(args);
+      const mode = args.mode || 'retrieve';
+      // mode="answer" runs a local LLM synthesis over the retrieved chunks; measured
+      // routinely past FETCH_TIMEOUT_MS (30s default) on this hardware. Without this
+      // override the MCP call aborts while the gateway is still computing — see
+      // ASKEXPERT_ANSWER_TIMEOUT_MS below.
+      const timeoutMs = mode === 'answer' ? ASKEXPERT_ANSWER_TIMEOUT_MS : FETCH_TIMEOUT_MS;
+      const path = `/expert/${encodeURIComponent(args.perimeter)}`;
+      return doPostCall(
+        `${GATEWAY_URL}${path}`,
+        path,
+        { question: args.question, mode, top_k: args.top_k || 5 },
+        { remedy: GATEWAY_REMEDY, timeoutMs },
+      );
+    },
+  },
+  {
+    name: 'elysium_list_experts',
+    description:
+      'List declared perimeter experts with their live index state (present/absent), chunk count, ' +
+      'and calibrated confidence threshold — read from the Σ-BRAIN-GRAPH-GATEWAY (INTER_GRAPH_URL). ' +
+      'Call this before elysium_ask_expert to discover valid `perimeter` values. Returns a documented ' +
+      'stub if the gateway is not wired (Zero Masking).',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+    handler: async () =>
+      (GATEWAY_URL ? doCall(`${GATEWAY_URL}/expert`, '/expert', { remedy: GATEWAY_REMEDY }) : expertStub({ listing: true })),
+  },
+  {
     name: 'gitnexus_narrate_lens',
     description:
       'Read one governance lens as a HUMAN-READABLE MARKDOWN BRIEF (provenance, freshness verdict, salient ' +
@@ -982,6 +1041,55 @@ async function doCall(url, path, opts = {}) {
   return body;
 }
 
+/**
+ * POST counterpart to doCall, with a per-call timeout override — doCall/
+ * fetchWithTimeout are GET-only and hardcode FETCH_TIMEOUT_MS, which is too
+ * short for elysium_ask_expert's mode="answer" (see ASKEXPERT_ANSWER_TIMEOUT_MS).
+ * Mirrors doCall's error semantics (content-type sniffing, AbortError → timeout
+ * message, remedy text, honest HTTP-status propagation) so a gateway-backed POST
+ * route fails exactly as legibly as the GET ones.
+ * @param {string} url
+ * @param {string} path            label used in error messages
+ * @param {object} body            JSON-serialized as the request body
+ * @param {object} [opts]
+ * @param {string} [opts.remedy]   which service to restart when this route fails
+ * @param {number} [opts.timeoutMs] defaults to FETCH_TIMEOUT_MS
+ */
+async function doPostCall(url, path, body, opts = {}) {
+  const remedy = opts.remedy ?? 'Is the gitnexus stack up? Try `docker compose up -d`.';
+  const timeoutMs = opts.timeoutMs ?? FETCH_TIMEOUT_MS;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  let resp;
+  try {
+    resp = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    });
+  } catch (err) {
+    if (err.name === 'AbortError') {
+      throw new Error(`Timeout (${timeoutMs}ms) on ${path}. ${remedy}`);
+    }
+    throw new Error(`Network error on ${path}: ${err.message} (tried ${url}). ${remedy}`);
+  } finally {
+    clearTimeout(timer);
+  }
+  let respBody;
+  const ct = resp.headers.get('content-type') || '';
+  if (ct.includes('application/json')) {
+    respBody = await resp.json().catch(() => null);
+  } else {
+    respBody = await resp.text().catch(() => '');
+  }
+  if (!resp.ok) {
+    const msg = respBody && typeof respBody === 'object' && respBody.error ? respBody.error : `HTTP ${resp.status}`;
+    throw new Error(`${path}: ${msg}`);
+  }
+  return respBody;
+}
+
 // ── JSON-RPC 2.0 over stdio ──────────────────────────────────────────
 
 function sendMessage(msg) {
@@ -1034,6 +1142,26 @@ function lensStub(kind, name) {
   // be a lie about the shape the caller asked for.
   if (kind === 'narrate') return { ...base, requested: name, format: 'markdown', markdown: null };
   return { ...base, requested: name, nodes: [], relationships: [] };
+}
+
+// Stub for elysium_ask_expert / elysium_list_experts when the gateway
+// (INTER_GRAPH_URL) isn't wired. Same field names as a live /expert response
+// (chunks, answer, confidence) so a caller checking `chunks.length` or `answer`
+// doesn't need a stub-specific branch — only `stub: true` + `confidence: 'none'`
+// distinguish it (Zero Masking: never a fabricated answer).
+function expertStub(args) {
+  return {
+    stub: true,
+    concern:
+      'INTER_GRAPH_URL is not set — the Σ-BRAIN-GRAPH-GATEWAY is not wired, so no ' +
+      'perimeter expert can answer. Start it (python scripts/governance/' +
+      'sigma_brain_graph_gateway.py --host 127.0.0.1 --port 4750) and set env ' +
+      'INTER_GRAPH_URL=http://127.0.0.1:4750 (see .agent/MCP/mcp_registry.json).',
+    requested: args && args.perimeter ? args.perimeter : null,
+    chunks: [],
+    answer: null,
+    confidence: 'none',
+  };
 }
 
 async function handleMessage(msg) {

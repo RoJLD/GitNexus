@@ -84,13 +84,14 @@ try {
 
   notify('notifications/initialized');
 
-  // 2. tools/list — should list 37 tools (34 + 3 generic lens tools, Phase 1
+  // 2. tools/list — should list 39 tools (34 + 3 generic lens tools, Phase 1
   //    chemin agent, north-star § Update 2026-07-10: list_lenses / get_lens_graph
-  //    + narrate_lens, the narration surface wired to MCP)
+  //    + narrate_lens, the narration surface wired to MCP; + 2 perimeter-expert
+  //    tools, Task 10 expdoc: elysium_ask_expert / elysium_list_experts)
   const list = await send('tools/list');
   if (list.error) fail(`tools/list: ${list.error.message}`);
   const tools = list.result?.tools || [];
-  if (tools.length !== 37) fail(`tools/list: expected 37 tools, got ${tools.length}`);
+  if (tools.length !== 39) fail(`tools/list: expected 39 tools, got ${tools.length}`);
   for (const expected of [
     'gitnexus_list_repos', 'gitnexus_entropy', 'gitnexus_churn', 'gitnexus_coupling',
     'gitnexus_growth', 'gitnexus_lifespan', 'gitnexus_ownership', 'gitnexus_dissonance',
@@ -110,6 +111,9 @@ try {
     'gitnexus_list_lenses',
     'gitnexus_get_lens_graph',
     'gitnexus_narrate_lens',
+    // Task 10 expdoc — perimeter-expert tools over the Σ-BRAIN-GRAPH-GATEWAY /expert contract.
+    'elysium_ask_expert',
+    'elysium_list_experts',
   ]) {
     if (!tools.find((t) => t.name === expected)) fail(`tools/list: missing ${expected}`);
   }
@@ -283,6 +287,47 @@ try {
     }
     if ('synthesis' in narrPayload) fail('gitnexus_narrate_lens: the removed `synthesis` option must not reappear in the payload');
     pass(`gitnexus_narrate_lens(sigil) → ${narrPayload.bytes} bytes of markdown`);
+  }
+
+  // 4i-bis. elysium_list_experts / elysium_ask_expert (Task 10 expdoc) — same
+  // env-aware-but-falsifiable-either-way shape as the lens tools above:
+  //   - no INTER_GRAPH_URL → MUST be the documented stub (stub:true, chunks:[],
+  //     answer:null, confidence:'none'), never a crash and never a fabricated answer;
+  //   - INTER_GRAPH_URL set → MUST be a live /expert response.
+  const listExperts = await send('tools/call', { name: 'elysium_list_experts', arguments: {} });
+  if (listExperts.result?.isError) fail(`elysium_list_experts: ${listExperts.result.content[0]?.text}`);
+  if (!Array.isArray(listExperts.result?.content) || listExperts.result.content[0]?.type !== 'text') {
+    fail('elysium_list_experts: unexpected response shape');
+  }
+  const listExpertsPayload = JSON.parse(listExperts.result.content[0].text);
+  const ask = await send('tools/call', {
+    name: 'elysium_ask_expert',
+    arguments: { perimeter: 'doctrine', question: 'smoke test question', mode: 'retrieve' },
+  });
+  if (ask.result?.isError) fail(`elysium_ask_expert: ${ask.result.content[0]?.text}`);
+  if (!Array.isArray(ask.result?.content) || ask.result.content[0]?.type !== 'text') {
+    fail('elysium_ask_expert: unexpected response shape');
+  }
+  const askPayload = JSON.parse(ask.result.content[0].text);
+  if (!process.env.INTER_GRAPH_URL) {
+    if (listExpertsPayload.stub !== true) fail('elysium_list_experts: no INTER_GRAPH_URL but payload is not a stub');
+    if (typeof listExpertsPayload.concern !== 'string') fail('elysium_list_experts: stub is missing its documented `concern`');
+    pass('elysium_list_experts → documented stub (INTER_GRAPH_URL unset)');
+    if (askPayload.stub !== true) fail('elysium_ask_expert: no INTER_GRAPH_URL but payload is not a stub');
+    if (!Array.isArray(askPayload.chunks) || askPayload.chunks.length !== 0) {
+      fail(`elysium_ask_expert: stub must carry chunks:[], not fabricated data (got ${JSON.stringify(askPayload.chunks)})`);
+    }
+    if (askPayload.answer !== null) fail('elysium_ask_expert: stub must carry answer:null, not a fabricated answer');
+    if (askPayload.confidence !== 'none') fail(`elysium_ask_expert: stub confidence should be 'none', got '${askPayload.confidence}'`);
+    pass('elysium_ask_expert(doctrine) → documented stub (INTER_GRAPH_URL unset)');
+  } else {
+    if (listExpertsPayload.stub) fail(`elysium_list_experts: INTER_GRAPH_URL set but got a stub: ${listExpertsPayload.concern}`);
+    if (!Array.isArray(listExpertsPayload.experts)) fail('elysium_list_experts: missing `experts` array on a live response');
+    pass(`elysium_list_experts → ${listExpertsPayload.experts.length} expert(s) declared`);
+    if (askPayload.stub) fail(`elysium_ask_expert: INTER_GRAPH_URL set but got a stub: ${askPayload.concern}`);
+    if (!Array.isArray(askPayload.chunks)) fail('elysium_ask_expert: missing `chunks` array on a live response');
+    if (askPayload.answer !== null) fail(`elysium_ask_expert: mode=retrieve must not synthesize an answer, got: ${JSON.stringify(askPayload.answer).slice(0, 80)}`);
+    pass(`elysium_ask_expert(doctrine, retrieve) → ${askPayload.chunks.length} chunk(s), confidence=${askPayload.confidence}`);
   }
 
   // 4j. gitnexus_narrate_lens on an UNKNOWN lens → the gateway 404 must surface
@@ -625,6 +670,121 @@ try {
     }
   }
 
+  // 4l. elysium_ask_expert against a FAKE gateway (Task 10 expdoc) — request
+  // shaping + the two timeout budgets. Why a fake and not the live gateway: the
+  // assertions below pin (a) the perimeter is percent-encoded into the path,
+  // (b) the POST body carries exactly {question, mode, top_k} intact, and
+  // (c) mode="answer" really uses a LONGER timeout than mode="retrieve" — the
+  // whole reason this tool doesn't just reuse doCall's fixed FETCH_TIMEOUT_MS.
+  // Shrunk budgets (250ms / 2000ms) keep this sub-second instead of sleeping 30s+.
+  {
+    /** Requests the fake gateway saw: {method, url, body}. */
+    const seen = [];
+    let delayMs = 0;
+    const fakeExpert = createServer((req, res) => {
+      let raw = '';
+      req.on('data', (c) => { raw += c; });
+      req.on('end', () => {
+        seen.push({ method: req.method, url: req.url, body: raw ? JSON.parse(raw) : null });
+        const reply = () => {
+          res.writeHead(200, { 'content-type': 'application/json' });
+          res.end(JSON.stringify({ chunks: [{ path: 'fake.md:1-3', score: 0.9 }], answer: null, confidence: 'high' }));
+        };
+        if (delayMs > 0) setTimeout(reply, delayMs); else reply();
+      });
+    });
+    await new Promise((resolve) => fakeExpert.listen(0, '127.0.0.1', resolve));
+    const fakeExpertPort = fakeExpert.address().port;
+
+    const spawnExpertChild = (env) => {
+      const child = spawn(process.execPath, [join(here, 'server.mjs')], {
+        stdio: ['pipe', 'pipe', 'inherit'],
+        env: { ...process.env, INTER_GRAPH_URL: `http://127.0.0.1:${fakeExpertPort}`, ...env },
+      });
+      const p = new Map();
+      let id = 1;
+      createInterface({ input: child.stdout }).on('line', (line) => {
+        try {
+          const msg = JSON.parse(line);
+          if (msg.id != null && p.has(msg.id)) { p.get(msg.id)(msg); p.delete(msg.id); }
+        } catch { /* stderr carries logs */ }
+      });
+      const s = (method, params) => new Promise((resolve, reject) => {
+        const mid = id++;
+        p.set(mid, resolve);
+        child.stdin.write(JSON.stringify({ jsonrpc: '2.0', id: mid, method, params }) + '\n');
+        setTimeout(() => { if (p.has(mid)) { p.delete(mid); reject(new Error(`Timeout on ${method}`)); } }, 15000);
+      });
+      return { child, s };
+    };
+
+    // --- perimeter is percent-encoded + body carries exactly what was asked. ---
+    {
+      const { child, s } = spawnExpertChild({});
+      try {
+        await s('initialize', { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'smoke-expert-fake', version: '0.0.0' } });
+        seen.length = 0;
+        const HOSTILE = 'a/b?c#d';
+        const r = await s('tools/call', {
+          name: 'elysium_ask_expert',
+          arguments: { perimeter: HOSTILE, question: 'quelle Σ règle ?', mode: 'retrieve', top_k: 7 },
+        });
+        if (seen.length !== 1) fail(`elysium_ask_expert fake-gateway: expected exactly 1 upstream request, saw ${seen.length}`);
+        const expectedPath = `/expert/${encodeURIComponent(HOSTILE)}`;
+        if (seen[0].url !== expectedPath) {
+          fail(`elysium_ask_expert REGRESSION: perimeter not percent-encoded — gateway saw "${seen[0].url}", expected "${expectedPath}"`);
+        }
+        if (seen[0].method !== 'POST') fail(`elysium_ask_expert: expected POST, gateway saw ${seen[0].method}`);
+        const sentBody = seen[0].body;
+        if (sentBody.question !== 'quelle Σ règle ?') fail(`elysium_ask_expert: question not forwarded intact (got ${JSON.stringify(sentBody.question)})`);
+        if (sentBody.mode !== 'retrieve') fail(`elysium_ask_expert: mode not forwarded (got ${sentBody.mode})`);
+        if (sentBody.top_k !== 7) fail(`elysium_ask_expert: top_k not forwarded (got ${sentBody.top_k})`);
+        if (r.result?.isError) fail(`elysium_ask_expert fake-gateway call errored: ${r.result.content[0]?.text}`);
+        pass(`elysium_ask_expert fake-gateway: perimeter percent-encoded ("${seen[0].url}"), body={question,mode,top_k} forwarded intact, Σ round-trips`);
+      } finally {
+        child.kill();
+      }
+    }
+
+    // --- mode="answer" uses a LONGER timeout than mode="retrieve". ---
+    // GITNEXUS_TIMEOUT caps the default (retrieve) path; ELYSIUM_EXPERT_ANSWER_TIMEOUT_MS
+    // caps mode="answer". A 600ms-delayed fake gateway must trip a 250ms retrieve
+    // cap but survive under a 2000ms answer cap — proving the two budgets are
+    // actually distinct code paths, not a single shared constant.
+    {
+      const { child, s } = spawnExpertChild({ GITNEXUS_TIMEOUT: '250', ELYSIUM_EXPERT_ANSWER_TIMEOUT_MS: '2000' });
+      try {
+        await s('initialize', { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'smoke-expert-timeout', version: '0.0.0' } });
+        delayMs = 600;
+        seen.length = 0;
+        const retr = await s('tools/call', {
+          name: 'elysium_ask_expert',
+          arguments: { perimeter: 'doctrine', question: 'q', mode: 'retrieve' },
+        });
+        if (!retr.result?.isError) {
+          fail(`elysium_ask_expert(mode=retrieve): should have tripped the 250ms cap on a 600ms server, got: ${retr.result?.content?.[0]?.text?.slice(0, 140)}`);
+        }
+        if (!/Timeout \(250ms\)/.test(retr.result.content[0].text)) {
+          fail(`elysium_ask_expert(mode=retrieve): did not report the 250ms cap: ${retr.result.content[0].text.slice(0, 160)}`);
+        }
+        pass('elysium_ask_expert(mode=retrieve) → tripped the 250ms cap as expected on a 600ms server');
+
+        const ans = await s('tools/call', {
+          name: 'elysium_ask_expert',
+          arguments: { perimeter: 'doctrine', question: 'q', mode: 'answer' },
+        });
+        if (ans.result?.isError) {
+          fail(`elysium_ask_expert(mode=answer) REGRESSION: should have survived under the 2000ms cap on a 600ms server, got: ${ans.result.content[0]?.text}`);
+        }
+        pass('elysium_ask_expert(mode=answer) → survived the 600ms delay under the 2000ms cap (proves the two timeout budgets are distinct)');
+      } finally {
+        child.kill();
+        delayMs = 0;
+      }
+    }
+    fakeExpert.close();
+  }
+
   // 5. Unknown tool → isError content
   const bad = await send('tools/call', { name: 'gitnexus_does_not_exist', arguments: {} });
   if (!bad.error) fail('Unknown tool should have returned an RPC error');
@@ -719,6 +879,36 @@ try {
       fail(`live: narration (${narDelivered}B delivered) is not smaller than the graph (${graphDelivered}B delivered) — the tool has no reason to exist`);
     }
     pass(`live: narrate_lens(sigil) → ${narDelivered}B vs ${graphDelivered}B graph, as delivered to the agent (${(graphDelivered / narDelivered).toFixed(1)}× cheaper)`);
+
+    // g. Task 10 expdoc — elysium_list_experts / elysium_ask_expert against the
+    //    LIVE Σ-BRAIN-GRAPH-GATEWAY doctrine index (8251 chunks). mode="retrieve"
+    //    only — mode="answer" calls a real local LLM and is deliberately NOT
+    //    exercised by an automated test (see server task constraints); it is
+    //    verified manually (see expdoc-task-10-report.md).
+    const experts = await callJson('elysium_list_experts');
+    if (experts.stub) fail(`live: elysium_list_experts stub — gateway unreachable: ${experts.concern}`);
+    const expertNames = (experts.experts || []).map((e) => e.name);
+    if (!expertNames.includes('doctrine')) fail(`live: "doctrine" perimeter absent from elysium_list_experts (got: ${expertNames.join(', ')})`);
+    pass(`live: elysium_list_experts → ${expertNames.length} perimeter(s) incl. doctrine`);
+
+    // Golden question (calibration measured SIGIL-561 as its rank-1 hit,
+    // 2026-07-22): the retrieval core must actually surface it, citations
+    // must carry path:line, and French/Σ text must round-trip UTF-8 intact.
+    const askLive = await callJson('elysium_ask_expert', {
+      perimeter: 'doctrine',
+      question: 'Quel mécanisme de lock atomique coordonne les sessions concurrentes ?',
+      mode: 'retrieve',
+    });
+    if (askLive.stub) fail(`live: elysium_ask_expert stub — gateway unreachable: ${askLive.concern}`);
+    if (!Array.isArray(askLive.chunks) || askLive.chunks.length === 0) fail('live: elysium_ask_expert(doctrine) returned no chunks for the SIGIL-561 golden question');
+    if (askLive.answer !== null) fail(`live: mode=retrieve must not synthesize an answer, got: ${JSON.stringify(askLive.answer).slice(0, 80)}`);
+    const hitSigil561 = askLive.chunks.find((c) => /SIGIL-561/.test(c.path || ''));
+    if (!hitSigil561) {
+      fail(`live: SIGIL-561 not found among ${askLive.chunks.length} chunk(s) — paths: ${askLive.chunks.map((c) => c.path).join(', ')}`);
+    }
+    if (!/:\d+/.test(hitSigil561.path)) fail(`live: SIGIL-561 chunk path missing a :line citation (got "${hitSigil561.path}")`);
+    if (!/Σ/.test(JSON.stringify(askLive.chunks))) fail('live: expected an intact "Σ" somewhere in the returned chunks — UTF-8 mangled?');
+    pass(`live: elysium_ask_expert(doctrine, retrieve) → SIGIL-561 at "${hitSigil561.path}", confidence=${askLive.confidence}, Σ intact`);
   }
 
   console.log('\nAll smoke checks passed.');
