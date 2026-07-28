@@ -127,6 +127,28 @@ describe('LensStudioModal', () => {
     await waitFor(() => expect(onPropose).toHaveBeenCalledWith(JSON.parse(specText), true));
   });
 
+  // Follow-up (onPropose-rejection): handlePropose is the ONLY action wrapping
+  // its callback in try/catch, because proposeLens THROWS on a non-2xx bridge
+  // response (403 "auto_approve requires an approver role", a 422 spec reason,
+  // or a transport failure) — unlike previewLens, which resolves {ok:false}.
+  // That catch branch is the sole thing between a rejected Propose and an
+  // unhandled promise with zero user feedback, yet no test exercised it: a
+  // mutation deleting the catch left the suite fully green. This locks it —
+  // the real bridge reason must reach the user, and no success toast may show.
+  it('shows an error banner (with the real reason) and no success toast when onPropose rejects', async () => {
+    const onPropose = vi.fn(async () => {
+      throw new Error('auto_approve requires an approver role');
+    });
+    render(<LensStudioModal isOpen onClose={() => {}} onPreview={noop} onPropose={onPropose} />);
+    fireEvent.change(screen.getByRole('textbox'), { target: { value: specText } });
+    fireEvent.click(screen.getByText(/propose/i)); // unique before any error banner exists
+    await waitFor(() => expect(screen.getByText(/lensStudio\.proposeFailed/i)).toBeInTheDocument());
+    // the FastAPI reason is surfaced, never swallowed:
+    expect(screen.getByText(/auto_approve requires an approver role/i)).toBeInTheDocument();
+    // a rejected Propose must not leave a success toast on screen:
+    expect(screen.queryByText(/lensStudio\.proposed:/i)).toBeNull();
+  });
+
   it('in guided mode, Preview receives the spec BUILT BY THE FORM', async () => {
     const onPreview = vi.fn(async () => ({ ok: true }));
     render(<LensStudioModal isOpen onClose={() => {}} onPreview={onPreview} onPropose={async () => ({ id: 'i', status: 's' })} />);
