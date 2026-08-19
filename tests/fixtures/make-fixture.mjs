@@ -246,6 +246,79 @@ commit({
   },
 });
 
+// Commit 14 (alice, 2025-02-25) — declares a real Ghost Cluster so
+// `/clusters` returns >= 1 entry (measured 2026-07-12: with 0 clusters
+// declared, e2e/specs/06-cluster-halos.spec.ts could never exercise the
+// halo-render path regardless of the UI wiring — see that spec's header
+// for the full de-quarantine note). `parseClusters` (docker-server-
+// ghosts-core.mjs) derives member IDs from the Tier heading slug:
+// `tier-${tier}-${slugify(title)}`. Also adds ### 1.3 — Config validator,
+// a SECOND planned Tier-1 ghost — measured against the real source
+// (ghost-layout.ts `passesFilter`): "Materialized ghosts are doublons of
+// real nodes — never draw them", so the existing ### 1.1 (✅ materialized)
+// NEVER gets a `ghost:` canvas node and can't contribute a halo vertex.
+// The cluster below groups the two ghosts that DO render as canvas nodes
+// under DEFAULT_GHOST_FILTERS (tiers: ['1','2','3'], showCancelled: false)
+// once the e2e test flips "Show ghosts" — required because halo polygons
+// are hulled from ghost-NODE canvas positions, not the raw cluster
+// payload (`tier-1-2-helpers-utility`, `tier-1-3-config-validator`; both
+// ⏳ planned, non-cancelled, Tier 1).
+commit({
+  author: ALICE,
+  date: '2025-02-25T10:00:00 +0100',
+  message: 'docs(roadmap): declare a real Ghost Cluster for the cluster-halos E2E fixture',
+  files: {
+    'ROADMAP.md': [
+      '# Sample Project — Roadmap',
+      '',
+      '## ✅ Déjà livré',
+      '',
+      '| # | Feature | Endpoint(s) / Composant(s) |',
+      '|---|---|---|',
+      '| 1 | **Login flow** | `src/auth/login.ts` |',
+      '| 2 | **DB schema** | `src/db/schema.ts` |',
+      '',
+      '## 🎯 Tier 1',
+      '',
+      '### 1.1 — Migration runner ✅',
+      '**Promesse** : runner pour appliquer les migrations.',
+      '',
+      '**Premier pas** : `src/db/orphan.py` placeholder.',
+      '',
+      '### 1.2 — Helpers utility ⏳',
+      '**Expected by** : 2026-Q2',
+      '',
+      '**Promesse** : fonctions partagées.',
+      '',
+      '**Premier pas** : `src/utils/helpers.ts` exports an `id` function.',
+      '',
+      '### 1.3 — Config validator ⏳',
+      '**Expected by** : 2026-Q3',
+      '',
+      '**Promesse** : valide `gitnexus-domains.json` au chargement.',
+      '',
+      '**Premier pas** : `gitnexus-domains.json` existe déjà, non validé.',
+      '',
+      '### 2.1 — Audit log 🗑️',
+      "**Promesse** : journal d'audit.",
+      '',
+      '**Premier pas** : cancelled, not implementing.',
+      '',
+      '### 2.2 — Cancelled feature 🗑️',
+      '**Promesse** : another feature we never shipped.',
+      '',
+      '**Premier pas** : cancelled, kept here to exercise audit cancellation-rate.',
+      '',
+      '## 🔗 Clusters',
+      '',
+      '### Tier 1 foundation',
+      '**ExpectedBy** : 2026-Q3',
+      '**Members** : tier-1-2-helpers-utility, tier-1-3-config-validator',
+      '',
+    ].join('\n'),
+  },
+});
+
 // Normalise the git repo so tar output is byte-identical across regens.
 // 1. gc packs loose objects and removes non-deterministic loose-object files.
 // 2. read-tree HEAD rewrites .git/index clearing per-file stat cache
