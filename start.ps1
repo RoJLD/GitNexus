@@ -7,7 +7,7 @@
 # compare image SHAs before and after. If either changed, containers are
 # recreated. If unchanged AND containers are up, just open the browser.
 #
-# Both gitnexus (derived from upstream :1.6.5 + Dockerfile.cli patches) AND
+# Both gitnexus (derived from upstream :1.6.9 + Dockerfile.cli patches) AND
 # gitnexus-web (built from upstream/Dockerfile.web with React-side patches)
 # are local builds, so the previous `compose pull gitnexus-web` step was a
 # no-op and has been removed.
@@ -115,7 +115,10 @@ function Get-RebuildReason([string]$service) {
             "upstream/package.json"
         )
     }
-    $imageTag = if ($service -eq "gitnexus") { "gitnexus-derived:1.6.5-patched" } else { "gitnexus-web-derived:1.6.5-patched" }
+    # Tags MUST match the `image:` keys in docker-compose.yml — that file is the
+    # source of truth. They were left at 1.6.5 through the v1.6.7 bump, so this
+    # freshness check silently returned $null for a year. Move them together.
+    $imageTag = if ($service -eq "gitnexus") { "gitnexus-derived:1.6.9-patched" } else { "gitnexus-web-derived:1.6.9-patched" }
     $imgCreated = docker image inspect $imageTag --format '{{.Created}}' 2>$null
     if (-not $imgCreated) { return $null }
     $imgDate = Get-Date $imgCreated
@@ -143,8 +146,8 @@ function Get-RebuildReason([string]$service) {
 
 Step 4 "Building images (cached if unchanged)"
 $beforeIds = @{
-    "gitnexus" = Get-ImageId "gitnexus-derived:1.6.5-patched"
-    "gitnexus-web" = Get-ImageId "gitnexus-web-derived:1.6.5-patched"
+    "gitnexus" = Get-ImageId "gitnexus-derived:1.6.9-patched"
+    "gitnexus-web" = Get-ImageId "gitnexus-web-derived:1.6.9-patched"
 }
 $reasons = @{
     "gitnexus" = Get-RebuildReason "gitnexus"
@@ -164,8 +167,8 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 $afterIds = @{
-    "gitnexus" = Get-ImageId "gitnexus-derived:1.6.5-patched"
-    "gitnexus-web" = Get-ImageId "gitnexus-web-derived:1.6.5-patched"
+    "gitnexus" = Get-ImageId "gitnexus-derived:1.6.9-patched"
+    "gitnexus-web" = Get-ImageId "gitnexus-web-derived:1.6.9-patched"
 }
 
 $anyImageChanged = $false

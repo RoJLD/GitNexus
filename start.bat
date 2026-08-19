@@ -71,8 +71,8 @@ REM --- 4. Capture image SHAs before build, refresh, then re-capture ---
 echo Checking image freshness...
 set "BEFORE_CLI="
 set "BEFORE_WEB="
-for /f "delims=" %%i in ('docker images -q gitnexus-derived:1.6.5-patched 2^>nul') do set "BEFORE_CLI=%%i"
-for /f "delims=" %%i in ('docker images -q gitnexus-web-derived:1.6.5-patched 2^>nul') do set "BEFORE_WEB=%%i"
+for /f "delims=" %%i in ('docker images -q gitnexus-derived:1.6.9-patched 2^>nul') do set "BEFORE_CLI=%%i"
+for /f "delims=" %%i in ('docker images -q gitnexus-web-derived:1.6.9-patched 2^>nul') do set "BEFORE_WEB=%%i"
 
 docker compose build >nul 2>&1
 if errorlevel 1 (
@@ -83,8 +83,8 @@ if errorlevel 1 (
 
 set "AFTER_CLI="
 set "AFTER_WEB="
-for /f "delims=" %%i in ('docker images -q gitnexus-derived:1.6.5-patched 2^>nul') do set "AFTER_CLI=%%i"
-for /f "delims=" %%i in ('docker images -q gitnexus-web-derived:1.6.5-patched 2^>nul') do set "AFTER_WEB=%%i"
+for /f "delims=" %%i in ('docker images -q gitnexus-derived:1.6.9-patched 2^>nul') do set "AFTER_CLI=%%i"
+for /f "delims=" %%i in ('docker images -q gitnexus-web-derived:1.6.9-patched 2^>nul') do set "AFTER_WEB=%%i"
 
 set "IMAGE_CHANGED=0"
 if not "!BEFORE_CLI!"=="!AFTER_CLI!" set "IMAGE_CHANGED=1"

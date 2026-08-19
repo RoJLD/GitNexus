@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Clone upstream gitnexus at $GITNEXUS_VERSION (default v1.6.5) and apply the
+ * Clone upstream gitnexus at $GITNEXUS_VERSION (default v1.6.9) and apply the
  * TWO canonical diffs: patches/additive-files.diff (new files we own, zero
  * conflict risk) then patches/inplace-edits.diff (edits to upstream files).
  * Used both locally (one-time setup) and in CI.
@@ -23,7 +23,7 @@ import { fileURLToPath } from 'node:url';
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, '..');
 const UPSTREAM = join(ROOT, 'upstream');
-const TAG = process.env.GITNEXUS_VERSION || 'v1.6.5';
+const TAG = process.env.GITNEXUS_VERSION || 'v1.6.9';
 
 function sh(cmd, opts = {}) {
   console.log(`$ ${cmd}`);
