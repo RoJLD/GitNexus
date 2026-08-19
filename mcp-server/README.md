@@ -62,6 +62,7 @@ Same shape — each client has its own MCP config location, but the
 | `GITNEXUS_API` | `http://localhost:4747` | Upstream gitnexus API. Only `gitnexus_list_repos` hits it. |
 | `GITNEXUS_WEB` | `http://localhost:4173` | Our deployment (`docker-compose.yml`). Every analytics tool hits it. |
 | `GITNEXUS_TIMEOUT` | `30000` | Per-tool fetch timeout, milliseconds. |
+| `INTER_GRAPH_URL` | unset | ELYSIUM Σ-BRAIN-GRAPH-GATEWAY (SIGIL-1658, `sigma_brain_graph_gateway.py`) — an external ELYSIUM process, **not** started by this repo's `docker-compose.yml`. Unlocks live `inter_graph.kuzu` data for `query_meta_graph`; the tool returns a documented stub (`{stub:true, concern, rows:[]}`) when unset or unreachable, so it stays callable on a bare/OSS deployment of this sidecar. |
 
 If your stack runs on different ports, set these in the `env` field of
 your MCP config:

@@ -37,6 +37,13 @@
  *   GITNEXUS_API     (default: http://localhost:4747)  upstream API
  *   GITNEXUS_WEB     (default: http://localhost:4173)  our analytics
  *   GITNEXUS_TIMEOUT (default: 30000 ms)               per-tool fetch timeout
+ *   INTER_GRAPH_URL  (default: unset)                  ELYSIUM Σ-BRAIN-GRAPH-GATEWAY
+ *                                                      (SIGIL-1658, sigma_brain_graph_gateway.py);
+ *                                                      unlocks live inter_graph.kuzu data for
+ *                                                      query_meta_graph — a documented stub otherwise
+ *                                                      (Zero-Masking). Not part of this repo's own
+ *                                                      docker-compose stack: it's an external ELYSIUM
+ *                                                      process the operator starts separately.
  *
  * --- Installation ---
  *
@@ -67,14 +74,25 @@
 import { createInterface } from 'node:readline';
 import process from 'node:process';
 
-// HOTFIX 2026-07-11 — a static import of a missing module kills the WHOLE
-// sidecar at boot (measured: ERR_MODULE_NOT_FOUND took all 33 tools down, not
-// just the 4 copilot ones). The 4 copilot modules were dropped from the current
-// patch-line by the 2026-07-07 revert; they live in the deployment branch's
-// patch history and will be re-posed at the v1.6.7 reconciliation
-// (ROADMAP.md § "Update 2026-07-10", phase (i)). Until then: load them
-// dynamically — if absent, ONLY the 4 copilot tools fail (loudly, per call),
-// the rest of the sidecar keeps working.
+// HOTFIX 2026-07-11 (kept as a permanent resilience pattern, not a temporary
+// workaround) — a static import of a missing module kills the WHOLE sidecar
+// at boot (measured: ERR_MODULE_NOT_FOUND took all 33 tools down, not just
+// the 4 copilot ones). That's what happened when the 4 copilot modules were
+// dropped from the patch-line by the 2026-07-07 revert.
+//
+// UPDATE 2026-08-19 — the v1.6.7 reconciliation this comment used to call
+// "pending" was EXECUTED on 2026-07-11 (ROADMAP.md § "Update 2026-07-10"
+// phase (i).4: re-bump 136 additive / 21 inplace, copilot re-posed 4
+// modules, sidecar 34 tools verified green). Re-measured here (2026-08-19,
+// fresh `git clone --branch v1.6.7` + both patches applied cleanly, 0
+// conflicts, then a real server.mjs boot + tools/call): the 4 modules import
+// successfully and `copilotLoadError` stays null — the fail-loud branch
+// below does NOT currently fire. It is kept anyway: `upstream/` is a
+// .gitignored working clone (see patches/README.md), not committed, so a
+// deployment that forgets to apply `patches/additive-files.diff` — or a
+// future revert like 2026-07-07's — loses these 4 modules again. Dynamic
+// import means that failure mode degrades 4 tools (loudly, per call)
+// instead of taking the other 30 down with it.
 let inventoryMCPTools, readBLTLedger, _bltInternals, readClusterOpsLedger, _clusterInternals, readForgeContext;
 let copilotLoadError = null;
 try {
@@ -91,9 +109,10 @@ try {
 function requireCopilot(toolName) {
   if (copilotLoadError) {
     throw new Error(
-      `${toolName} unavailable: copilot modules are absent from the current patch-line ` +
-      `(pending v1.6.7 reconciliation — see ROADMAP.md § "Update 2026-07-10" phase (i)). ` +
-      `Other tools are unaffected. Loader error: ${copilotLoadError}`
+      `${toolName} unavailable: the copilot modules failed to load from upstream/ ` +
+      `(docker-server-copilot-{core,blt,cluster,forge}.mjs). upstream/ is a .gitignored working ` +
+      `clone — check it is materialized and patches/additive-files.diff was applied ` +
+      `(see patches/README.md "Apply on a fresh clone"). Other tools are unaffected. Loader error: ${copilotLoadError}`
     );
   }
 }
@@ -457,8 +476,10 @@ const TOOLS = [
       'optionally filtered by layer (lineage | manifestation | observation | economy | meta_cognition), ' +
       'source graph name, and/or target graph name. ' +
       'Use to understand how ASTKG, Forge, TechGenealogy, and other sovereign graphs relate to each other. ' +
-      'NOTE: inter_graph.kuzu live-query requires the ELYSIUM KuzuDB bridge to be running; ' +
-      'this tool returns a stub when the bridge is unavailable — see CONCERN comment in server.mjs.',
+      'NOTE: live data requires env INTER_GRAPH_URL to point at a running ELYSIUM Σ-BRAIN-GRAPH-GATEWAY ' +
+      '(SIGIL-1658, sigma_brain_graph_gateway.py — an external ELYSIUM process, not part of this repo\'s ' +
+      'own docker-compose stack); this tool returns a documented stub when INTER_GRAPH_URL is unset or ' +
+      'the gateway is unreachable — see CONCERN comment in server.mjs.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -479,21 +500,31 @@ const TOOLS = [
       additionalProperties: false,
     },
     handler: async ({ layer = 'all', source = null, target = null }) => {
-      // CONCERN: The GitNexus MCP sidecar has no direct KuzuDB connection —
-      // it proxies HTTP calls to the gitnexus analytics web server.
-      // inter_graph.kuzu lives in the ELYSIUM sovereign data layer
-      // (data/governance/inter_graph.kuzu) and has no REST endpoint yet.
+      // CONCERN: The GitNexus MCP sidecar has no direct KuzuDB connection of
+      // its own — inter_graph.kuzu lives in the ELYSIUM sovereign data layer
+      // (data/governance/inter_graph.kuzu), outside this repo. Two paths:
+      //   A. A dedicated /inter-graph route on the gitnexus analytics web
+      //      server (docker-server-routes.mjs) — NOT wired; there is no such
+      //      route in this deployment, so this path always falls through.
+      //   B. The ELYSIUM Σ-BRAIN-GRAPH-GATEWAY (SIGIL-1658,
+      //      sigma_brain_graph_gateway.py) at env INTER_GRAPH_URL.
       //
-      // Two options for a future implementation:
-      //   A. Add a dedicated /inter-graph route to docker-server-routes.mjs
-      //      that opens inter_graph.kuzu via kuzu-node and runs Cypher.
-      //   B. Expose a thin ELYSIUM KuzuDB bridge at INTER_GRAPH_URL and call it here.
-      //
-      // MVP: try option A (call the analytics web server) and fall back to
-      // a documented stub so the tool is callable and returns a valid shape.
+      // UPDATE 2026-08-19 — option B is not a "future path": it is
+      // implemented below and IS the first path tried whenever INTER_GRAPH_URL
+      // is set. Re-measured here (2026-08-19) against the live gateway
+      // (INTER_GRAPH_URL=http://127.0.0.1:4750, per ELYSIUM's own
+      // .mcp.json): real BrainGraph data comes back (inter_graph lens, 15
+      // nodes / 21 edges at measurement time — ASTKG/Forge/tech_genealogy/…
+      // with real InterGraphRel edges), not a stub. The gateway is reachable
+      // from this MCP context — it is just NOT something this repo starts or
+      // owns: an operator must run sigma_brain_graph_gateway.py separately
+      // and set INTER_GRAPH_URL, which is why the stub fallback below stays
+      // (Zero-Masking: unset/unreachable is a real, expected state for any
+      // deployment of this repo outside ELYSIUM, e.g. the OSS upstream this
+      // is a sidecar for).
       const INTER_GRAPH_URL = process.env.INTER_GRAPH_URL || null;
       if (INTER_GRAPH_URL) {
-        // Future path: dedicated bridge endpoint
+        // Primary path when configured: the ELYSIUM Σ-BRAIN-GRAPH-GATEWAY.
         try {
           const params = { layer };
           if (source) params.source = source;
