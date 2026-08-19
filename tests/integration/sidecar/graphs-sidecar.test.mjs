@@ -1,16 +1,33 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { execSync } from 'node:child_process';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const PORT = 4759;
 const BASE = `http://localhost:${PORT}`;
 
-beforeAll(() => {
-  execSync('docker build -f Dockerfile.graphs -t gnx-graphs-test .', { stdio: 'inherit' });
-  execSync('docker rm -f gnx-graphs-test >/dev/null 2>&1 || true', { shell: '/bin/bash' });
+// Dockerfile.graphs lives at the fork root and `COPY graphs-sidecar/ ./`, so the
+// build context MUST be the fork root — not vitest's cwd (tests/), where the
+// Dockerfile is absent. Without this the build fails and beforeAll throws,
+// killing the whole suite (why it never had a green baseline).
+const HERE = dirname(fileURLToPath(import.meta.url));
+const REPO_ROOT = resolve(HERE, '..', '..', '..');
+
+// Portable (no `/bin/bash` — which does not exist on Windows, where spawnSync
+// threw ENOENT and killed the suite): rm/afterAll swallow errors via try/catch,
+// and the health wait is a native fetch poll instead of a bash `for` loop.
+beforeAll(async () => {
+  execSync('docker build -f Dockerfile.graphs -t gnx-graphs-test .', { stdio: 'inherit', cwd: REPO_ROOT });
+  try { execSync('docker rm -f gnx-graphs-test', { stdio: 'ignore' }); } catch { /* not running */ }
   execSync(`docker run -d --name gnx-graphs-test -p ${PORT}:4749 -e GRAPHS_DIR=/tmp/graphs gnx-graphs-test`, { stdio: 'inherit' });
-  execSync(`for i in $(seq 1 30); do curl -fsS ${BASE}/health && break; sleep 1; done`, { stdio: 'pipe', shell: '/bin/bash' });
+  let up = false;
+  for (let i = 0; i < 30; i++) {
+    try { if ((await fetch(`${BASE}/health`)).ok) { up = true; break; } } catch { /* not up yet */ }
+    await new Promise((r) => setTimeout(r, 1000));
+  }
+  if (!up) throw new Error('gnx-graphs-test did not become healthy in 30s');
 }, 240000);
-afterAll(() => { execSync('docker rm -f gnx-graphs-test >/dev/null 2>&1 || true', { shell: '/bin/bash' }); });
+afterAll(() => { try { execSync('docker rm -f gnx-graphs-test', { stdio: 'ignore' }); } catch { /* already gone */ } });
 
 describe('graphs sidecar', () => {
   it('create -> ingest -> render round-trips a graph', async () => {

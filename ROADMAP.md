@@ -1,10 +1,10 @@
 # GitNexus — Roadmap
 
 État vivant des fonctionnalités déjà livrées et des prochaines pistes.
-Dernière mise à jour : **2026-07-10** — voir « Update 2026-07-10 — Cap re-séquencé » ci-dessous
-(⚠️ le bump v1.6.7 décrit dans l'ancienne ligne de date a été **reverté** le 2026-07-07 après
-l'incident de gutting des patches ; sources+patches = v1.6.5, image CLI = 1.6.7, réconciliation
-planifiée — phase (i) ci-dessous). Ancienne entrée : 2026-06-14 (bump upstream v1.6.5 → v1.6.7 + cohabitation diff resync — v1.6.6 mega-release ~190 PRs (Scope-resolution RFC #909, Linux-kernel-scale parallel indexing, cross-service API graphs, legacy resolution engine deleted, web Tree/Circles views, .gitnexusrc), v1.6.7 patch (vendored tree-sitter prebuilds, MCP list_repos pagination, C++ inheritance-lattice fixes, taint/PDG substrate M0). Patches lbug-staleness + incremental-dump réappliqués. Avant : Multi-repo unified graph livré (#65) — `GET /graph/merged?group=` fusionne les graphes per-repo au niveau fichier + arêtes cross-repo des contrats ; groupe synchronisé via `gitnexus group` (endpoints worker + `docker-server-group.mjs`) ; mode "Group graph" dans le canvas (`GroupGraphPanel` + `group-graph-adapter.ts`). **4/8 items enterprise couverts** (Code Wiki, Auto-reindexing, Regression forensics, Multi-repo support ✅). Avant : Regression forensics polish (#62) — coupling 6e métrique watchable/auto-forensiquable + "Locate regression" dans EntropyCommitTimeline. Aussi : Commit-level time-travel A+B+C COMPLET — mode Commits timeline (#60) + baseline auto-seed caché/promote (#61) + pré-chauffage des diffs (#63). Avant : "Auto" regression forensics (#59), Regression Phase 2 (#58), MVP (#57), Auto-reindexing (#56), Code Wiki UI (#55).).
+Dernière mise à jour : **2026-08-19** — voir « Update 2026-08-19 — Balayage complet 5 angles (code, git, mémoire, prod live) » ci-dessous (périmés purgés, ouverts consolidés). Avant : « Update 2026-07-15 (4) » (P1 CI clos, gates integration+e2e re-durcis evidence-backed, `.vsix` v0.1/v0.2 packagé)
+(✅ le split-brain de versions est **résolu** : le re-bump v1.6.7 a été **ré-exécuté le 2026-07-11** —
+sources+patches = image CLI = `v1.6.7` ; le revert du 2026-07-07 après l'incident de gutting est
+désormais de l'histoire, cf. INVENTORY.md entête + phase (i).4 ✅). Ancienne entrée : 2026-06-14 (bump upstream v1.6.5 → v1.6.7 + cohabitation diff resync — v1.6.6 mega-release ~190 PRs (Scope-resolution RFC #909, Linux-kernel-scale parallel indexing, cross-service API graphs, legacy resolution engine deleted, web Tree/Circles views, .gitnexusrc), v1.6.7 patch (vendored tree-sitter prebuilds, MCP list_repos pagination, C++ inheritance-lattice fixes, taint/PDG substrate M0). Patches lbug-staleness + incremental-dump réappliqués. Avant : Multi-repo unified graph livré (#65) — `GET /graph/merged?group=` fusionne les graphes per-repo au niveau fichier + arêtes cross-repo des contrats ; groupe synchronisé via `gitnexus group` (endpoints worker + `docker-server-group.mjs`) ; mode "Group graph" dans le canvas (`GroupGraphPanel` + `group-graph-adapter.ts`). **4/8 items enterprise couverts** (Code Wiki, Auto-reindexing, Regression forensics, Multi-repo support ✅). Avant : Regression forensics polish (#62) — coupling 6e métrique watchable/auto-forensiquable + "Locate regression" dans EntropyCommitTimeline. Aussi : Commit-level time-travel A+B+C COMPLET — mode Commits timeline (#60) + baseline auto-seed caché/promote (#61) + pré-chauffage des diffs (#63). Avant : "Auto" regression forensics (#59), Regression Phase 2 (#58), MVP (#57), Auto-reindexing (#56), Code Wiki UI (#55).).
 
 > 📋 **Voir aussi** [INVENTORY.md](INVENTORY.md) — état des lieux complet :
 > features upstream + nos ajouts + distance avec upstream. À utiliser
@@ -14,6 +14,319 @@ L'objectif global : transformer GitNexus en **outil d'archéologie + de
 diagnostic structurel** pour un écosystème de dépôts, pas juste un
 visualiseur de code. Chaque ligne ici décrit une promesse précise — pas
 un nom marketing — et son premier pas concret.
+
+---
+
+## Update 2026-08-19 — Balayage complet 5 angles (code, git, mémoire, prod live) : périmés purgés, ouverts consolidés
+
+Balayage consolidé sur 5 angles (lecture code source, historique git commits/PRs, mémoire
+hot-tier ELYSIUM, état prod live, cross-check PRs GitHub fork+ELYSIUM) pour trancher le backlog
+GitNexus entre items réellement **CLOS** (preuve à l'appui, retirés du backlog actif) et items
+toujours **OUVERT** (listés tels quels, aucun n'est ré-inventé ici).
+
+### 🔴 OUVERT — Production/infra (priorité critique)
+
+- **[OUVERT]** Fraîcheur des données de la lens en prod — Le bridge SIGIL-1699 journalise
+  `synced=0/2` et purge les health-files >168h (`purged-stale`) ; le healer Σ-ASCLEPIOS reste
+  inerte pour la même raison. Distinct du bug de routing (déjà corrigé, voir PÉRIMÉ ci-dessous).
+  Même symptôme signalé dès le 07-10 (`register-health-fresh` resté ouvert) et encore le 08-10
+  sans commit de fix depuis.
+- **[OUVERT]** Dérive gitops/ingress GitNexus — Le manifeste gitops ne déclare que `/` → web
+  alors que le live sert déjà `/api/*`, `/home`, `/graphs`, `/lens/*`. Un sync ArgoCD sur l'état
+  actuel du gitops écraserait ces routes. Risque latent, pas encore matérialisé.
+- **[OUVERT]** 4 outils MCP copilot en fail-loud — `inventoryMCPTools`/`readBLTLedger`/
+  `readClusterOpsLedger`/`readForgeContext` lèvent explicitement « copilot modules unavailable ...
+  pending v1.6.7 reconciliation » (`server.mjs:84-93`). Preuve code directe, la plus récente
+  disponible.
+- **[OUVERT]** Divergence upstream v1.6.7 vs main non tranchée — Fork épinglé sur le tag v1.6.7
+  (resync 07-11) ; dry-run contre `main` amont montre +257 commits d'écart et 10 fichiers à
+  réappliquer à la main. C'est la cause racine probable de l'item précédent (reconciliation
+  v1.6.7). **[TRAITER EN DERNIER, APRÈS TOUT LE RESTE]**
+- **[OUVERT]** `query_meta_graph` MCP retourne un stub — Documenté dans le code lui-même :
+  « returns a stub when the bridge is unavailable » (le bridge KuzuDB ELYSIUM doit tourner pour
+  interroger `inter_graph.kuzu` en direct).
+- **[OUVERT]** 2 tests E2E quarantainés depuis 2026-07-12 — `06-cluster-halos.spec.ts` (toggle
+  jamais ouvert par le test + fixture 0 cluster) et `timeline-zoom-and-diff.spec.ts` (wheel event
+  non-passif inatteignable en Chromium headless — la feature marche interactivement, c'est un
+  problème de test).
+
+### 🟠 OUVERT — Lentille Souveraine / Atelier (priorité moyenne)
+
+- **[OUVERT]** Atelier lentilles Phase 2 — surface guidée — `lens_promoter` (reconciler
+  create-only des lentilles authored) reste `status: active`, jamais livré. Dernière mention
+  « reste Atelier = surface guidée future (Phase 2) + démo select/insight » datée 07-28, aucune
+  preuve de livraison postérieure.
+- **[OUVERT]** Composition de lentilles (Phase 2+ north-star) — Contrairement à narration et
+  lentilles-code (voir PÉRIMÉ plus bas), aucun rapport ne trouve de commit/PR couvrant la
+  composition de lentilles annoncée dans le plan Phase 2+.
+- **[OUVERT]** Branche `feat/classdiagram-export-and-class-lens` non proposée en PR — En avance
+  sur la dernière PR mergée du fork (#6), commit HEAD `4b06e68f`, jamais poussée/PR'd.
+- **[OUVERT]** Graphe des couches — 4 disputes non tranchées — 7 nœuds « -studio » à trancher
+  (code à ouvrir), D3 (octoprint), D4 (finance/academia), D6 (assets). Dernière mention 08-10,
+  jamais rouverte depuis.
+
+### 🟡 OUVERT — Backlog GitNexus core / Tier 2bis (priorité moyenne-basse)
+
+- **[OUVERT]** Ghost Cluster auto-cluster-id instable — `auto-cluster-<sha256(...)>` casse si
+  les membres du cluster changent ; fix stable-id (pivot invariant) explicitement DEFERRED le
+  07-11.
+- **[OUVERT]** Repo ID stable pas encore consommé par les endpoints cross-repo — MVP livré
+  (Tier 2bis.5) mais refactor de consommation reporté à 2bis.5b.
+- **[INCERTAIN]** Watches — pas de surface dynamique POST/DELETE (2bis.3b) — Roadmap dit
+  « déclaratif uniquement via `.gitnexus.json` édité à la main », mais un outil MCP
+  `gitnexus_watches` existe et est actuellement callable — à vérifier si ça couvre le besoin.
+- **[OUVERT]** Ghost `placementAccuracy` — STAY-FROZEN — Backend Leiden levé mais aucune
+  vérité-terrain falsifiable disponible pour scorer un placement fichier↔communauté.
+- **[INCERTAIN]** « Co-commits même bracket » — scope jamais élucidé — Référencé une seule fois
+  (ROADMAP l.206), aucun détail retrouvé malgré plusieurs recherches.
+
+### ⚪ OUVERT — UX / architecture (priorité basse)
+
+- **[OUVERT]** Croissance UI horizontale — Audit/Gantt encore en panneaux flottants/modals ;
+  auto-sélection du groupe actif dans le sélecteur 3-segments manquante.
+- **[OUVERT]** Vision architecturale — 3 chemins non tranchés formellement — Chemin B
+  (Architect's Copilot) recommandé mais jamais validé explicitement « avant pivot ».
+- **[OUVERT]** Tier 3.6 Architectural CI — réévaluation Option B jamais faite — Condition de
+  réévaluation (Phase (i) close) remplie depuis l'Update (4) du 07-15, mais la réévaluation
+  elle-même n'a pas eu lieu.
+
+### ⚫ GELÉ / BACKLOG sans trigger atteint (priorité la plus basse — pour mémoire)
+
+- Tier 3.1/3.2/3.3/3.4/3.5/3.8/3.10 — Dead code instrumentation runtime, profils d'auteurs
+  git-only, Conway's Law audit, auto-PR refactoring, modèle prédictif de bugs, domain-specific
+  AST extractors, plugin architecture analytics — tous GELÉS/gated measure-first, aucun trigger
+  atteint.
+- Optimisations d'existant programmées, sans trigger — Index inversé repoId, round-trip
+  export/import versionné (fail-loud préventif posé), snapshot storage structural sharing,
+  semantic label cache invalidation, frontend bundle code-splitting par panel.
+- Graph Platform — backlog pur — P2.3 reste (assortativité, diamètre, Leiden multi-niveaux,
+  arêtes pondérées, UI kNN/slider/spectral, couverture MCP complète), Template Library
+  « Domaines », LoD riche, Follow-ups IA.
+- VSCode extension — probe usage réel jamais lancé — Code livré, action opérationnelle
+  (installer + laisser tourner 7 jours) reste à faire.
+- `doc-counters-autogen` — réconciliation 34 vs 36 tools non faite.
+- Revue vocabulaire souverain SDK publics — explicitement différée.
+- `gitnexus_multigraph_viewer` — Phase 9, stade brainstorm.
+- `gitnexus_viewer` alpha — runbook humain non créé, MCP bridge annoncé « plus tard ».
+- `gitnexus_assimilator` — phase 0 registration, catalog-only.
+- Health-lens générique + Brain-Kuzu DomainNode unifié — Item northstar « P1 next », aucune
+  preuve de livraison.
+- **[INCERTAIN]** `data-path-decision` / Timeline Task 11 — Mentionnés une seule fois chacun,
+  jamais détaillés ni recroisés ailleurs.
+
+### ✅ PÉRIMÉ-DÉJÀ-FAIT — vérifiés résolus (retirés du backlog actif)
+
+- **[CLOS]** Graph Atlas Home (#827) déploiement prod — Preuve : image `20260811-couches`
+  (révision 10), `/home` (9672 o) et `/graphs` (15369 o) répondent en direct avec du contenu
+  réel.
+- **[CLOS]** Routing `/lens/*` (gap Σ-COUCHES, « 6 lentilles jamais joignables ») — Preuve :
+  toutes les routes testées renvoient des payloads distincts (4 Ko à 1,6 Mo) ; noms invalides →
+  vrai 404. Symptôme « 200/1808 o partout » disparu (#966/#968/#969, 08-11).
+- **[CLOS]** Cache-réponse ETag/304 ((ii).4) — Preuve : livré le même jour que l'Update (4) du
+  07-15, texte « reste ETag » était un résidu de rédaction.
+- **[CLOS]** Lens Atelier « Gate live » (non testé unitairement) — Preuve : MAJ 07-28 « Gate live
+  DÉPLOYÉ : bridge-api:0.1.75, routes 404→401 confirmé ».
+- **[CLOS]** Lens narration + lentilles-code (Phase 2 north-star) — Preuve : PR fork #4 « câbler
+  la narration des lentilles au MCP » (07-21) et PR ELYSIUM #609 « lentilles-code via PROXY
+  gateway→fork » (07-18), toutes deux MERGED.
+- **[CLOS]** Pipeline de rebuild d'image gateway — Preuve : déploiement live montre 10 révisions
+  successives réussies, dernière datée 08-11.
+- **[CLOS]** `lens_declaration_parity` — statut flow.json stale — Preuve : décrit comme « gate
+  armé vert » mais status jamais remonté à livré — hygiène de doc, pas un gap fonctionnel.
+- **[CLOS]** Merger PR #452 / #439 (références brainstorm 07-10) — Preuve : largement dépassées
+  par le volume de travail mergé depuis (jusqu'à #1036+).
+- **[CLOS]** Phase T quick-win (CLAUDE.md 5482→16504 nœuds) — Preuve : le fichier CLAUDE.md
+  reflète déjà 16504 nœuds.
+
+### ⚠️ CONTRADICTIONS NON TRANCHÉES
+
+1. PR fork #5 « fermer la quarantaine copilot » (07-21, MERGED) vs code toujours fail-loud
+   (`server.mjs:84-93`, « pending v1.6.7 reconciliation ») — #5 a probablement fermé une
+   quarantaine de TESTS, pas résolu la reconciliation v1.6.7 sous-jacente. À vérifier en lisant
+   le diff de #5.
+2. Outil MCP `gitnexus_watches` existant vs « pas de surface dynamique POST/DELETE »
+   (Tier 2bis.3b) — pas clair si le tool MCP satisfait le besoin roadmap.
+3. « Composition » de lentilles — présente dans le plan Phase 2+ mais absente de toute PR/
+   vérification live. Traité comme OUVERT par défaut.
+
+### PRs mergées ELYSIUM (RoJLD/ELYSIUM) touchant gitnexus après le 2026-07-15
+
+#832 (03-08), #884 (10-08), #919 (10-08), #949 (10-08), #966 (11-08), #968 (11-08), #969
+(11-08), #827 (29-07), #602 (17-07), #609 (18-07), #649 (20-07), #686 (21-07), #861 (04-08).
+Aucune PR gitnexus ouverte côté RoJLD/ELYSIUM.
+
+### PRs mergées fork GitNexus (RoJLD/GitNexus, remote sovereign) après le 2026-07-15
+
+#1 P0-5 prompt-injection guard (18-07), #3 Lens Studio shell authoring (19-07), #4 narration
+lentilles MCP (21-07), #5 fermer quarantaine copilot (21-07), #6 re-auditer triggers Tier 3
+gelés (21-07). Aucune PR ouverte. Branche locale checked-out
+`feat/classdiagram-export-and-class-lens` (HEAD `4b06e68f`) est EN AVANCE sur #6, jamais
+proposée en PR.
+
+---
+
+## Update 2026-07-15 — topologie corrigée (default branch) ; flip integration/e2e tenté puis REVERTÉ (la CI cold-start a falsifié la preuve locale)
+
+Les deux derniers jobs `continue-on-error` (`integration` + `e2e` dans
+`.github/workflows/test.yml`) sont **durcis** : un tier lourd rouge BLOQUE
+désormais un déploiement. La précondition du contrat daté (« 2 runs verts sur
+PR » — Update 2026-07-10, phase (i).3) s'est révélée **topologiquement
+insatisfiable** : `main` est un miroir upstream gelé (2026-05-22) sans ancêtre
+commun avec la branche de dev (GitHub compare → *404 no-common-ancestor* → aucune
+PR créable), et `workflow_dispatch` n'est pas enregistré (le workflow ne vit que
+sur la branche de dev, jamais sur la branche par défaut). Les tiers lourds ne
+peuvent donc tourner **que sur un push `deployment`** (branche ancêtre de la dev,
+cf. phase (i).4). Base de preuve du flip = **locale** : integration **85/85** vert
++ e2e **34** vert (2026-07-14), + le fix de dérivation du tag image (2026-07-11)
+qui a supprimé la cause environnementale des deploys historiquement rouges. La
+validation CI réelle surviendra naturellement au **prochain merge feat→deployment
++ push** (le moment de déploiement). Corrige aussi le rouge CI de branche : 2
+tests classdiagram orphelins (`unit/class-diagram.test.mjs`,
+`integration/endpoints/sysml-export-class.test.mjs`) réinscrits dans
+`tests/README.md` → `inventory-check` vert (premier vert de branche depuis le
+2026-07-11).
+
+Iron **Σ-CI-GATE-ENFORCEMENT-CAN-OUTRUN-CI-VALIDATION-ON-A-DISJOINT-FORK** : sur
+un fork à l'histoire disjointe de son miroir upstream, « prouver en CI avant de
+gater » peut être structurellement impossible ; la preuve locale + le raisonnement
+sur le seul chemin d'exécution réel (deployment) remplacent alors le run vert.
+
+**MAJ même jour — flip REVERTÉ après validation CI.** Le fix topologique a été
+poussé plus loin : la **branche par défaut du fork** a été repointée `main` →
+`feat/classdiagram-export-and-class-lens` (le tronc de dev), ce qui **enregistre
+`workflow_dispatch`** et permet enfin de lancer les tiers lourds en CI **sans
+déploiement**. Premier dispatch (run `29406894966`) : **boot-smoke VERT** (le stack
+docker de base fonctionne en CI) mais **integration ROUGE** — `global-setup` monte
+le stack `Healthy` puis `analyzeFixture`→`pollUntilDone` reçoit
+`state.error='failed'` du job `/api/analyze` **interne au conteneur** (e2e skippé
+par `needs`). Le 85/85 local était **tiède** et ne prédit pas le cold-start CI.
+**Conséquence : `continue-on-error` RESTAURÉ** sur integration + e2e (un hard-gate
+rouge = violation Zero-Masking). Le baseline vert que le flip exigeait n'existe
+toujours pas ; diagnostiquer l'échec analyze interne au conteneur (logs
+`gitnexus-server-test` ; suspects : embeddings/HF cache ou analyze du fixture dans
+un conteneur CI frais) avant de re-flipper. **Le fix topologique, lui, RESTE** (vrai
+gain durable : dispatch opérationnel, PRs saines, validation CI des tiers lourds
+enfin possible). Iron **Σ-LOCAL-WARM-GREEN-DOES-NOT-PREDICT-CI-COLD-START** ·
+**Σ-THE-TOPOLOGY-FIX-IS-WHAT-LET-CI-FALSIFY-THE-FLIP** (corriger la default branch a
+débloqué la mesure qui a invalidé l'hypothèse — la validation empirique a fait son
+travail).
+
+> **↪ Résolu depuis — voir Update 2026-07-15 (4).** Le « baseline vert qui n'existe pas
+> encore » a été produit : la cause de l'échec analyze cold-start (bake mmap 16 GiB
+> irréservable sur un runner CI) est corrigée, les tiers lourds passent en CI
+> (`workflow_dispatch` verts), et `continue-on-error` a été **re-retiré** — cette fois
+> sur preuve CI-froide, pas locale-tiède.
+
+---
+
+## Update 2026-07-15 (2) — Audit liveness measure-first (re-priorisation : opérationnel > Tier 3 gelé)
+
+Audit measure-first sur le stack docker live (via `docker exec` — le stack tournait
+**sans mapping de ports hôte**, process joignable seulement en interne). **Meta-finding
+cardinal : le stack live ≠ le code.** Images mesurées : web `1.6.7-patched`
+(2026-07-12), **API `1.6.5-patched` (2026-07-07, pré-rebump v1.6.7 du 07-11)**. Le
+stack sert du code d'il y a 3-8 jours → `nodes/alive-between` renvoie **500**
+(`Unexpected token '<'`) = le bug déjà corrigé (`83bbfd52`) mais **non déployé**. La
+liveness live n'est donc fiable qu'après rebuild.
+
+**Liveness (caveat image périmée)** : ~20 endpoints **200** (analytics core,
+classdiagram v3 `mermaid-class`, regression, commits, graph/templates, prewarm,
+export, ghosts/sync, wiki/status, auto-reindex, watches, groups). Anomalies : **churn
+200 mais ~18 s** (lenteur réelle, feature cœur #8) ; `nodes/alive-between` 500
+(artefact image-périmée) ; dissonance/clusters 404 (config/sync, borderline attendu).
+
+**Tests/CI** : unit 733 ✓ · boot-smoke ✓ · **integration RED cold-start CI** (analyze
+interne conteneur `state.error='failed'`, gate reverté ce jour) · e2e 34 local (~13
+specs à migrer `connectRepo`) · quarantaine propre (1, copilot sidecar).
+
+**Re-priorisation** — le « reste » à haute valeur n'est PAS le Tier 3 (gelé, sans
+consommateur committé) mais l'**opérationnel mesuré** :
+- **P1** fixer l'analyze CI integration (débloque le re-durcissement des gates) ;
+- **P2** redéployer le stack (rebuild image courante — live ≠ code) ;
+- **P3** churn ~18 s → **déclenche enfin** le caching/ETag Tier 3 (le trigger
+  measure-first exigé existe désormais) + converge avec (ii).4 coupling-cache ;
+- **P4** finitions (ii) : migrer 13 specs e2e, packager VSCode `.vsix` v0.1.
+
+**Insight** : P1/P2/P3 = **le même nœud** — un rebuild frais révèle à la fois si
+l'analyze CI est un problème de conteneur-frais et si les fixes (alive-between)
+marchent live. Iron **Σ-THE-LIVE-STACK-CAN-LAG-THE-CODE-BY-DAYS** ·
+**Σ-A-FROZEN-CACHING-ITEM-GETS-ITS-TRIGGER-FROM-A-MEASURED-SLOW-ENDPOINT**.
+
+---
+
+## Update 2026-07-15 (3) — P2 déployé + P3 cache livré (le nœud P1/P2/P3 résolu)
+
+**P2 — redéploiement.** Rebuild + recreate du stack docker local depuis HEAD :
+API `1.6.5-patched`→`1.6.7-patched`, web republié `0.0.0.0:4173`. Measure-first a
+**corrigé une fausse attribution de l'audit** : le fix `alive-between` n'était PAS
+`83bbfd52` (test-only) mais le fix *in-process* `listSnapshotNamesAndDates` (fichier
+owned) — l'image web du 07-12 le précédait. Après rebuild : `nodes/alive-between`
+**500→200**, handler in-process déployé. Caveat : le forward hôte de l'API `:4747`
+reste coincé dans le backend Docker Desktop (relais wslrelay périmé, `NetworkSettings.Ports`
+vide) — non-bloquant (le web proxifie `/api`, `localhost:4173/api/repos`=200) ; workaround
+MCP `GITNEXUS_API=http://localhost:4173`. Iron **Σ-PORTBINDINGS-DECLARED-NETWORKSETTINGS-EMPTY-IS-A-FAILED-HOST-BIND**.
+
+**P3 — cache partagé per-snapshot (Tier 3 caching, le trigger measure-first exigé
+existait enfin).** `/churn`, `/growth`, `/lifespan`, `/coupling` cold-scannaient chaque
+point de timeline via Cypher (`MATCH (n) RETURN n.id`) — chaque requête cold-open une
+DB lbug (mesuré : 1 requête live = **25.8 s**, endpoints 15-33 s), avec 4 copies dupliquées
+de `fetchNodeIds`. **Insight** : un snapshot `@<hash>` est immuable → sa liste de node-ids
+est cacheable **à vie**. Nouveau module owned `docker-server-snapshot-nodeids.mjs`
+(`getSnapshotNodeIds` : mémoire + disque pour les snapshots, in-memory keyed-`indexedAt`
+pour le live) ; les 4 handlers l'appellent (DRY : -4 copies). **Speedup mesuré live**
+(HMMstudio) : churn `33s→6.9s` (froid, réchauffe), growth `21s→0.016s`, lifespan
+`15s→0.05s`, coupling `33s→0.11s`, churn-répété `33s→0.03s`. Persistance disque vérifiée
+(2 snapshots écrits, live absent). 739 unit verts, 6 nouveaux tests. **Packaging seam
+attrapé** : `Dockerfile.web` COPY explicite par fichier → ligne COPY ajoutée pour le
+module (sinon `Cannot find module` runtime). Iron **Σ-IMMUTABLE-SNAPSHOT-IDS-CACHE-FOREVER-LIVE-KEYED-BY-REINDEX**
+· **Σ-A-SHARED-CACHE-MAKES-OPENING-ONE-ENDPOINT-WARM-THE-OTHERS** · **Σ-EXPLICIT-DOCKERFILE-COPY-A-NEW-MODULE-IS-A-PACKAGING-TASK**.
+[spec](docs/superpowers/specs/2026-07-15-snapshot-nodeids-shared-cache-design.md)
+
+**P4 — measure-first : e2e connectRepo déjà fait.** 12/13 specs e2e utilisent déjà
+`connectRepo` (l'audit surestimait « ~13 à migrer ») ; la 13ᵉ (`copilot-panel`) est le
+sidecar copilot en quarantaine. Reste P4 réel = packager le VSCode `.vsix` v0.1.
+
+---
+
+## Update 2026-07-15 (4) — P1 clos (analyze CI vert cold-start) + gates re-durcis evidence-backed + P4 packagé (.vsix v0.1/v0.2)
+
+Le nœud opérationnel P1-P4 de l'Update (2) est **entièrement soldé**. L'Update (3)
+n'avait documenté que P2/P3 ; voici P1 et P4.
+
+**P1 — analyze CI integration réparé (le blocage du re-durcissement levé).** Root cause
+trouvée par Workflow (4 facettes + synthèse, evidence code) : l'image de base bake
+`GITNEXUS_LBUG_MAX_DB_SIZE=16 GiB` — un runner CI ne peut pas réserver cet espace
+d'adressage → `new lbug.Database()` abort « Buffer manager: Mmap failed » au 1er op natif
+du worker analyze → retry ×2 → job `failed` en ~8 s. Le « 85/85 warm » local passait pour
+deux raisons cumulées : WSL2/Windows sur-alloue l'adressage, **et** le run était produit
+sous `INTEG_SKIP_SETUP=1` (court-circuite `analyzeFixture` → n'exerçait **jamais** ce
+chemin). 4 fixes owned (hors `upstream/`, zéro régén patches) : (1) `docker-compose.test.yml`
+cap `GITNEXUS_LBUG_MAX_DB_SIZE=2 GiB` (server + web) ; (2) `stack.mjs` chmod `a+rwX`
+post-extraction (mkdtemp 0700 → uid conteneur `node` ≠ uid runner → EACCES sur `.gitnexus/` ;
+no-op Windows) ; (3) `Dockerfile.cli` `git config safe.directory '*'` (miroir `Dockerfile.web` ;
+dubious-ownership cassait churn/snapshot silencieusement) ; (4) `analyze.mjs` poller surface
+`s.error` au lieu de `status:'failed'` (dé-masquage Zero-Masking — toute erreur cold-start
+future devient lisible). Commits `67f95436` (integration) + `36a4a06e` (extension e2e).
+
+**Gates re-durcis, cette fois prouvés en CI.** `continue-on-error` re-retiré de `integration`
++ `e2e` (`b22fe39a`) sur **preuve CI réelle** : les runs `workflow_dispatch` (full heavy tiers)
+sont **VERTS cold-start** — première fois du fork. Le durcissement précédent (Update 07-15 (1),
+`edc7d41d`) avait été reverté (`f17493fc`) précisément parce que la preuve était locale-tiède ;
+ici la preuve est CI-froide. Iron **Σ-THE-16GIB-MMAP-BAKE-IS-UNRESERVABLE-ON-A-CI-RUNNER**
+· **Σ-INTEG-SKIP-SETUP-WARM-NEVER-EXERCISED-THE-COLD-PATH**.
+
+**P4 — .vsix packagé.** `vsce package` v0.1 (`64eb2b42`) puis v0.2 (`e45f0245` : ajout `LICENSE`
+PolyForm-Noncommercial + `repository` → zéro warning vsce ; `@types/node` résout à la racine
+6 erreurs TS `node:*`). Note doctrine (ii).5 : le v0.2 ici = **métadonnées de packaging**, pas
+une feature — l'**observable d'usage** (log local / verdict structuré) et le **go/no-go probe
+7 j** restent à définir avant tout v0.2 *fonctionnel*.
+
+**État CI de branche (mesuré `gh run list`)** : HEAD `e45f0245` = vert ; runs `workflow_dispatch`
+6m39s/6m47s verts (tiers lourds). Le split-brain de version est clos (entête réconcilié). Le
+« reste » réellement ouvert et **non-gelé** se réduit désormais à : (ii).4 cache-réponse
+coupling/ETag (perf déjà atteinte par P3 — reste la clé ETag/304 spec'd), (ii).5 observable
+d'usage `.vsix`, (ii).6 ghost placementAccuracy (DEFERRED, backend Leiden absent). Le Tier 3
+reste **gelé avec triggers de dégel écrits** (phase (iii)).
 
 ---
 
@@ -50,6 +363,13 @@ quelle, pas de publication marketplace/.vsix.
    des ~24 tests Timeline (`tests/quarantine.json` committé + plafond anti-croissance) avec **cible de
    résorption chiffrée datée** (≤8 fin (i), 0 fin (ii) — sinon suppression assumée avec verdict, jamais de
    quarantaine permanente).
+   ✅ **CIBLE ATTEINTE 2026-07-21 — quarantaine à 0**, par la seconde branche de l'alternative
+   (« suppression assumée avec verdict »), pas par dé-quarantaine. La dernière entrée était les 8 e2e
+   `copilot-panel` ; leur surface n'a jamais existé et son abandon est acté (cf. phase (ii) item 1).
+   `cap` passe de 8 à **0** : un plafond de 8 sur une liste vide aurait autorisé 8 nouvelles quarantaines
+   sans re-ratification, soit exactement le mécanisme que cette règle voulait empêcher. Toute quarantaine
+   future exige désormais de relever le plafond dans un commit — un acte délibéré et revu. Aucun
+   `describe.fixme` ne subsiste dans `tests/e2e/specs/`.
 4. **Séquence de réconciliation UNIQUE** ✅ **EXÉCUTÉE 2026-07-11** (re-bump v1.6.7 : 136 additive / 21 inplace, 12 conflits résolus à la main, copilot re-posé 4 modules sidecar ; vérifs Docker build-gate + boot-smoke + drift-check 0 + sidecar 34 tools VERTES. Note mesurée : le merge class-lens→deployment s'est avéré un **fast-forward** — deployment est un ancêtre — et copilot a été récupéré de `c560a852`, sans re-perte au merge.) (finding critical du panel — 3 opérations régénéraient les mêmes
    diffs depuis 3 bases différentes = 3e gutting garanti) :
    a. merge `feat/classdiagram-export-and-class-lens` → `deployment` (c'est le code v7 live ; extraire
@@ -67,28 +387,99 @@ quelle, pas de publication marketplace/.vsix.
 
 ### Phase (ii) — Preuve + finitions des chantiers en vol
 
-1. **Copilot Phase D : de « scaffolded » à PROUVÉ** — e2e `copilot-panel.spec.ts` 8/8 exécutés réellement
-   (avec le job e2e enforced), `/copilot/metrics` Prometheus vérifié monotone, smoke MCP 4 tools verts.
-2. **class-diagram export / class-lens** : spec + DoD d'abord (mesurer ce que la symbol-graph lens rend
-   DÉJÀ ; scope-cut : lens dérivée + export via `docker-server-sysml-export-core.mjs` étendu
-   `format=mermaid-class` ; si le gate conclut à l'abandon → **escalade user**, pas de kill auto) → build.
-3. **Timeline Task 11** : câbler `graphMode='diff'` au canvas (util `graph-diff.ts` + spec e2e existants)
-   OU retirer le bouton menteur ; dé-quarantiner spécifiquement les tests Timeline touchés.
-4. **Regression coupling < 30s** : cache série coupling par snapshotId (clé = hash repoId+snapshotId+route+
-   **params normalisés** ; LIVE jamais caché) → le webhook watch porte enfin son culprit.
-5. **Extension VSCode** : packager le `.vsix` v0.1 + **observable d'usage défini AVANT le probe 7j**
-   (log local ou verdict structuré) → go/no-go v0.2 gravé. Pas de v0.2 sans preuve d'usage.
-6. **ghost placementAccuracy** : DEFERRED-documenté par défaut ; build seulement si le ghost-audit est
-   réellement consulté (gate mesurable via `/metrics`).
+1. **Copilot Phase D — MESURÉ 2026-07-11** : moitié sidecar **✅ PROUVÉE** (`node mcp-server/smoke.mjs` →
+   4 tools copilot verts, `gitnexus_copilot_inventory` gate=**GREEN**, 9/9 endpoints mappés) ; moitié web
+   **abandonnée par design** (Σ-COPILOT-IS-SIDECAR-ONLY confirmé 3× : routes `/copilot/*` non enregistrées
+   dans `docker-server-routes.mjs`, modules non COPY'd dans `Dockerfile.web`, 8/8 e2e échouent — `/copilot/metrics`
+   rend le shell SPA). **Décision user ratifiée : sidecar-only.** Les 8 e2e `copilot-panel.spec.ts` (panel web +
+   metrics) **quarantinés `test.describe.fixme` avec verdict** (`tests/quarantine.json`, condition de dé-quarantaine
+   falsifiable) → l'e2e est **vert** (8 skipped / 1 passed), enforçable sans rouge menteur. Le vrai gate copilot =
+   le smoke MCP.
+   ✅ **CLOS 2026-07-21 — les 8 tests sont RETIRÉS, pas dé-quarantinés.** Re-mesuré, l'état est inchangé
+   depuis le 11/07 : routes `/copilot/*` **0 occurrence**, `COPY` des modules **0 occurrence**, panel React
+   **aucun**. Garder indéfiniment 8 tests d'une surface abandonnée violait la règle que le registre énonce
+   lui-même (« jamais permanente »). Ce n'est **pas une perte de couverture** : ces tests assertaient une
+   *interface* (sous-panneaux, toast, onglets, indicateur de cache, endpoint Prometheus), pas la logique du
+   copilot — et le smoke MCP, qui reste le gate, couvre la *donnée*. Les deux ne sont pas équivalents ; il
+   n'y a pas de substitution, il y a un abandon assumé, et c'est écrit tel quel.
+   La **spécification est préservée** plutôt que jetée : `tests/quarantine.json` porte désormais une section
+   `retired` listant les 8 comportements un par un, les 3 conditions de renaissance, et le pointeur de
+   récupération `git show 8f1d19a3:tests/e2e/specs/copilot-panel.spec.ts` — **commande exécutée et vérifiée
+   (204 lignes)**, pas écrite de tête.
+2. **class-diagram export / class-lens** — **SPEC+DoD LIVRÉE 2026-07-11** ([spec](docs/superpowers/specs/2026-07-11-classdiagram-export-and-class-lens.md)),
+   verdict du gate = **BUILD** (pas d'abandon → pas d'escalade). Mesuré sur `HMMstudio` live : le KnowledgeGraph
+   A la donnée (Class ×60, Interface ×92, HAS_METHOD/HAS_PROPERTY/MEMBER_OF/CALLS) mais **PAS d'arête
+   d'héritage** (EXTENDS/IMPLEMENTS non émises) → scope-cut v1 honnête = classes + membres + associations,
+   **héritage DIFFÉRÉ** (`meta.inheritance:'unavailable'`). Plan : `projectClassDiagram` (graph-lens-core) +
+   `renderMermaidClass` (sysml-export-core) + `format=mermaid-class` (route). **✅ BUILT 2026-07-11** :
+   `projectClassDiagram`+`renderMermaidClass`+route livrés, **9 unit goldens + 1 integration** (16/16 verts) ;
+   vérifié sur le graphe HMMstudio réel (150/152 classes cap, 7 associations, classDiagram valide, accolades
+   équilibrées, inheritance-unavailable + truncation déclarés). Route HTTP couverte par le test integration
+   (CI docker build). `GET /sysml-export?repo=X&format=mermaid-class`.
+   **v3 héritage 2026-07-12 (mesure LIVE, corrige v2)** : v2 supposait le type `INHERITS` par lecture de code —
+   FAUX. Une **sonde jetable ingérée live** (TS+Python à héritage interne) prouve que l'ingestion émet **`EXTENDS`**
+   (classe→superclasse) + **`IMPLEMENTS`** (classe→interface), jamais `INHERITS`. La v2 keyée sur `INHERITS`
+   rendait **0 flèche sur données réelles** (chemin mort, masqué par des unit `INHERITS` synthétiques). v3 :
+   `projectClassDiagram` consomme EXTENDS/IMPLEMENTS (+INHERITS fallback), `kind:'extends'|'implements'` ;
+   `renderMermaidClass` émet `Parent <|-- Child` (solide) + `Interface <|.. Class` (pointillé). **Preuves** :
+   modules sur graphe sonde réel (5 flèches) + route HTTP (200, 5 flèches) + fixture enrichi (commit 13
+   Store/UserStore/MemoryCache/Cache) → intégration **déterministe** (remplace le `unavailable` périmé RED depuis v2).
+   Unit 15/15. Iron **Σ-READ-THE-CODE-GUESSES-THE-TYPE-INGEST-A-PROBE-PROVES-IT** +
+   **Σ-GREEN-UNITS-ON-SYNTHETIC-INPUT-CAN-MASK-A-DEAD-PIPELINE-PATH**.
+3. **Timeline Task 11** — **MESURÉ 2026-07-11 : DÉJÀ CÂBLÉ** (ni « câbler » ni « retirer le bouton » — les deux
+   auraient été faux). Trace de code complète : `enterCursorDiff` (useAppState) → `computeGraphDiff` →
+   `setDiffData` → `diffData.nodeStatus` → GraphCanvas `diffNodeStatus` → le nodeReducer/edgeReducer de
+   `useSigma` applique `DIFF_COLORS` (rouge/émeraude/gris). Le « bouton menteur » **ne ment pas — il colore**.
+   Ce qui mentait = le **commentaire e2e** (`timeline-zoom-and-diff.spec.ts`, « Task 11 DEFERRED »), **périmé**
+   (le câblage a été posé après) → **corrigé**. `computeGraphDiff`/`diffBetweenSnapshots` est unit-testé
+   (`unit/graph-diff-between-snapshots.test.mjs`). Aucun test Timeline n'était quarantiné (rien à dé-quarantiner).
+   Coloration = pixel canvas Sigma, non pixel-assertable en Playwright (pas de légende DOM pour le cursor-diff).
+   **Légende cursor-diff LIVRÉE 2026-07-11** (`data-testid="cursor-diff-legend"`, GraphCanvas, mêmes DIFF_COLORS
+   exportés de useSigma) : feedback visuel + counts A/B/both quand un snapshot-diff est actif. tsc vert, image web
+   rebuild. **Finding measure-first (Playwright MCP)** : le diff (donc la légende) ne s'active QUE si les 2 cursors
+   résolvent vers des snapshots DIFFÉRENTS (garde useAppState `if (nameA===nameB) return`) → c'est LA vraie raison
+   du « deferred » d'origine (forcer 2 snapshots distincts de façon fiable, pas l'absence de rendu).
+   **HARNAIS E2E CONSTRUIT + BUG PROD 2026-07-12** : creuser « forcer 2 snapshots » a révélé que le cursor-diff
+   était **cassé en prod** — `useTimelineUrlSync` ET le diff effect de `useAppState` résolvaient cursor↔snapshot
+   via `availableRepos[repo].snapshots`, un champ que `/api/repos` **ne remplit jamais** → diff possible SEULEMENT
+   sur la tête live. Fix : `useAppState` enrichit `availableRepos[repo].snapshots` depuis `/snapshots` (source
+   unique, re-déclenche les 2 consommateurs). Aussi : `tests/e2e/playwright.config.ts` **était absent** (tier e2e
+   jamais exécuté, masqué par job CI `continue-on-error`) → créé + `helpers/connect.ts` (`?project=&server=`). Le
+   test légende est **DÉTERMINISTE et vert** (2 shortHashes distincts→tlA/tlB→légende assertée) ; prouvé live
+   (comptes réels only-in-A/B/both). Spec cursors § Update 2026-07-12 (suite). Reste : migrer les ~13 autres specs
+   vers `connectRepo` puis retirer `continue-on-error`. Iron **Σ-THE-URL-SYNC-READS-A-FIELD-THE-API-NEVER-FILLS**.
+4. **Regression coupling < 30s** — ✅ **LIVRÉ (SIGIL-1711 Bloc 1, 2026-07-15)**. La perf (<30 s) était déjà
+   réglée par P3 (coupling `33s→0.11s`) ; le reste = le **304 conditionnel** (ETag body-hash + `If-None-Match`)
+   sur `/churn`·`/growth`·`/lifespan`·`/coupling` — LIVE jamais servi périmé (corps changé → ETag changé). Voir
+   Déjà livré #70. Le webhook watch porte son culprit via la série coupling déjà rapide.
+5. **Extension VSCode** — ✅ **LIVRÉ (SIGIL-1711 Bloc 1, 2026-07-15)**. `.vsix` packagé (v0.1/v0.2,
+   Update (4)) ; **observable d'usage** posé : log local JSONL privacy-preserving (zéro réseau/télémétrie)
+   dans `globalStorageUri`, 3 événements (`activate`/`file_match`/`command`), + commande
+   `gitnexus.usageReport` → **verdict go/no-go structuré** (`computeUsageVerdict`, pur, unit-testé). Le gate
+   « pas de v0.2 fonctionnel sans preuve d'usage » est désormais **mesurable** (verdict `USE-PROVEN` si
+   ≥20 file_matches sur ≥3 jours actifs). Voir Déjà livré #71. Reste = installer + laisser tourner le probe 7 j.
+6. **ghost placementAccuracy** — **verdict `STAY-FROZEN` (measure-first SIGIL-1711, 2026-07-15)**. Mesure : les
+   communautés Leiden SONT disponibles (`/clusters` sert `clusters.json`), donc le blocage d'origine (« backend
+   Leiden absent ») est **levé** — mais placementAccuracy manque toujours d'une **vérité-terrain** pour scorer un
+   placement (les ghosts prédisent des *fichiers*, pas des *communautés*). Dégel = un signal de placement attendu
+   falsifiable ; sinon le score serait fabriqué (violation Zero-Placeholder). Reste DEFERRED-documenté.
 
 ### Phase (iii) — Tier 3 trié (prune avant de construire)
+
+> **Triage measure-first re-audité (SIGIL-1711 Bloc 2, 2026-07-16)** — workflow multi-agents,
+> un mesureur par item + vérification adversariale des `BUILD`. **Résultat : 0 BUILD · 8
+> STAY-FROZEN · 1 DELETE.** Le gel de 2026-07-10 est confirmé evidence-backed ; **3.9 dataset
+> public reclassé DELETE** (raison d'être structurellement morte sous PolyForm — voir plus bas).
+> Un `BUILD` initial (export/import versionné) a été **rétrogradé** par la vérification
+> adversariale (scénario version-skew injoignable en mono-format). Verdicts + conditions de
+> dégel complètes : [`docs/superpowers/specs/2026-07-16-tier3-trigger-triage-verdicts.md`](docs/superpowers/specs/2026-07-16-tier3-trigger-triage-verdicts.md).
 
 **Verdicts gravés** (triggers de dégel falsifiables, items conservés sur la roadmap) :
 3.1 dead-code runtime **GELÉ** (dégel : un repo indexé émet réellement des spans) · 3.4 auto-PR refacto
 **GELÉ** (aucune capacité d'écriture de PR ; le consommateur agent passe par MCP) · 3.5 prédiction bugs
 **GELÉ** (zéro label disponible) · 3.8 AST extractors **GELÉ** (dépend 3.10, aucun consommateur committé) ·
-3.9 dataset public **GELÉ** (note licence : publication noncommerciale possible mais raison d'être
-stratégique morte) · 3.10 plugin architecture **GELÉ** (dégel : ≥2 nouvelles analytics committées —
+~~3.9 dataset public~~ **→ DELETE** (2026-07-16, SIGIL-1711 Bloc 2 : raison d'être structurellement
+morte sous PolyForm ; retiré de la roadmap, cf. verdicts) · 3.10 plugin architecture **GELÉ** (dégel : ≥2 nouvelles analytics committées —
 n'enable PAS le chemin lentilles, qui passe par la gateway BrainGraph du monorepo hôte) ·
 **3.6 CI architectural : décision A (GEL)** — le judge 2026-06-14 a déjà préféré le Copilot (26/30 vs
 20.5/30) et la licence rend la bataille commerciale sans objet ; option B interne-only réévaluable après (i).
@@ -175,6 +566,12 @@ trailers `Co-Authored-By` gravé comme prérequis — l'identité de commit est 
 | 66 | **Contrat de cohabitation upstream (Phase 2)** : deux gardes automatisés — `scripts/check-patch-drift.mjs` (dérive interne : diffs commités vs clone `upstream/`, exit 1 si désynchronisés) + `scripts/check-upstream-releases.mjs` (veille externe : alerte exit 10 si une release stable plus récente que notre pin existe). Contrat de cohabitation formalisé dans la spec. Règle de bump conservatrice (bump ONLY si `v1.7.x+` livré ET besoin), playbook complet, décision différée sur subtree/submodule jusqu'au prochain bump. Spec : [`docs/superpowers/specs/2026-05-29-upstream-cohabitation-contract-design.md`](docs/superpowers/specs/2026-05-29-upstream-cohabitation-contract-design.md). | `scripts/check-patch-drift.mjs`, `scripts/check-upstream-releases.mjs` |
 | 67 | **Graph templates — Stage 1 (research-artifacts)** : mécanisme de templates de graphe générique, **tout dans le conteneur web** (zéro Kùzu). Registry built-in (`research-artifacts`), importeur `research-fs` (walk `/data/projects/<source>` + frontmatter YAML → `ResearchGraph` JSON sur le volume `gitnexus-data`), 5 routes REST, 3 outils MCP, vue `?research=<name>` qui réutilise le canvas single-graph (adaptateur `research-graph-adapter.ts` + palette par type). POST handlers `try/catch → 500` (jamais de crash serveur). Vérifié **live** (scaffold→import→get JSON) ; sérialisé via le format **fork-cohabitation** (`cohabit drift` vert). **NB** : la baseline patches avait été corrompue par les commits multigraph (gutting 2026-05-31) — restaurée depuis `d2a9234a` le 2026-06-03, garde CI `build-gate` ajoutée. | `upstream/docker-server-graph-templates{,-core}.mjs`, `upstream/docker-server-research-fs-importer.mjs`, `upstream/gitnexus-web/src/{lib/research-graph-adapter.ts,lib/research-colors.ts,services/research-client.ts,components/GraphSidebar.tsx}`, +3 outils `mcp-server/server.mjs`, specs/plan `docs/superpowers/*/2026-06-02-graph-templates*` |
 | 68 | **Wiki prompt-injection guard (P0-5 sécurité)** : durcit le chemin LLM du wiki contre l'injection d'instructions via contenu de dépôt non-fiable. (a) `ANTI_INJECTION_DIRECTIVE` + `appendAntiInjectionFrame` apposés **systématiquement** par `buildSystemPrompt` (module/parent/overview) → le contenu du dépôt est déclaré donnée, jamais instruction. (b) Parité read-only du provider `claude` : `callClaudeLLM` passe `--disallowedTools` (Bash/Write/Edit/WebFetch/…) via le module pur `local-cli-args.ts` — levier non-contournable, parité avec le `--sandbox read-only` de `codex`, ferme le vecteur injection→exécution de commande. Résiduels documentés (GROUPING, cluster-enricher, délimiteur nonce). Spec : [`docs/superpowers/specs/2026-07-06-wiki-prompt-injection-guard.md`](docs/superpowers/specs/2026-07-06-wiki-prompt-injection-guard.md). | `upstream/gitnexus/src/core/wiki/{prompts.ts,generator.ts,local-cli-client.ts,local-cli-args.ts}`, `tests/unit/wiki-prompt-injection-guard.test.mjs` |
+| 69 | **Cache partagé per-snapshot (perf time-travel, 2026-07-15)** : `getSnapshotNodeIds` — un helper caché partagé par `/churn`·`/growth`·`/lifespan`·`/coupling` (qui cold-scannaient chacun chaque point de timeline via Cypher `MATCH (n) RETURN n.id`, mesuré 15-33 s ; 1 requête live = 25.8 s). Les snapshots `@<hash>` étant **immuables**, leurs node-ids sont cachés **à vie** (mémoire + disque `<repo>/.gitnexus/snapshot-nodeids-cache.json`) ; le point live est keyed par `indexedAt` (invalidé au re-index, in-memory seul). Élimine 4 copies dupliquées de `fetchNodeIds`. **Speedup live** (HMMstudio) : growth `21s→0.016s`, lifespan `15s→0.05s`, coupling `33s→0.11s`, churn-répété `33s→0.03s`. Ligne COPY `Dockerfile.web` ajoutée (packaging seam). 6 unit + 739 unit verts. [spec](docs/superpowers/specs/2026-07-15-snapshot-nodeids-shared-cache-design.md) | `upstream/docker-server-snapshot-nodeids.mjs`, `upstream/docker-server-{churn,growth,coupling,lifespan}.mjs`, `upstream/Dockerfile.web`, `tests/unit/snapshot-nodeids-cache.test.mjs` |
+| 70 | **ETag / conditional-GET (304) sur les analytics de timeline (SIGIL-1711 Bloc 1, 2026-07-15)** : module owned `docker-server-etag.mjs` — `withETag(req,res)` enveloppe la réponse des 4 endpoints figés (`/churn`·`/growth`·`/lifespan`·`/coupling`) ; **ETag = hash du corps** → 304 sur `If-None-Match` égal. Correct par construction : snapshot figé = corps identique = 304 ; le point LIVE bouge → corps changé → ETag changé → **jamais servi périmé** (contrainte « LIVE jamais caché » satisfaite gratuitement). Footprint in-place minimal (4 wrappers × 1 ligne, handlers cœur inchangés). Complète (ii).4 : la perf était déjà réglée par P3, l'ETag ajoute l'économie de re-transfert. 9 unit + 3 integration, 748 unit verts. [spec](docs/superpowers/specs/2026-07-15-etag-conditional-get-frozen-analytics-design.md) | `upstream/docker-server-etag.mjs`, `upstream/docker-server-{churn,growth,lifespan,coupling}.mjs` (route wrappers), `tests/unit/etag-conditional-get.test.mjs`, `tests/integration/endpoints/etag-conditional-get.test.mjs` |
+| 71 | **Observable d'usage de l'extension VSCode (SIGIL-1711 Bloc 1, (ii).5, 2026-07-15)** : module pur owned `vscode-extension/src/usage.ts` — modèle d'événements + (de)sérialisation JSONL + `computeUsageVerdict` (go/no-go v0.2). L'extension log localement (`globalStorageUri/usage.jsonl`, **zéro réseau/télémétrie**, best-effort) 3 événements : `activate`, `file_match` (throttlé 1×/repo:file/session — signal « vraiment utilisé sur un repo réel »), `command`. Nouvelle commande `gitnexus.usageReport` → verdict structuré (`USE-PROVEN` si ≥20 matches sur ≥3 jours actifs, sinon `INSUFFICIENT`/`NO-DATA`). Rend le gate doctrine « pas de v0.2 sans preuve d'usage » **mesurable** au lieu d'un pari. Logique pure unit-testée depuis la pyramide du fork (le glue vscode ne l'est pas). tsc vert, v0.2.1. 8 unit. [spec](docs/superpowers/specs/2026-07-15-vscode-usage-observable-design.md) | `vscode-extension/src/{usage.ts,extension.ts}`, `vscode-extension/package.json` (commande + v0.2.1), `tests/unit/vscode-usage-verdict.test.ts` |
+| 72 | **Lens Studio — authoring de lentilles souveraines (SIGIL-1711 Phase 2, 2026-07-19)** : versant UI de l'« Atelier des Lentilles » ELYSIUM. Modale expert **additive** (`LensStudioModal`) — textarea de spec JSON (pré-garde `JSON.parse`, pas de zod), erreurs, toast, case auto-approve — pilotée par 2 callbacks purs. `previewLens(spec)` POST le gateway ELYSIUM `/lens/preview` (sans auth) et **ne rejette jamais** (transport down → `{ok:false,errors}` : un gateway injoignable affiche l'erreur au lieu du silence) ; `proposeLens` POST bridge-api `/elysium/lens/propose` (Bearer, body `{spec,auto_approve}` **sans `author`** — dérivé server-side) ; base `_bridgeUrl` + `setBridgeUrl` réutilisant la garde SSRF `validateBackendUrl` ; `assertOk` surface le `{detail}` FastAPI. `useAppState.previewLens` rend le BrainGraph dans le **vrai canvas** (`setGraph` **puis `applyLensMetadata`** — sans quoi le panneau insights reste inerte, régression gap #7). Entrée « + New lens » dans le switcher + i18n en/zh-CN. **Le fork reste un client pur** (POST-only, ne persiste jamais, ignore `lens_registry.yaml`) ; backend = monorepo hôte (ELYSIUM #616). Gate live : token Dex/K8s navigateur + stack cluster. 794 unit verts. | `upstream/gitnexus-web/src/components/LensStudioModal.tsx` (additif), `upstream/gitnexus-web/src/services/backend-client.ts`, `upstream/gitnexus-web/src/hooks/useAppState.tsx`, `upstream/gitnexus-web/src/{App.tsx,components/Header.tsx}`, `upstream/gitnexus-web/src/locales/{en,zh-CN}/header.json`, `tests/unit/lens-authoring-client.test.ts`, `tests/unit/use-app-state-preview-lens.test.tsx`, `tests/unit/components/lens-studio-modal.test.tsx` |
+| 73 | **Lens Studio — formulaire guidé (2ᵉ surface d'entrée, SIGIL-1711 Phase 2 authoring, 2026-07-19)** : ajoute au Lens Studio une 2ᵉ surface de saisie pour l'héritier, **émettant la même spec canonique** que le mode expert via les **mêmes** callbacks `onPreview`/`onPropose` (zéro changement backend). Traducteur pur `formStateToSpec` (omission des blocs vides plutôt qu'émis vides — `color` sans `by` casse la grammaire backend E6 ; `select`/`insight` vide n'a pas de sens ; **un seul** prédicat, `eval_predicate` n'a pas de conjonction) + composant **additif** `GuidedLensForm` (champs contrôlés name/source/meaning/predicat/color/insight). Toggle `guided\|expert` dans l'en-tête de `LensStudioModal` — `parse()` devient conscient du mode (en guidé, la spec vient toujours du formulaire, jamais d'erreur JSON). Basculer guidé→expert **sérialise** la spec construite dans le textarea (`JSON.stringify(formStateToSpec(form))` — preuve visible d'isomorphisme des deux surfaces) ; basculer expert→guidé ne tente **aucun reverse-parsing** (une JSON arbitraire n'est pas toujours représentable dans le formulaire ; le prétendre dropperait silencieusement des champs). i18n en/zh-CN sous `lensStudio.guided.*`. **Revue finale** : garde cliente `validateFormState` (le guidé n'en avait aucune — `parse()` retournait toujours une spec, donc `if (!spec) return;` ne se déclenchait jamais et un formulaire vierge POSTait `{"name":"","source":{"lens":""}}` au canon souverain) exigeant `name` + `source.lens` (un amont vide est *falsy* → garde d'intégrité référentielle du promoteur court-circuité), rejetant les opérandes de prédicat portant `< > = !` (la grammaire backend scanne les opérateurs par *containment* avant sa branche ` in ` → graphe entièrement éteint sans erreur) et refusant un `insight` mal formé au lieu de l'omettre (`min={1}` n'est jamais appliqué : aucun `<form>`, boutons `type="button"`) ; sérialisation guidé→expert conditionnée à `isFormPristine` (un aller-retour sans une seule frappe détruisait le JSON écrit à la main) ; a11y `title` sur les 2 `<select>` + `aria-pressed` sur le segmented control. 72 unit sur les 3 fichiers (44+12+16, contre 22 — les 4 mutations restées vertes en revue sont désormais tuées), **861 unit verts**. [spec](docs/superpowers/specs/2026-07-19-guided-lens-form-design.md) | `upstream/gitnexus-web/src/lib/lens-form-spec.ts` (additif), `upstream/gitnexus-web/src/components/GuidedLensForm.tsx` (additif), `upstream/gitnexus-web/src/components/LensStudioModal.tsx` (édit), `upstream/gitnexus-web/src/locales/{en,zh-CN}/header.json`, `tests/unit/lens-form-spec.test.ts`, `tests/unit/components/guided-lens-form.test.tsx`, `tests/unit/components/lens-studio-modal.test.tsx` |
+| 74 | **Narration des lentilles câblée au MCP (SIGIL-1711 Phase 2, 2026-07-21)** : le contrat `/lens` de la gateway ELYSIUM a trois consommateurs prévus (viz=1b, agent=MCP, narration=héritier) ; la narration n'en avait **aucun** côté agent — le mot `narration` apparaissait 0 fois dans `mcp-server/server.mjs`. Ce n'était pas un manque de capacité mais de **câblage** : `GET /lens/<name>/narrate` servait déjà le brief markdown (provenance, verdict de fraîcheur, métriques saillantes, répartition). Nouvel outil `gitnexus_narrate_lens(name)` sur le motif exact des 2 outils lens existants (`encodeURIComponent`, stub documenté si `INTER_GRAPH_URL` absent). Points tranchés à la mesure : **a)** la route répond `text/markdown` — la branche non-JSON de `doCall` rend donc la chaîne brute, vérifié, pas supposé ; retour `{lens,format,bytes,chars,markdown}` pour garder le contrat objet-JSON des 36 autres outils ; **b)** description orientée arbitrage : mesuré **~43 kB contre ~1,7 MB** sur la lentille `sigil`, soit **~40×** moins cher pour la question « que dit la lentille » — assertion portée par le smoke (`--live-gateway`), pas par un commentaire. Lentille inconnue → 404 gateway → `isError`, jamais un brief vide. **`synthesis` RETIRÉ de la surface MCP (2026-07-21)** — l'option avait d'abord été exposée « payante mais false par défaut », puis dotée d'un plafond de timeout dédié ; les deux énoncés étaient faux, et trois mesures les ont défaits : **(1)** ce n'est pas un appel Claude payant — `_narration_synthesis()` demande le tier `claude-sonnet` mais le routage budgétaire SIGIL-529 le résout, et sans `ANTHROPIC_API_KEY` la requête part en local : le journal d'usage écrit par une exécution réelle donne `ollama/deepseek-r1:8b` / `local-fast` / `cost_eur=0.0` ; **(2)** aucun plafond n'est défendable — quatre échantillons de la même requête (31,3 s · 42,5 s · 43,8 s · 47,1 s, plus un dépassement au-delà de 120 s) : c'est de la latence ollama locale, donc de l'ordonnancement de poste de travail, et la marge « ~4× » livrée tombait *dans* la dispersion ; **(3)** le rendement ne justifie pas l'attente et il est **erratique** — 45, 450, 474 puis 31 octets sur quatre exécutions de la même requête (dispersion 15×) ; ce qui est stable, c'est l'échec : **les quatre paragraphes sont tronqués en pleine phrase**, le modèle local étant un modèle de raisonnement dont les tokens de réflexion épuisent le budget de 400 avant la réponse. *(Une révision antérieure de cette ligne publiait « 42,5 s pour 45 octets » comme LE rendement — tirage unique près du plancher, sous-estimant ~10×, et contredisant le point (2) qu'elle côtoyait. La décision survit à la correction ; le chiffre non.)* La route HTTP `?synthesis=1` reste intacte pour un humain qui peut attendre. Le plafond `GITNEXUS_SYNTHESIS_TIMEOUT` et les assertions de smoke afférentes sont supprimés (aucun code mort). **Conservé** : le `remedy` par appel dans `doCall`, qui nommait la stack Docker pour des pannes de gateway — désormais **asserté sur les 4 routes gateway individuellement** (`/lens`, `/lens/<name>`, `/lens/<name>/narrate`, `/inter-graph`), le retirer sur une seule étant auparavant invisible ; `query_meta_graph` porte son message dans un `concern` de stub et non un `isError`, asymétrie épinglée. **Effet de bord assumé et déclaré** : rendre le remède paramétrable réécrit la phrase générique d'erreur réseau de `doCall`, donc le texte d'échec des **25 outils** qui l'empruntent (`… fetch failed. Is the gitnexus stack up at <url>?` → `… fetch failed (tried <url>). <remède>`). L'information est préservée (l'URL y figure toujours) et rien ne parse ces chaînes hors du smoke — c'est une amélioration, mais elle touche des outils préexistants et ne doit pas passer pour un changement local. La branche *timeout*, elle, est restée octet-pour-octet identique. Le ratio publié est reposé sur la base **délivrée à l'agent** (octets UTF-8 du bloc texte MCP) : les deux révisions précédentes mélangeaient les bases (unités UTF-16, puis markdown brut contre re-sérialisation compacte du graphe — aucun des deux côtés n'étant ce qu'un outil rend). Compteurs de doc resynchronisés par `check-doc-counters.mjs` (36→37). Zéro changement dans `upstream/` → aucune régénération de patch. | `mcp-server/server.mjs` (+`gitnexus_narrate_lens`, `lensStub('narrate')`), `mcp-server/smoke.mjs` (lock-step : count 37, chemin stub, chemin live, lentille inconnue, ratio de coût, 4 routes remedy), `mcp-server/README.md` |
 
 Toutes les analytics ci-dessus marchent dans un seul repo. La granularité
 est le node gitnexus (File, Function, Class, Section, …).
@@ -874,6 +1271,12 @@ mentionnée comme limitation de 2.5.
 dominante de hmm_studio.
 
 ### 3.9 — Public reference dataset / industry baselines
+
+> 🗑️ **DELETE (SIGIL-1711 Bloc 2, 2026-07-16)** — retiré de la roadmap active. Seul moteur = Chemin C
+> (SaaS / API publique), **structurellement impossible** sous PolyForm-Noncommercial ; direction retenue =
+> Chemin B ; les baselines internes (ses propres repos vs médianes OSS) sont couvertes par Galaxie 2.5/2.6.
+> Section conservée pour mémoire. Verdict complet : [`docs/superpowers/specs/2026-07-16-tier3-trigger-triage-verdicts.md`](docs/superpowers/specs/2026-07-16-tier3-trigger-triage-verdicts.md).
+
 **Promesse** : indexer N repos OSS publics (top GitHub par langage,
 curated list) pour créer un dataset de référence. Permet de répondre à
 "votre entropie 0.42, médiane des Django projects OSS = 0.31, p90 =
@@ -1085,7 +1488,7 @@ fin. Tout ce qui suit s'appuie sur Tier 1 + Tier 2.1-2.4 ✅ déjà livrés.
 9. **3.7 AI-guided tour** (Chemin B) — synthèse narrative MCP-driven. ~2-3 semaines. Requiert 2bis.1.
 10. **3.6 Architectural CI** (Chemin A — vs commercial Akon Labs) — PR check + budgets. ~3-4 semaines. Décision stratégique requise.
 11. **3.8 Domain-specific AST extractors** — Django/React/Spring concepts. ~1-2 sem/stack. Requiert 3.10.
-12. **3.9 Public reference dataset** (Chemin C) — baseline industrie. ~1 mois initial + maintenance.
+12. ~~**3.9 Public reference dataset** (Chemin C)~~ — 🗑️ **DELETE** (SIGIL-1711 Bloc 2, 2026-07-16 : Chemin C structurellement impossible sous PolyForm ; retiré de la roadmap).
 
 ### Phase 6 — R&D long terme
 13. **3.1 Dead code runtime** — APM-bloqué.

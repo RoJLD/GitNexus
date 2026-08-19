@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { connectRepo } from '../helpers/connect';
 
 /**
  * E2E for the multi-repo Group graph panel (Task 7). Opens the panel from the
@@ -8,7 +9,7 @@ import { test, expect } from '@playwright/test';
  */
 test.describe('Group graph (multi-repo)', () => {
   test.beforeEach(async ({ page }) => {
-    await page.goto('http://localhost:4173/');
+    await connectRepo(page);
     await page.waitForSelector('[data-cursor="A"]', { timeout: 30_000 });
   });
 

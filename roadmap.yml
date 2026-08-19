@@ -852,8 +852,8 @@ ghosts:
   - id: tier-3-9-public-reference-dataset-industry-baselines
     tier: 3.9
     title: Public reference dataset / industry baselines
-    description: ''
-    status: planned
+    description: 'DELETE (SIGIL-1711 Bloc 2, 2026-07-16) — sole driver was Chemin C (public SaaS/API), structurally impossible under the inherited PolyForm-Noncommercial license; direction is Chemin B; internal baselines covered by Galaxie 2.5/2.6. Removed from roadmap. See docs/superpowers/specs/2026-07-16-tier3-trigger-triage-verdicts.md'
+    status: cancelled
     expectedBy: null
     expectedLinks: []
     dependsOn: []

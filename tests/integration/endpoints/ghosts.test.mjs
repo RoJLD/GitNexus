@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { FIXTURE } from '../helpers/analyze.mjs';
 
-const BASE = `http://localhost:${process.env.TEST_PORT || 4747}`;
+const BASE = `http://localhost:${process.env.TEST_WEB_PORT || 4173}`;
 
 describe('GET /ghosts', () => {
   it('returns 400/404 for a repo that has never been synced', async () => {
@@ -15,7 +15,7 @@ describe('GET /ghosts', () => {
     expect(res.ok).toBe(true);
     const body = await res.json();
     expect(Array.isArray(body.ghosts)).toBe(true);
-    expect(body.ghosts.length).toBe(5);
+    expect(body.ghosts.length).toBe(6);
     expect(body.ghosts[0]).toMatchObject({
       id: expect.any(String),
       declared: expect.any(Object),

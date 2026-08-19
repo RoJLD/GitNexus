@@ -223,6 +223,9 @@ curl -s -o /dev/null -w "watches: HTTP %{http_code}\n" \
 # SysML export (Tier 3.x bonus — pure read-only, no side effects)
 curl -s -o /dev/null -w "sysml-export: HTTP %{http_code}\n" \
   "http://localhost:4173/sysml-export?repo=hmm_studio&format=plantuml"
+# Class diagram export (Tier 3 — mermaid classDiagram from the symbol graph, reads /api/graph)
+curl -s -o /dev/null -w "sysml-export class: HTTP %{http_code}\n" \
+  "http://localhost:4173/sysml-export?repo=hmm_studio&format=mermaid-class"
 
 # Ghost Clusters (Tier 3.x granularité intermédiaire)
 curl -s -o /dev/null -w "clusters: HTTP %{http_code}\n" \

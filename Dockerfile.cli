@@ -37,6 +37,14 @@ USER root
 
 RUN mkdir -p /data/hf-cache && chown -R node:node /data
 
+# The analyze reads git history from the bind-mounted repo. In CI the repo is
+# owned by the runner uid, not the container `node` uid, so every git call fails
+# with "fatal: detected dubious ownership" — silently degrading churn/snapshot
+# analytics (storage/git.ts swallows the errors) and breaking the git-based
+# integration tests. Mirror Dockerfile.web so git trusts any mounted repo.
+# (No effect on Windows Docker Desktop, where the on-disk uid already matches.)
+RUN git config --system --add safe.directory '*'
+
 # Apply the lbug staleness patch. The script is idempotent and verifies the
 # target shape — if a future upstream release changes ensureLbugInitialized
 # the build will fail loudly here rather than silently producing a broken

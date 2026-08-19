@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { FIXTURE } from '../helpers/analyze.mjs';
 import { getApi } from '../helpers/api-client.mjs';
 
-const BASE = `http://localhost:${process.env.TEST_PORT || 4747}`;
+const BASE = `http://localhost:${process.env.TEST_WEB_PORT || 4173}`;
 
 describe('GET /nodes/alive-between', () => {
   const fetchAB = async (repo, from, to) => {

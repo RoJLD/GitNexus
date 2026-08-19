@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { connectRepo } from '../helpers/connect';
 
 /**
  * E2E — Audit panel (Tier 2.6 Ghost-Audit, Section E Task 22b).
@@ -15,7 +16,7 @@ const REPO = process.env.E2E_REPO || 'sample-repo';
 
 test.describe('Audit panel', () => {
   test('renders summary + highlights churner row on click', async ({ page }) => {
-    await page.goto('/');
+    await connectRepo(page);
 
     // Open the fixture repo (sidebar list).
     await page.getByText(REPO, { exact: false }).first().click();

@@ -1,5 +1,5 @@
 diff --git a/Dockerfile.web b/Dockerfile.web
-index b102a700..959e677f 100644
+index b102a700..5847cadb 100644
 --- a/Dockerfile.web
 +++ b/Dockerfile.web
 @@ -21,7 +21,10 @@ RUN npm run build --prefix gitnexus-shared
@@ -14,7 +14,7 @@ index b102a700..959e677f 100644
  
  COPY gitnexus-web ./gitnexus-web
  RUN npm run build --prefix gitnexus-web
-@@ -29,15 +32,120 @@ RUN npm run build --prefix gitnexus-web
+@@ -29,15 +32,127 @@ RUN npm run build --prefix gitnexus-web
  # node:22-bookworm-slim
  FROM node:22-bookworm-slim@sha256:9f6d5975c7dca860947d3915877f85607946403fc55349f39b4bc3688448bb6e AS runtime
  
@@ -44,6 +44,13 @@ index b102a700..959e677f 100644
  COPY docker-server.mjs ./docker-server.mjs
 +COPY docker-server-snapshots.mjs ./docker-server-snapshots.mjs
 +COPY docker-server-snapshots-bulk.mjs ./docker-server-snapshots-bulk.mjs
++COPY docker-server-snapshot-nodeids.mjs ./docker-server-snapshot-nodeids.mjs
++# Shared HTTP helper (withETag) — imported by churn/coupling/growth/lifespan
++# below, not by docker-server.mjs directly. Same missing-COPY class of bug as
++# the ghosts/connectors/sysml blocks further down: absent from this explicit
++# per-file list, the image builds green and only crash-loops at boot with
++# ERR_MODULE_NOT_FOUND. Caught by boot-smoke.
++COPY docker-server-etag.mjs ./docker-server-etag.mjs
 +COPY docker-server-churn.mjs ./docker-server-churn.mjs
 +COPY docker-server-coupling.mjs ./docker-server-coupling.mjs
 +COPY docker-server-growth.mjs ./docker-server-growth.mjs
@@ -4630,11 +4637,12 @@ index c09ad428..6a9e8a43 100644
      "@vitejs/plugin-react": "^5.1.4",
      "@vitest/coverage-v8": "^4.1.5",
 diff --git a/gitnexus-web/src/App.tsx b/gitnexus-web/src/App.tsx
-index 68f7d496..46edba57 100644
+index 68f7d496..5086da69 100644
 --- a/gitnexus-web/src/App.tsx
 +++ b/gitnexus-web/src/App.tsx
-@@ -1,11 +1,27 @@
- import { useCallback, useEffect, useRef, useState } from 'react';
+@@ -1,11 +1,30 @@
+-import { useCallback, useEffect, useRef, useState } from 'react';
++import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
  import { AppStateProvider, useAppState } from './hooks/useAppState';
 +import { useTimelineUrlSync } from './hooks/useTimelineUrlSync';
  import { DropZone } from './components/DropZone';
@@ -4644,12 +4652,15 @@ index 68f7d496..46edba57 100644
 +import { LifespanPanel } from './components/LifespanPanel';
 +import { OwnershipPanel } from './components/OwnershipPanel';
 +import { DissonancePanel } from './components/DissonancePanel';
++import { LensInsightsPanel } from './components/LensInsightsPanel';
++import { LensFreshnessBadge } from './components/LensFreshnessBadge';
 +import { WhatIfPanel } from './components/WhatIfPanel';
 +import { SimilarityPanel } from './components/SimilarityPanel';
 +import AuditPanel from './components/AuditPanel';
 +import GanttPanel from './components/GanttPanel';
  import { LoadingOverlay } from './components/LoadingOverlay';
  import { Header } from './components/Header';
++import { LensStudioModal } from './components/LensStudioModal';
 +import { Timeline } from './components/Timeline';
 +import { EntropyCommitTimeline } from './components/EntropyCommitTimeline';
  import { GraphCanvas, GraphCanvasHandle } from './components/GraphCanvas';
@@ -4661,7 +4672,14 @@ index 68f7d496..46edba57 100644
  import { StatusBar } from './components/StatusBar';
  import { FileTreePanel } from './components/FileTreePanel';
  import { CodeReferencesPanel } from './components/CodeReferencesPanel';
-@@ -23,6 +39,8 @@ import {
+@@ -17,12 +36,15 @@ import {
+   normalizeServerUrl,
+   connectHeartbeat,
+   BackendError,
++  proposeLens,
+   type ConnectResult,
+   type BackendRepo,
+ } from './services/backend-client';
  import { ERROR_RESET_DELAY_MS } from './config/ui-constants';
  import { formatBackendError } from './i18n/error-messages';
  import { useTranslation } from 'react-i18next';
@@ -4670,7 +4688,7 @@ index 68f7d496..46edba57 100644
  
  const AppContent = () => {
    const { t } = useTranslation(['common', 'errors']);
-@@ -32,10 +50,15 @@ const AppContent = () => {
+@@ -32,10 +54,15 @@ const AppContent = () => {
      setGraph,
      setProgress,
      setProjectName,
@@ -4686,11 +4704,17 @@ index 68f7d496..46edba57 100644
      refreshLLMSettings,
      initializeAgent,
      startEmbeddingsWithFallback,
-@@ -48,10 +71,24 @@ const AppContent = () => {
+@@ -48,10 +75,54 @@ const AppContent = () => {
      setAvailableRepos,
      switchRepo,
      setCurrentRepo,
++    previewLens,
 +    viewDimension,
++    lensInsights,
++    lensMeaning,
++    lensFreshness,
++    applyLensMetadata,
++    groupGraphActive,
    } = useAppState();
  
 +  // Two-way sync of Timeline state <-> URL query params (shareable links).
@@ -4698,6 +4722,18 @@ index 68f7d496..46edba57 100644
 +
    const graphCanvasRef = useRef<GraphCanvasHandle>(null);
    const [serverDisconnected, setServerDisconnected] = useState(false);
++  // Is the active project a governance lens (family = META|DOMAIN, served by
++  // the gateway)? Same isLensProject idiom as GraphCanvas.tsx (which computes
++  // it independently for its own circular-layout decision — the per-node dim
++  // is separate, see graph-adapter.ts's applyInLensDim) — gates the
++  // LensFreshnessBadge mount so an ordinary real repo (lensFreshness always
++  // null — its /lens/<name> fetch is never triggered, see useAppState's
++  // switchRepo `family` check) never shows a spurious "fraîcheur inconnue"
++  // badge. NOT VERIFIED LIVE (stack not running).
++  const isLensProject = useMemo(
++    () => Boolean(availableRepos.find((r) => r.name === projectName)?.family),
++    [availableRepos, projectName],
++  );
 +  // Roadmap-predictive Audit view (Tier roadmap-predictive Audit).
 +  // Local state — the panel is self-fetching against /ghost-audit and
 +  // does not need to coexist with the other top-right slot panels, so
@@ -4708,10 +4744,43 @@ index 68f7d496..46edba57 100644
 +  // Same rationale as auditPanelOpen — self-fetching against /ghosts,
 +  // pure frontend, kept out of useAppState to minimize patch surface.
 +  const [ganttOpen, setGanttOpen] = useState(false);
++  // Lens Studio (authoring) — expert JSON textarea modal, opened from the
++  // Header's "+ New lens" dropdown entry. Local state (same rationale as
++  // auditPanelOpen/ganttOpen — self-contained, kept out of useAppState).
++  const [lensStudioOpen, setLensStudioOpen] = useState(false);
++  // proposeLens's token acquisition in the browser is a gate-live concern
++  // (see brief's Hors scope) — reads localStorage best-effort, never blocks
++  // the UI. The fork stays client-pure: no persistence, POST-only.
++  const proposeLensCb = useCallback(
++    (spec: Record<string, unknown>, autoApprove: boolean) =>
++      proposeLens(spec, autoApprove, localStorage.getItem('elysium_bridge_token') ?? ''),
++    [],
++  );
  
    const handleServerConnect = useCallback(
      async (result: ConnectResult): Promise<void> => {
-@@ -111,6 +148,20 @@ const AppContent = () => {
+@@ -75,6 +146,12 @@ const AppContent = () => {
+         graph.addRelationship(rel);
+       }
+       setGraph(graph);
++      // Governance-lens insights/meaning/freshness — same capture as
++      // switchRepo, via the shared applyLensMetadata helper. Without
++      // this, the ?server=&project= deep-link entry (this handler)
++      // dropped lens metadata entirely (LensInsightsPanel stayed
++      // unmounted, LensFreshnessBadge showed "fraîcheur inconnue").
++      applyLensMetadata(result, projectName);
+ 
+       // Persist the active project in the URL for bookmarkability and F5 refresh resilience
+       const urlObj = new URL(window.location.href);
+@@ -101,6 +178,7 @@ const AppContent = () => {
+       setCurrentRepo,
+       initializeAgent,
+       startEmbeddingsWithFallback,
++      applyLensMetadata,
+     ],
+   );
+ 
+@@ -111,6 +189,20 @@ const AppContent = () => {
      tRef.current = t;
    }, [t]);
  
@@ -4732,7 +4801,7 @@ index 68f7d496..46edba57 100644
    useEffect(() => {
      if (autoConnectRan.current) return;
      const params = new URLSearchParams(window.location.search);
-@@ -194,6 +245,26 @@ const AppContent = () => {
+@@ -194,6 +286,26 @@ const AppContent = () => {
      graphCanvasRef.current?.focusNode(nodeId);
    }, []);
  
@@ -4759,7 +4828,7 @@ index 68f7d496..46edba57 100644
    // Handle settings saved - refresh and reinitialize agent
    // NOTE: Must be defined BEFORE any conditional returns (React hooks rule)
    const handleSettingsSaved = useCallback(() => {
-@@ -201,6 +272,21 @@ const AppContent = () => {
+@@ -201,6 +313,21 @@ const AppContent = () => {
      initializeAgent();
    }, [refreshLLMSettings, initializeAgent]);
  
@@ -4781,7 +4850,15 @@ index 68f7d496..46edba57 100644
    // ── Server heartbeat: detect when server goes down while exploring ────────
    // Uses SSE (EventSource) for instant detection — no polling delay.
    // On disconnect: show a reconnecting banner instead of resetting to onboarding.
-@@ -257,22 +343,84 @@ const AppContent = () => {
+@@ -250,6 +377,7 @@ const AppContent = () => {
+         onFocusNode={handleFocusNode}
+         availableRepos={availableRepos}
+         onSwitchRepo={switchRepo}
++        onAddLens={() => setLensStudioOpen(true)}
+         onReposChanged={(repos) => setAvailableRepos(repos)}
+         onAnalyzeComplete={async (repoName) => {
+           // A new repo was just indexed via the header dropdown.
+@@ -257,22 +385,84 @@ const AppContent = () => {
            // Retry once after 1s if the repo isn't found yet (server may still
            // be reinitializing after the worker completed).
            const url = serverBaseUrl ?? 'http://localhost:4747';
@@ -4867,12 +4944,41 @@ index 68f7d496..46edba57 100644
                fetchRepos()
                  .then((repos) => setAvailableRepos(repos))
                  .catch(() => {});
-@@ -288,7 +436,129 @@ const AppContent = () => {
+@@ -288,7 +478,158 @@ const AppContent = () => {
  
          {/* Graph area - takes remaining space */}
          <div className="relative min-w-0 flex-1">
 -          <GraphCanvas ref={graphCanvasRef} />
 +          {viewDimension === '3d' ? <Graph3DCanvas /> : <GraphCanvas ref={graphCanvasRef} />}
++
++          {/* Lens freshness badge + insights/meaning — top-left. This corner
++              is SHARED with the group-graph legend (GraphCanvas.tsx, also
++              `absolute left-3 top-3 z-30`, gated on `groupGraphActive &&
++              groupGraphData`): entering a group graph
++              (`enterGroupGraph`) does not touch `projectName`, so
++              `isLensProject` stays true while `groupGraphActive` flips on —
++              without the `!groupGraphActive` guard below the two would
++              overlap AND the panel would keep showing metrics for a lens
++              that is no longer on screen (the merged group graph replaced
++              it). Gated on isLensProject so an ordinary real repo never
++              renders this corner (the freshness badge would otherwise show
++              a spurious "fraîcheur inconnue" — lensFreshness defaults to
++              null and is only ever fetched for governance lenses, but
++              gating the MOUNT itself, not just the fetch, is the belt for
++              that braces).
++              NOT VERIFIED LIVE — written against the documented /lens
++              contract, not exercised against a running gateway+web stack.
++              See docs/superpowers/plans/2026-07-17-lens-souveraine-phase1b-browser-projector.md
++              Task 2 Step 5 (insights/meaning) + Task 3 Step 5 (freshness,
++              fork-only /lens/<name> fetch — Option A) + the Task 3 report. */}
++          {isLensProject && !groupGraphActive && (
++            <div className="pointer-events-auto absolute left-3 top-3 z-30 max-w-sm flex flex-col gap-2">
++              <LensFreshnessBadge freshness={lensFreshness} />
++              {(lensMeaning || (lensInsights && lensInsights.length > 0)) && (
++                <LensInsightsPanel meaning={lensMeaning} insights={lensInsights} />
++              )}
++            </div>
++          )}
 +
 +          {/* Floating diff banner — renders nothing unless diff mode is active. */}
 +          <DiffBanner />
@@ -4998,7 +5104,7 @@ index 68f7d496..46edba57 100644
  
            {/* Code References Panel (overlay) - does NOT resize the graph, it overlaps on top */}
            {isCodePanelOpen && (codeReferences.length > 0 || !!selectedNode) && (
-@@ -296,12 +566,31 @@ const AppContent = () => {
+@@ -296,12 +637,31 @@ const AppContent = () => {
                <CodeReferencesPanel onFocusNode={handleFocusNode} />
              </div>
            )}
@@ -5030,7 +5136,7 @@ index 68f7d496..46edba57 100644
        <StatusBar />
  
        {serverDisconnected && (
-@@ -316,6 +605,38 @@ const AppContent = () => {
+@@ -316,6 +676,46 @@ const AppContent = () => {
          onClose={() => setSettingsPanelOpen(false)}
          onSettingsSaved={handleSettingsSaved}
        />
@@ -5066,6 +5172,14 @@ index 68f7d496..46edba57 100644
 +          </div>
 +        </div>
 +      )}
++
++      {/* Lens Studio (modal) */}
++      <LensStudioModal
++        isOpen={lensStudioOpen}
++        onClose={() => setLensStudioOpen(false)}
++        onPreview={previewLens}
++        onPropose={proposeLensCb}
++      />
      </div>
    );
  };
@@ -5218,7 +5332,7 @@ index a3c7487a..0415e978 100644
            <div className="mt-6 border-t border-border-subtle pt-4">
              <h3 className="mb-3 text-xs font-medium tracking-wide text-text-secondary uppercase">
 diff --git a/gitnexus-web/src/components/GraphCanvas.tsx b/gitnexus-web/src/components/GraphCanvas.tsx
-index d0880dbe..0ff3d150 100644
+index d0880dbe..12d04a4b 100644
 --- a/gitnexus-web/src/components/GraphCanvas.tsx
 +++ b/gitnexus-web/src/components/GraphCanvas.tsx
 @@ -1,4 +1,4 @@
@@ -5227,14 +5341,17 @@ index d0880dbe..0ff3d150 100644
  import {
    ZoomIn,
    ZoomOut,
-@@ -12,6 +12,7 @@ import {
+@@ -12,8 +12,9 @@ import {
    Network,
    GitBranch,
    Target,
 +  Box,
  } from '@/lib/lucide-icons';
- import { useSigma } from '../hooks/useSigma';
+-import { useSigma } from '../hooks/useSigma';
++import { useSigma, DIFF_COLORS } from '../hooks/useSigma';
  import { useAppState } from '../hooks/useAppState';
+ import {
+   knowledgeGraphToGraphology,
 @@ -23,10 +24,42 @@ import {
    SigmaNodeAttributes,
    SigmaEdgeAttributes,
@@ -6390,7 +6507,7 @@ index d0880dbe..0ff3d150 100644
          <button
            onClick={handleToggleAIHighlights}
            className={
-@@ -448,6 +1488,67 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
+@@ -448,6 +1488,94 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
            )}
          </button>
        </div>
@@ -6455,11 +6572,38 @@ index d0880dbe..0ff3d150 100644
 +          </div>
 +        </div>
 +      )}
++
++      {/* Cursor/snapshot diff legend (Timeline Task 11) — same DIFF_COLORS the
++          Sigma reducers paint (red only-in-A / emerald only-in-B / gray in-both).
++          Shown while a snapshot diff (graphMode='diff', cursorA↔cursorB) is active.
++          Distinct from the model-compare `diff-legend` (diffView) above. */}
++      {diffData && !diffView && (
++        <div className="absolute left-3 bottom-3 z-20 rounded-lg border border-border-subtle bg-elevated/95 p-3 font-mono text-xs text-text-secondary shadow-lg" data-testid="cursor-diff-legend">
++          <div className="mb-2 font-semibold text-text-primary">Snapshot diff A ↔ B</div>
++          <div className="space-y-1">
++            <div className="flex items-center gap-1.5">
++              <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ backgroundColor: DIFF_COLORS.onlyInA }} />
++              <span>only in A ({diffData.counts.nodes.onlyInA})</span>
++            </div>
++            <div className="flex items-center gap-1.5">
++              <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ backgroundColor: DIFF_COLORS.onlyInB }} />
++              <span>only in B ({diffData.counts.nodes.onlyInB})</span>
++            </div>
++            <div className="flex items-center gap-1.5">
++              <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ backgroundColor: DIFF_COLORS.inBoth }} />
++              <span>in both ({diffData.counts.nodes.inBoth})</span>
++            </div>
++          </div>
++          <div className="mt-2 border-t border-border-subtle pt-1.5 text-text-muted">
++            edges A {diffData.counts.edges.onlyInA} / B {diffData.counts.edges.onlyInB} / both {diffData.counts.edges.inBoth}
++          </div>
++        </div>
++      )}
      </div>
    );
  });
 diff --git a/gitnexus-web/src/components/Header.tsx b/gitnexus-web/src/components/Header.tsx
-index 3fae0c48..4aa44d5a 100644
+index 3fae0c48..0a48dc23 100644
 --- a/gitnexus-web/src/components/Header.tsx
 +++ b/gitnexus-web/src/components/Header.tsx
 @@ -1,4 +1,5 @@
@@ -6468,7 +6612,7 @@ index 3fae0c48..4aa44d5a 100644
    Search,
    Settings,
    HelpCircle,
-@@ -10,7 +11,14 @@ import {
+@@ -10,7 +11,15 @@ import {
    Trash2,
    RefreshCw,
    Loader2,
@@ -6478,20 +6622,33 @@ index 3fae0c48..4aa44d5a 100644
 +  Camera,
 +  Network,
 +  Layers,
++  Plus,
  } from '@/lib/lucide-icons';
 +import { SnapshotsPanel } from './SnapshotsPanel';
  import { useAppState } from '../hooks/useAppState';
  import {
    deleteRepo,
-@@ -59,6 +67,7 @@ export const Header = ({
+@@ -49,6 +58,8 @@ interface HeaderProps {
+   onAnalyzeComplete?: (repoName: string) => void;
+   /** Called after a repo is deleted or list needs refresh. */
+   onReposChanged?: (repos: BackendRepo[]) => void;
++  /** Called when the user wants to open the Lens Studio authoring modal. */
++  onAddLens?: () => void;
+ }
+ 
+ export const Header = ({
+@@ -57,8 +68,10 @@ export const Header = ({
+   onSwitchRepo,
+   onAnalyzeComplete,
    onReposChanged,
++  onAddLens,
  }: HeaderProps) => {
    const { t } = useTranslation(['common', 'header']);
 +  const appState = useAppState();
    const {
      projectName,
      graph,
-@@ -66,14 +75,30 @@ export const Header = ({
+@@ -66,14 +79,30 @@ export const Header = ({
      isRightPanelOpen,
      rightPanelTab,
      setSettingsPanelOpen,
@@ -6523,7 +6680,7 @@ index 3fae0c48..4aa44d5a 100644
    const repoDropdownRef = useRef<HTMLDivElement>(null);
    const [isSearchOpen, setIsSearchOpen] = useState(false);
    const [selectedIndex, setSelectedIndex] = useState(0);
-@@ -93,6 +118,38 @@ export const Header = ({
+@@ -93,6 +122,38 @@ export const Header = ({
        .slice(0, 10); // Limit to 10 results
    }, [graph, searchQuery]);
  
@@ -6562,7 +6719,7 @@ index 3fae0c48..4aa44d5a 100644
    // Handle clicking outside search or repo dropdown to close them
    useEffect(() => {
      const handleClickOutside = (e: MouseEvent) => {
-@@ -115,6 +172,24 @@ export const Header = ({
+@@ -115,6 +176,24 @@ export const Header = ({
      };
    }, []);
  
@@ -6587,7 +6744,7 @@ index 3fae0c48..4aa44d5a 100644
    // Keyboard shortcut (Cmd+K / Ctrl+K)
    useEffect(() => {
      const handleKeyDown = (e: KeyboardEvent) => {
-@@ -208,13 +283,18 @@ export const Header = ({
+@@ -208,13 +287,18 @@ export const Header = ({
                    </div>
                  ) : (
                    <>
@@ -6612,7 +6769,7 @@ index 3fae0c48..4aa44d5a 100644
                            <div
                              key={repo.name}
                              className={`group flex items-center gap-2 px-4 py-2 transition-colors ${
-@@ -240,6 +320,102 @@ export const Header = ({
+@@ -240,6 +324,102 @@ export const Header = ({
                                  </span>
                                )}
                              </button>
@@ -6715,7 +6872,7 @@ index 3fae0c48..4aa44d5a 100644
                              {/* Re-analyze */}
                              <button
                                onClick={async (e) => {
-@@ -282,7 +458,7 @@ export const Header = ({
+@@ -282,7 +462,7 @@ export const Header = ({
                                className={`cursor-pointer rounded p-1 transition-all ${
                                  reanalyzing === repo.name
                                    ? 'text-accent'
@@ -6724,7 +6881,7 @@ index 3fae0c48..4aa44d5a 100644
                                }`}
                                title={
                                  reanalyzing === repo.name
-@@ -320,16 +496,42 @@ export const Header = ({
+@@ -320,16 +500,42 @@ export const Header = ({
                                    console.error('Failed to delete repo:', err);
                                  }
                                }}
@@ -6768,7 +6925,29 @@ index 3fae0c48..4aa44d5a 100644
                      {/* Re-analyze progress bar */}
                      {reanalyzing && reanalyzeProgress && (
                        <div className="border-t border-border-subtle bg-accent/5 px-4 py-2.5">
-@@ -467,6 +669,34 @@ export const Header = ({
+@@ -370,6 +576,21 @@ export const Header = ({
+                         </span>
+                       </button>
+                     </div>
++
++                    {/* Add lens (Lens Studio authoring modal) */}
++                    <div className="border-t border-border-subtle">
++                      <button
++                        type="button"
++                        onClick={() => {
++                          onAddLens?.();
++                          setIsRepoDropdownOpen(false);
++                        }}
++                        className="flex w-full items-center gap-2 px-4 py-2 text-left text-sm text-accent transition-colors hover:bg-hover"
++                      >
++                        <Plus className="h-3.5 w-3.5 shrink-0" />
++                        {t('header:addLens')}
++                      </button>
++                    </div>
+                   </>
+                 )}
+               </div>
+@@ -467,6 +688,34 @@ export const Header = ({
          <LanguageSwitcher />
  
          {/* Icon buttons */}
@@ -7876,8 +8055,199 @@ index 9263cfe2..e1739545 100644
  /**
   * Create a Graph RAG agent
   */
+diff --git a/gitnexus-web/src/hooks/app-state/graph.test.tsx b/gitnexus-web/src/hooks/app-state/graph.test.tsx
+index 12d946ee..d89ca7f7 100644
+--- a/gitnexus-web/src/hooks/app-state/graph.test.tsx
++++ b/gitnexus-web/src/hooks/app-state/graph.test.tsx
+@@ -19,4 +19,58 @@ describe('GraphState', () => {
+     });
+     expect(result.current.graphViewMode).toBe('tree');
+   });
++
++  it('should default lensInsights to [] and lensMeaning to undefined', () => {
++    const { result } = renderHook(() => useGraphState(), { wrapper });
++    expect(result.current.lensInsights).toEqual([]);
++    expect(result.current.lensMeaning).toBeUndefined();
++  });
++
++  it('should set lensInsights and lensMeaning', () => {
++    const { result } = renderHook(() => useGraphState(), { wrapper });
++    act(() => {
++      result.current.setLensInsights([{ id: 'x', name: 'X', value: 9 }]);
++      result.current.setLensMeaning('Services critiques.');
++    });
++    expect(result.current.lensInsights).toEqual([{ id: 'x', name: 'X', value: 9 }]);
++    expect(result.current.lensMeaning).toBe('Services critiques.');
++  });
++
++  it('should reset lensInsights/lensMeaning back to defaults', () => {
++    const { result } = renderHook(() => useGraphState(), { wrapper });
++    act(() => {
++      result.current.setLensInsights([{ id: 'x', value: 1 }]);
++      result.current.setLensMeaning('Something');
++    });
++    act(() => {
++      result.current.setLensInsights([]);
++      result.current.setLensMeaning(undefined);
++    });
++    expect(result.current.lensInsights).toEqual([]);
++    expect(result.current.lensMeaning).toBeUndefined();
++  });
++
++  it('should default lensFreshness to null', () => {
++    const { result } = renderHook(() => useGraphState(), { wrapper });
++    expect(result.current.lensFreshness).toBeNull();
++  });
++
++  it('should set lensFreshness', () => {
++    const { result } = renderHook(() => useGraphState(), { wrapper });
++    act(() => {
++      result.current.setLensFreshness({ stale: true, age_hours: 50, ttl_hours: 24 });
++    });
++    expect(result.current.lensFreshness).toEqual({ stale: true, age_hours: 50, ttl_hours: 24 });
++  });
++
++  it('should reset lensFreshness back to null', () => {
++    const { result } = renderHook(() => useGraphState(), { wrapper });
++    act(() => {
++      result.current.setLensFreshness({ stale: false });
++    });
++    act(() => {
++      result.current.setLensFreshness(null);
++    });
++    expect(result.current.lensFreshness).toBeNull();
++  });
+ });
+diff --git a/gitnexus-web/src/hooks/app-state/graph.tsx b/gitnexus-web/src/hooks/app-state/graph.tsx
+index aa6524a5..964c3f64 100644
+--- a/gitnexus-web/src/hooks/app-state/graph.tsx
++++ b/gitnexus-web/src/hooks/app-state/graph.tsx
+@@ -2,6 +2,32 @@ import { createContext, useContext, useCallback, useMemo, useState, ReactNode }
+ import type { GraphNode, NodeLabel } from 'gitnexus-shared';
+ import type { KnowledgeGraph } from '../../core/graph/types';
+ import { DEFAULT_VISIBLE_LABELS, DEFAULT_VISIBLE_EDGES, type EdgeType } from '../../lib/constants';
++import { fetchLensFreshness } from '../../services/backend-client';
++
++/**
++ * A single governance-lens insight (top-level `insights[]` field of the
++ * `/api/graph?repo=<lens>` response, produced by the sovereign
++ * brain-graph gateway's `evaluate()`). Absent/empty for ordinary repos.
++ */
++export interface LensInsight {
++  id: string;
++  name?: string;
++  value: number;
++}
++
++/**
++ * A governance lens' freshness verdict (`meta.freshness` field), served
++ * **only** by the `/lens/<name>` route (NOT `/api/graph?repo=`, which is
++ * the route this app's graph render uses — see `fetchLensFreshness` in
++ * `backend-client.ts` for the additional fetch that sources this slice).
++ * `null` for ordinary repos and before the additional fetch resolves.
++ */
++export interface LensFreshness {
++  stale?: boolean;
++  age_hours?: number;
++  ttl_hours?: number;
++  source_mtime?: string;
++}
+ 
+ interface GraphStateContextValue {
+   graph: KnowledgeGraph | null;
+@@ -18,6 +44,29 @@ interface GraphStateContextValue {
+   setHighlightedNodeIds: (ids: Set<string>) => void;
+   graphViewMode: 'force' | 'tree' | 'circles';
+   setGraphViewMode: (mode: 'force' | 'tree' | 'circles') => void;
++  // Lens insights/meaning (top-level fields of the /api/graph response
++  // when the active repo is a governance lens). Captured by switchRepo,
++  // reset to defaults on every repo/lens switch. See LensInsightsPanel.
++  lensInsights: LensInsight[];
++  setLensInsights: (insights: LensInsight[]) => void;
++  lensMeaning: string | undefined;
++  setLensMeaning: (meaning: string | undefined) => void;
++  // Lens freshness (meta.freshness from the /lens/<name> route — see
++  // LensFreshness doc comment above). Captured by switchRepo's
++  // additional /lens/<name> fetch (fork-only, Option A — /api/graph does
++  // not carry it), reset to null on every repo/lens switch. See
++  // LensFreshnessBadge.
++  lensFreshness: LensFreshness | null;
++  setLensFreshness: (freshness: LensFreshness | null) => void;
++  // Shared positive-capture helper for lens metadata (insights/meaning/
++  // freshness), so every ConnectResult producer (switchRepo's cache-hit
++  // and slow-path sites, App.tsx's handleServerConnect) applies it
++  // identically instead of duplicating the 3-line block. Does NOT reset
++  // fields — pre-fetch/pre-rebuild hygiene stays at the call sites.
++  applyLensMetadata: (
++    result: { insights?: LensInsight[]; meaning?: string; repoInfo: { family?: string } },
++    pName: string,
++  ) => void;
+ }
+ 
+ const GraphStateContext = createContext<GraphStateContextValue | null>(null);
+@@ -30,6 +79,9 @@ export const GraphStateProvider = ({ children }: { children: ReactNode }) => {
+   const [depthFilter, setDepthFilter] = useState<number | null>(null);
+   const [highlightedNodeIds, setHighlightedNodeIds] = useState<Set<string>>(new Set());
+   const [graphViewMode, setGraphViewMode] = useState<'force' | 'tree' | 'circles'>('force');
++  const [lensInsights, setLensInsights] = useState<LensInsight[]>([]);
++  const [lensMeaning, setLensMeaning] = useState<string | undefined>(undefined);
++  const [lensFreshness, setLensFreshness] = useState<LensFreshness | null>(null);
+ 
+   const toggleLabelVisibility = useCallback((label: NodeLabel) => {
+     setVisibleLabels((prev) =>
+@@ -43,6 +95,25 @@ export const GraphStateProvider = ({ children }: { children: ReactNode }) => {
+     );
+   }, []);
+ 
++  // Positive-capture only (see interface doc comment) — byte-for-byte
++  // equal to the post-fetch block previously duplicated across
++  // switchRepo's cache-hit/slow-path sites; now the single source of
++  // truth, also called from App.tsx's handleServerConnect (deep-link
++  // entry, which previously dropped this metadata entirely).
++  const applyLensMetadata = useCallback(
++    (
++      result: { insights?: LensInsight[]; meaning?: string; repoInfo: { family?: string } },
++      pName: string,
++    ): void => {
++      setLensInsights(result.insights ?? []);
++      setLensMeaning(result.meaning);
++      if (result.repoInfo.family) {
++        fetchLensFreshness(pName).then(setLensFreshness);
++      }
++    },
++    [setLensInsights, setLensMeaning, setLensFreshness],
++  );
++
+   const value = useMemo<GraphStateContextValue>(
+     () => ({
+       graph,
+@@ -59,6 +130,13 @@ export const GraphStateProvider = ({ children }: { children: ReactNode }) => {
+       setHighlightedNodeIds,
+       graphViewMode,
+       setGraphViewMode,
++      lensInsights,
++      setLensInsights,
++      lensMeaning,
++      setLensMeaning,
++      lensFreshness,
++      setLensFreshness,
++      applyLensMetadata,
+     }),
+     [
+       graph,
+@@ -68,6 +146,10 @@ export const GraphStateProvider = ({ children }: { children: ReactNode }) => {
+       depthFilter,
+       highlightedNodeIds,
+       graphViewMode,
++      lensInsights,
++      lensMeaning,
++      lensFreshness,
++      applyLensMetadata,
+     ],
+   );
+ 
 diff --git a/gitnexus-web/src/hooks/useAppState.tsx b/gitnexus-web/src/hooks/useAppState.tsx
-index 5c118450..010c0da5 100644
+index 5c118450..f8d5e017 100644
 --- a/gitnexus-web/src/hooks/useAppState.tsx
 +++ b/gitnexus-web/src/hooks/useAppState.tsx
 @@ -8,7 +8,12 @@ import {
@@ -7903,7 +8273,12 @@ index 5c118450..010c0da5 100644
    runQuery as backendRunQuery,
    search as backendSearch,
    grep as backendGrep,
-@@ -39,6 +46,22 @@ import {
+@@ -35,15 +42,37 @@ import {
+   startEmbeddings as backendStartEmbeddings,
+   streamEmbeddingProgress,
+   probeBackend,
++  previewLens as previewLensApi,
+   type BackendRepo,
    type ConnectResult,
    type JobProgress,
  } from '../services/backend-client';
@@ -7926,7 +8301,18 @@ index 5c118450..010c0da5 100644
  import { ERROR_RESET_DELAY_MS } from '../config/ui-constants';
  import i18n from '../i18n';
  import { normalizePath } from '../lib/path-resolution';
-@@ -53,6 +76,7 @@ export const shouldAutoStartEmbeddings = (): boolean => {
+ import { FILE_REF_REGEX, NODE_REF_REGEX } from '../lib/grounding-patterns';
+-import { GraphStateProvider, useGraphState } from './app-state/graph';
++import {
++  GraphStateProvider,
++  useGraphState,
++  type LensInsight,
++  type LensFreshness,
++} from './app-state/graph';
+ 
+ export const AUTO_START_EMBEDDINGS_STORAGE_KEY = 'gitnexus.autoStartEmbeddings';
+ 
+@@ -53,6 +82,7 @@ export const shouldAutoStartEmbeddings = (): boolean => {
  };
  
  export type ViewMode = 'onboarding' | 'loading' | 'exploring';
@@ -7934,7 +8320,7 @@ index 5c118450..010c0da5 100644
  export type RightPanelTab = 'code' | 'chat';
  export type EmbeddingStatus = 'idle' | 'loading' | 'embedding' | 'indexing' | 'ready' | 'error';
  
-@@ -94,6 +118,9 @@ interface AppState {
+@@ -94,11 +124,37 @@ interface AppState {
    // View state
    viewMode: ViewMode;
    setViewMode: (mode: ViewMode) => void;
@@ -7944,7 +8330,50 @@ index 5c118450..010c0da5 100644
  
    // Graph data
    graph: KnowledgeGraph | null;
-@@ -184,6 +211,8 @@ interface AppState {
+   setGraph: (graph: KnowledgeGraph | null) => void;
+ 
++  // Lens insights/meaning (top-level fields of the /api/graph response
++  // when the active repo is a governance lens; see LensInsightsPanel).
++  // Captured by switchRepo alongside nodes/relationships, reset on
++  // every repo/lens switch. Empty/undefined for ordinary repos.
++  lensInsights: LensInsight[];
++  setLensInsights: (insights: LensInsight[]) => void;
++  lensMeaning: string | undefined;
++  setLensMeaning: (meaning: string | undefined) => void;
++
++  // Lens freshness (meta.freshness — served only by the /lens/<name>
++  // route, fetched additionally by switchRepo when the repo is a
++  // governance lens; see LensFreshnessBadge). null for ordinary repos.
++  lensFreshness: LensFreshness | null;
++  setLensFreshness: (freshness: LensFreshness | null) => void;
++
++  // Shared positive-capture helper (insights/meaning/freshness) — see
++  // hooks/app-state/graph.tsx doc comment. Called from switchRepo (both
++  // sites) and App.tsx's handleServerConnect.
++  applyLensMetadata: (
++    result: { insights?: LensInsight[]; meaning?: string; repoInfo: { family?: string } },
++    pName: string,
++  ) => void;
++
+   // Selection
+   selectedNode: GraphNode | null;
+   setSelectedNode: (node: GraphNode | null) => void;
+@@ -164,6 +220,14 @@ interface AppState {
+   switchRepo: (repoName: string) => Promise<void>;
+   setCurrentRepo: (repoName: string) => void;
+ 
++  // Lens Studio (authoring) — WYSIWYG preview: fetches the gateway's
++  // /lens/preview braingraph and renders it into the REAL canvas via the
++  // SAME contract as switchRepo's slow-path (createKnowledgeGraph -> addNode
++  // /addRelationship -> setGraph -> applyLensMetadata). Omitting
++  // applyLensMetadata here would leave the lens insights panel inert (gap
++  // #7 class of bug).
++  previewLens: (spec: Record<string, unknown>) => Promise<{ ok: boolean; errors?: string[] }>;
++
+   // Worker API (shared across app)
+   runQuery: (cypher: string) => Promise<any[]>;
+   isDatabaseReady: () => Promise<boolean>;
+@@ -184,6 +248,8 @@ interface AppState {
    updateLLMSettings: (updates: Partial<LLMSettings>) => void;
    isSettingsPanelOpen: boolean;
    setSettingsPanelOpen: (open: boolean) => void;
@@ -7953,7 +8382,7 @@ index 5c118450..010c0da5 100644
    isAgentReady: boolean;
    isAgentInitializing: boolean;
    agentError: string | null;
-@@ -209,6 +238,491 @@ interface AppState {
+@@ -209,6 +275,491 @@ interface AppState {
    clearAICodeReferences: () => void;
    clearCodeReferences: () => void;
    codeReferenceFocus: CodeReferenceFocus | null;
@@ -8445,7 +8874,7 @@ index 5c118450..010c0da5 100644
  }
  
  const AppStateContext = createContext<AppState | null>(null);
-@@ -222,6 +736,10 @@ export const AppStateProvider = ({ children }: { children: ReactNode }) => (
+@@ -222,6 +773,10 @@ export const AppStateProvider = ({ children }: { children: ReactNode }) => (
  const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
    // View state
    const [viewMode, setViewMode] = useState<ViewMode>('onboarding');
@@ -8456,7 +8885,21 @@ index 5c118450..010c0da5 100644
  
    const {
      graph,
-@@ -348,6 +866,7 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
+@@ -238,6 +793,13 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
+     setHighlightedNodeIds,
+     graphViewMode,
+     setGraphViewMode,
++    lensInsights,
++    setLensInsights,
++    lensMeaning,
++    setLensMeaning,
++    lensFreshness,
++    setLensFreshness,
++    applyLensMetadata,
+   } = useGraphState();
+ 
+   // Right Panel
+@@ -348,6 +910,7 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
    // LLM/Agent state
    const [llmSettings, setLLMSettings] = useState<LLMSettings>(loadSettings);
    const [isSettingsPanelOpen, setSettingsPanelOpen] = useState(false);
@@ -8464,7 +8907,7 @@ index 5c118450..010c0da5 100644
    const [isAgentReady, setIsAgentReady] = useState(false);
    const [isAgentInitializing, setIsAgentInitializing] = useState(false);
    const [agentError, setAgentError] = useState<string | null>(null);
-@@ -362,6 +881,179 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
+@@ -362,6 +925,179 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
    const [isCodePanelOpen, setCodePanelOpen] = useState(false);
    const [codeReferenceFocus, setCodeReferenceFocus] = useState<CodeReferenceFocus | null>(null);
  
@@ -8644,7 +9087,7 @@ index 5c118450..010c0da5 100644
    // Map of normalized file path → node ID for graph-based lookups
    const fileNodeByPath = useMemo(() => {
      if (!graph) return new Map<string, string>();
-@@ -1133,6 +1825,66 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
+@@ -1133,6 +1869,81 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
      async (repoName: string) => {
        if (!serverBaseUrl) return;
  
@@ -8678,6 +9121,11 @@ index 5c118450..010c0da5 100644
 +        setCodeReferences([]);
 +        setCodePanelOpen(false);
 +        setCodeReferenceFocus(null);
++        // Reset lens fields before rebuilding — cleared even if the
++        // cached snapshot carries none (ordinary repos never do).
++        setLensInsights([]);
++        setLensMeaning(undefined);
++        setLensFreshness(null);
 +
 +        const repoPath = cached.repoInfo.repoPath ?? cached.repoInfo.path;
 +        const pName =
@@ -8692,6 +9140,16 @@ index 5c118450..010c0da5 100644
 +        for (const node of cached.nodes) newGraph.addNode(node);
 +        for (const rel of cached.relationships) newGraph.addRelationship(rel);
 +        setGraph(newGraph);
++        // Lens fields travel with the cached ConnectResult (it's the
++        // same payload that was captured on the original fetch below).
++        // Freshness (meta.freshness) does NOT travel with the cache —
++        // it's not part of ConnectResult/fetchGraph's payload (Option A,
++        // see fetchLensFreshness doc comment) — applyLensMetadata
++        // re-fetches it on every switch, even cache hits, gated on the
++        // repo being a governance lens (family present). Best-effort,
++        // fire-and-forget: fetchLensFreshness never throws.
++        // NOT VERIFIED LIVE (stack not running).
++        applyLensMetadata(cached, pName);
 +
 +        // Persist URL like the slow path does.
 +        if (pName) {
@@ -8711,10 +9169,36 @@ index 5c118450..010c0da5 100644
        setProgress({
          phase: 'extracting',
          percent: 0,
-@@ -1209,6 +1961,13 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
+@@ -1153,6 +1964,12 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
+       setCodeReferences([]);
+       setCodePanelOpen(false);
+       setCodeReferenceFocus(null);
++      // Reset lens fields before the fetch — a repo/lens switch never
++      // carries stale insights/meaning from the previous selection over
++      // while the new payload is still in flight.
++      setLensInsights([]);
++      setLensMeaning(undefined);
++      setLensFreshness(null);
+ 
+       let connectedRepo: BackendRepo | undefined;
+       let pNameStr = repoName || 'server-project';
+@@ -1209,6 +2026,26 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
          for (const node of result.nodes) newGraph.addNode(node);
          for (const rel of result.relationships) newGraph.addRelationship(rel);
          setGraph(newGraph);
++        // Governance-lens top-level fields (produced by the sovereign
++        // brain-graph gateway's evaluate()). Absent/undefined for
++        // ordinary repos — defaults keep the panel unmounted. Freshness
++        // (meta.freshness) is NOT part of this /api/graph response —
++        // it's injected only on the /lens/<name> route (Option A,
++        // fork-only, see fetchLensFreshness doc comment) —
++        // applyLensMetadata does the additional lightweight fetch,
++        // gated on the repo being a governance lens (family present) so
++        // ordinary real repos never hit /lens/<name> (which would just
++        // 404 for them). Best-effort, fire-and-forget: fetchLensFreshness
++        // never throws.
++        // NOT VERIFIED LIVE (stack not running).
++        applyLensMetadata(result, pName);
 +
 +        // Stuff the freshly-fetched payload in the snapshot cache so
 +        // the next switch to this same (snapshot of the same base)
@@ -8725,7 +9209,57 @@ index 5c118450..010c0da5 100644
        } catch (err: unknown) {
          console.error('Repo switch failed:', err);
          setProgress({
-@@ -1311,9 +2070,1257 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
+@@ -1273,9 +2110,49 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
+       setCodePanelOpen,
+       setCodeReferenceFocus,
+       setChatMessages,
++      applyLensMetadata,
+     ],
+   );
+ 
++  // Lens Studio (authoring) — WYSIWYG preview. Reuses switchRepo's slow-path
++  // contract exactly: createKnowledgeGraph() -> addNode/addRelationship ->
++  // setGraph -> applyLensMetadata. See the AppState interface doc comment
++  // (gap #7: a setGraph WITHOUT applyLensMetadata leaves the lens insights
++  // panel inert).
++  const previewLens = useCallback(
++    async (spec: Record<string, unknown>): Promise<{ ok: boolean; errors?: string[] }> => {
++      const result = await previewLensApi(spec);
++      if (!result.ok || !result.braingraph) return { ok: false, errors: result.errors };
++      const bg = result.braingraph as {
++        nodes?: unknown[];
++        relationships?: unknown[];
++        insights?: unknown[];
++        meaning?: string;
++        lens?: { name?: string };
++      };
++      const newGraph = createKnowledgeGraph();
++      for (const node of bg.nodes ?? []) newGraph.addNode(node as never);
++      for (const rel of bg.relationships ?? []) newGraph.addRelationship(rel as never);
++      setGraph(newGraph);
++      // MÊME contrat que switchRepo — sinon le panneau insights/meaning
++      // reste inerte (gap #7). repoInfo.family is intentionally OMITTED
++      // (not 'authoring'): per graph.tsx's applyLensMetadata, insights/
++      // meaning are captured unconditionally, but a truthy `family` also
++      // triggers an additional fetchLensFreshness(pName) call against the
++      // `/lens/<name>` route — there is no `/lens/preview`-created registry
++      // entry for a preview spec to fetch, so that call is a guaranteed
++      // 404 whose (best-effort, discarded-on-failure) result is never
++      // displayed. Omitting family skips that spurious fetch while keeping
++      // insights/meaning intact (final review Fix 4).
++      applyLensMetadata(
++        { insights: (bg.insights ?? []) as never, meaning: bg.meaning, repoInfo: {} },
++        bg.lens?.name ?? 'preview',
++      );
++      return { ok: true };
++    },
++    [setGraph, applyLensMetadata],
++  );
++
+   const removeCodeReference = useCallback(
+     (id: string) => {
+       setCodeReferences((prev) => {
+@@ -1311,11 +2188,1300 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
      setCodeReferenceFocus(null);
    }, []);
  
@@ -8962,6 +9496,40 @@ index 5c118450..010c0da5 100644
 +    setDiffData(null);
 +    setDiffError(null);
 +  }, [setGraph]);
++
++  // Effect: enrich the ACTIVE repo's availableRepos entry with its snapshots.
++  // MEASURED 2026-07-12 : /api/repos (→ availableRepos) does NOT carry a
++  // `snapshots` field — snapshots live behind /snapshots. But BOTH the cursor
++  // diff effect below (findSnapshotName) AND useTimelineUrlSync resolve
++  // cursor<->snapshot via `availableRepos[repo].snapshots`. Without this fetch
++  // that field is forever undefined, so the diff can only ever fire when both
++  // cursors sit on the live head — never on two distinct snapshots. Filling the
++  // source here fixes BOTH consumers unchanged (mutating availableRepos also
++  // re-triggers them via their dependency). Keyed on projectName; a Header
++  // /api/repos refresh may transiently drop snapshots until the next connect.
++  useEffect(() => {
++    const baseRepo = projectName ? projectName.split('@')[0] : '';
++    if (!baseRepo) return;
++    let cancelled = false;
++    fetch(`/snapshots?repo=${encodeURIComponent(baseRepo)}`, { cache: 'no-store' })
++      .then((r) => (r.ok ? r.json() : { snapshots: [] }))
++      .then((data) => {
++        if (cancelled) return;
++        const snaps = Array.isArray(data.snapshots) ? data.snapshots : [];
++        setAvailableRepos((prev) =>
++          prev.map((r) =>
++            r.name === baseRepo && (r.snapshots?.length ?? 0) !== snaps.length
++              ? { ...r, snapshots: snaps }
++              : r,
++          ),
++        );
++      })
++      .catch(() => {});
++    return () => {
++      cancelled = true;
++    };
++    // eslint-disable-next-line react-hooks/exhaustive-deps
++  }, [projectName]);
 +
 +  // Effect: watch graphMode + cursors and trigger enter/exit cursor diff.
 +  // Re-fires on cursor changes too — dragging cursor B while in diff mode
@@ -9982,8 +10550,25 @@ index 5c118450..010c0da5 100644
 +    toggleViewDimension,
      graph,
      setGraph,
++    lensInsights,
++    setLensInsights,
++    lensMeaning,
++    setLensMeaning,
++    lensFreshness,
++    setLensFreshness,
++    applyLensMetadata,
      selectedNode,
-@@ -1377,6 +3384,8 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
+     setSelectedNode,
+     isRightPanelOpen,
+@@ -1362,6 +3528,7 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
+     setAvailableRepos,
+     switchRepo,
+     setCurrentRepo,
++    previewLens,
+     runQuery,
+     isDatabaseReady,
+     // Embedding state and methods
+@@ -1377,6 +3544,8 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
      updateLLMSettings,
      isSettingsPanelOpen,
      setSettingsPanelOpen,
@@ -9992,7 +10577,7 @@ index 5c118450..010c0da5 100644
      isAgentReady,
      isAgentInitializing,
      agentError,
-@@ -1399,6 +3408,171 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
+@@ -1399,6 +3568,171 @@ const AppStateProviderInner = ({ children }: { children: ReactNode }) => {
      clearAICodeReferences,
      clearCodeReferences,
      codeReferenceFocus,
@@ -10165,7 +10750,7 @@ index 5c118450..010c0da5 100644
  
    return <AppStateContext.Provider value={value}>{children}</AppStateContext.Provider>;
 diff --git a/gitnexus-web/src/hooks/useSigma.ts b/gitnexus-web/src/hooks/useSigma.ts
-index a2121dad..4eb3ccce 100644
+index a2121dad..b32bc50e 100644
 --- a/gitnexus-web/src/hooks/useSigma.ts
 +++ b/gitnexus-web/src/hooks/useSigma.ts
 @@ -8,6 +8,34 @@ import EdgeCurveProgram from '@sigma/edge-curve';
@@ -10203,7 +10788,7 @@ index a2121dad..4eb3ccce 100644
  // Helper: Parse hex color to RGB
  const hexToRgb = (hex: string): { r: number; g: number; b: number } => {
    const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
-@@ -63,12 +91,65 @@ interface UseSigmaOptions {
+@@ -63,12 +91,67 @@ interface UseSigmaOptions {
    animatedNodes?: Map<string, NodeAnimation>;
    visibleEdgeTypes?: EdgeType[];
    layoutMode?: 'force' | 'tree' | 'circles';
@@ -10226,8 +10811,10 @@ index a2121dad..4eb3ccce 100644
 +}
 +
 +// Diff palette. Tuned to be readable on the dark background and to coexist
-+// with the existing selection / highlight / blast-radius accents.
-+const DIFF_COLORS: Record<'onlyInA' | 'onlyInB' | 'inBoth', string> = {
++// with the existing selection / highlight / blast-radius accents. Exported so the
++// cursor-diff legend (GraphCanvas) renders the SAME swatches the reducers paint —
++// single source of truth for the snapshot-diff colors.
++export const DIFF_COLORS: Record<'onlyInA' | 'onlyInB' | 'inBoth', string> = {
 +  onlyInA: '#ef4444', // red — present locally, not in the imported one
 +  onlyInB: '#10b981', // emerald — present in the imported one, not locally
 +  inBoth: '#4b5563', // gray-600 — common to both, deliberately desaturated
@@ -10270,7 +10857,7 @@ index a2121dad..4eb3ccce 100644
    zoomIn: () => void;
    zoomOut: () => void;
    resetZoom: () => void;
-@@ -79,8 +160,91 @@ interface UseSigmaReturn {
+@@ -79,8 +162,91 @@ interface UseSigmaReturn {
    selectedNode: string | null;
    setSelectedNode: (nodeId: string | null) => void;
    refreshHighlights: () => void;
@@ -10362,7 +10949,7 @@ index a2121dad..4eb3ccce 100644
  // Noverlap for final cleanup - minimal since it starts with good positions
  const NOVERLAP_SETTINGS = {
    maxIterations: 20, // Reduced - less cleanup needed
-@@ -228,11 +392,100 @@ const clamp = (value: number, min: number, max: number): number => {
+@@ -228,11 +394,100 @@ const clamp = (value: number, min: number, max: number): number => {
    return Math.min(max, Math.max(min, value));
  };
  
@@ -10463,7 +11050,7 @@ index a2121dad..4eb3ccce 100644
    const selectedNodeRef = useRef<string | null>(null);
    const highlightedRef = useRef<Set<string>>(new Set());
    const blastRadiusRef = useRef<Set<string>>(new Set());
-@@ -247,6 +500,39 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
+@@ -247,6 +502,39 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
    onNodeClickRef.current = options.onNodeClick;
    onNodeHoverRef.current = options.onNodeHover;
    onStageClickRef.current = options.onStageClick;
@@ -10503,7 +11090,7 @@ index a2121dad..4eb3ccce 100644
    const layoutTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
    const effectsAnimationFrameRef = useRef<number | null>(null);
    const treeLayoutFrameRef = useRef<number | null>(null);
-@@ -273,12 +559,20 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
+@@ -273,12 +561,20 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
      blastRadiusRef.current = options.blastRadiusNodeIds || new Set();
      animatedNodesRef.current = options.animatedNodes || new Map();
      visibleEdgeTypesRef.current = options.visibleEdgeTypes || null;
@@ -10524,7 +11111,7 @@ index a2121dad..4eb3ccce 100644
    ]);
  
    // Animation loop for node effects
-@@ -415,6 +709,13 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
+@@ -415,6 +711,13 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
          curved: EdgeCurveProgram,
        },
  
@@ -10538,7 +11125,7 @@ index a2121dad..4eb3ccce 100644
        // Custom hover renderer - dark background instead of white
        defaultDrawNodeHover: (context, data, settings) => {
          const label = data.label;
-@@ -476,6 +777,87 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
+@@ -476,6 +779,87 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
            return res;
          }
  
@@ -10626,7 +11213,7 @@ index a2121dad..4eb3ccce 100644
          const currentSelected = selectedNodeRef.current;
          const highlighted = highlightedRef.current;
          const blastRadius = blastRadiusRef.current;
-@@ -586,6 +968,17 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
+@@ -586,6 +970,17 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
        edgeReducer: (edge, data) => {
          const res = { ...data };
  
@@ -10644,7 +11231,7 @@ index a2121dad..4eb3ccce 100644
          // Check edge type visibility first.
          // HAS_METHOD / HAS_PROPERTY are Kotlin/Java hierarchy edges not in the
          // EdgeType union — normalize them so they follow DEFINES / CONTAINS
-@@ -604,6 +997,23 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
+@@ -604,6 +999,23 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
            }
          }
  
@@ -10668,7 +11255,7 @@ index a2121dad..4eb3ccce 100644
          // Tree view: hierarchy edges are subtle, cross-cutting edges are more visible
          const isHierarchyEdge = (data as any).isHierarchyEdge;
          if (isHierarchyEdge !== undefined) {
-@@ -1435,12 +1845,18 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
+@@ -1435,12 +1847,18 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
      [stopAllLayouts, stopCirclesLayout],
    );
  
@@ -10689,7 +11276,7 @@ index a2121dad..4eb3ccce 100644
        stopAllLayouts(false);
  
        // Get settings
-@@ -1464,8 +1880,17 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
+@@ -1464,8 +1882,17 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
            // Light noverlap cleanup
            noverlap.assign(graph, NOVERLAP_SETTINGS);
            sigmaRef.current?.refresh();
@@ -10707,7 +11294,7 @@ index a2121dad..4eb3ccce 100644
          }
        }, duration);
      },
-@@ -1473,25 +1898,92 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
+@@ -1473,25 +1900,92 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
    );
  
    const setGraph = useCallback(
@@ -10805,7 +11392,7 @@ index a2121dad..4eb3ccce 100644
      },
      [
        options.layoutMode,
-@@ -1503,6 +1995,28 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
+@@ -1503,6 +1997,28 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
      ],
    );
  
@@ -10834,7 +11421,7 @@ index a2121dad..4eb3ccce 100644
    const focusNode = useCallback((nodeId: string) => {
      const sigma = sigmaRef.current;
      const graph = graphRef.current;
-@@ -1533,7 +2047,8 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
+@@ -1533,7 +2049,8 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
    }, []);
  
    const resetZoom = useCallback(() => {
@@ -10844,7 +11431,7 @@ index a2121dad..4eb3ccce 100644
      setSelectedNode(null);
    }, [setSelectedNode]);
  
-@@ -1557,10 +2072,313 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
+@@ -1557,10 +2074,313 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
      sigmaRef.current?.refresh();
    }, []);
  
@@ -11158,7 +11745,7 @@ index a2121dad..4eb3ccce 100644
      zoomIn,
      zoomOut,
      resetZoom,
-@@ -1571,5 +2389,18 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
+@@ -1571,5 +2391,18 @@ export const useSigma = (options: UseSigmaOptions = {}): UseSigmaReturn => {
      selectedNode,
      setSelectedNode,
      refreshHighlights,
@@ -11207,10 +11794,36 @@ index 6c660b0a..937fd909 100644
     REDUCED MOTION — respect OS-level motion preferences (WCAG 2.3.3)
  ═══════════════════════════════════════════════════════════════ */
 diff --git a/gitnexus-web/src/lib/graph-adapter.ts b/gitnexus-web/src/lib/graph-adapter.ts
-index bb3f5f11..faf8a7c3 100644
+index bb3f5f11..12dbd1bc 100644
 --- a/gitnexus-web/src/lib/graph-adapter.ts
 +++ b/gitnexus-web/src/lib/graph-adapter.ts
-@@ -241,9 +241,15 @@ export const knowledgeGraphToGraphology = (
+@@ -84,6 +84,25 @@ const getNodeMass = (nodeType: NodeLabel, nodeCount: number): number => {
+   }
+ };
+ 
++/**
++ * Lens dim (Σ-LENS-SOUVERAINE Phase 1b/1c) — shared across all three render
++ * modes (Force/Tree/Circles): a node the lens engine's `apply_select`
++ * excluded (`properties.inLens === false`) is dimmed gray + shrunk, same
++ * idiom as the existing `isolateCommunity` dim in research-graph-adapter.ts.
++ * Lowest-priority adjustment: call last, right before `graph.addNode`, so it
++ * never fights an explicit projection/view color. A node without `inLens`
++ * (undefined) or `inLens === true` passes through unchanged.
++ */
++const applyInLensDim = (
++  color: string,
++  size: number,
++  node: { properties: unknown },
++): { color: string; size: number } => {
++  const inLensFalse = (node.properties as { inLens?: boolean }).inLens === false;
++  if (!inLensFalse) return { color, size };
++  return { color: '#374151', size: Math.min(size, 2) };
++};
++
+ /**
+  * Converts the KnowledgeGraph to a graphology Graph for Sigma.js
+  * Folders are positioned in a wide spread, children positioned NEAR their parents
+@@ -241,15 +260,24 @@ export const knowledgeGraphToGraphology = (
  
      // Symbol nodes get colored by community if available
      const usesCommunityColor = hasCommunity && symbolTypes.has(node.label);
@@ -11226,11 +11839,62 @@ index bb3f5f11..faf8a7c3 100644
 +      : usesCommunityColor
 +        ? getCommunityColor(communityIndex!)
 +        : NODE_COLORS[node.label] || '#9ca3af';
++
++    // Lens dim (Σ-LENS-SOUVERAINE Phase 1b) — see applyInLensDim() above.
++    const { color: finalColor, size: finalSize } = applyInLensDim(nodeColor, scaledSize, node);
  
      graph.addNode(nodeId, {
        x,
+       y,
+-      size: scaledSize,
+-      color: nodeColor,
++      size: finalSize,
++      color: finalColor,
+       label: node.properties.name,
+       nodeType: node.label,
+       filePath: node.properties.filePath,
+@@ -359,13 +387,17 @@ export const knowledgeGraphToTreeGraphology = (
+ 
+     const baseSize = NODE_SIZES[node.label] || 8;
+     const scaledSize = getScaledNodeSize(baseSize, nodeCount);
+-    const finalSize = Math.max(2, pos.size * (scaledSize / baseSize));
++    const treeSize = Math.max(2, pos.size * (scaledSize / baseSize));
++    const treeColor = NODE_COLORS[node.label] || '#9ca3af';
++
++    // Lens dim (Σ-LENS-SOUVERAINE Phase 1c) — see applyInLensDim() above.
++    const { color: finalColor, size: finalSize } = applyInLensDim(treeColor, treeSize, node);
+ 
+     graph.addNode(node.id, {
+       x: pos.x,
+       y: pos.y,
+       size: finalSize,
+-      color: NODE_COLORS[node.label] || '#9ca3af',
++      color: finalColor,
+       label: node.properties.name,
+       nodeType: node.label,
+       filePath: node.properties.filePath,
+@@ -440,13 +472,17 @@ export const knowledgeGraphToCirclesGraphology = (
+ 
+     const baseSize = NODE_SIZES[node.label] || 8;
+     const scaledSize = getScaledNodeSize(baseSize, nodeCount);
+-    const finalSize = Math.max(2, pos.size * (scaledSize / baseSize));
++    const circlesSize = Math.max(2, pos.size * (scaledSize / baseSize));
++    const circlesColor = NODE_COLORS[node.label] || '#9ca3af';
++
++    // Lens dim (Σ-LENS-SOUVERAINE Phase 1c) — see applyInLensDim() above.
++    const { color: finalColor, size: finalSize } = applyInLensDim(circlesColor, circlesSize, node);
+ 
+     graph.addNode(node.id, {
+       x: pos.x,
+       y: pos.y,
+       size: finalSize,
+-      color: NODE_COLORS[node.label] || '#9ca3af',
++      color: finalColor,
+       label: node.properties.name,
+       nodeType: node.label,
+       filePath: node.properties.filePath,
 diff --git a/gitnexus-web/src/lib/lucide-icons.tsx b/gitnexus-web/src/lib/lucide-icons.tsx
-index 7d9b5fc7..d0ed22ec 100644
+index 7d9b5fc7..0c1dd702 100644
 --- a/gitnexus-web/src/lib/lucide-icons.tsx
 +++ b/gitnexus-web/src/lib/lucide-icons.tsx
 @@ -42,20 +42,25 @@ import { forwardRef } from 'react';
@@ -11278,7 +11942,15 @@ index 7d9b5fc7..d0ed22ec 100644
    MousePointerClick,
    Network,
    PanelLeft,
-@@ -92,6 +100,7 @@ export {
+@@ -85,6 +93,7 @@ export {
+   PanelRightClose,
+   Pause,
+   Play,
++  Plus,
+   RefreshCw,
+   Rocket,
+   RotateCcw,
+@@ -92,6 +101,7 @@ export {
    Send,
    Server,
    Settings,
@@ -11286,7 +11958,7 @@ index 7d9b5fc7..d0ed22ec 100644
    SkipForward,
    Snail,
    Sparkles,
-@@ -101,9 +110,12 @@ export {
+@@ -101,9 +111,12 @@ export {
    Target,
    Terminal,
    Trash2,
@@ -11299,11 +11971,106 @@ index 7d9b5fc7..d0ed22ec 100644
    Variable,
    X,
    Zap,
+diff --git a/gitnexus-web/src/locales/en/header.json b/gitnexus-web/src/locales/en/header.json
+index 3b531831..8eaa9d50 100644
+--- a/gitnexus-web/src/locales/en/header.json
++++ b/gitnexus-web/src/locales/en/header.json
+@@ -12,5 +12,32 @@
+   "aiSettings": "AI Settings",
+   "help": "Help",
+   "language": "Language",
+-  "selectLanguage": "Select language"
++  "selectLanguage": "Select language",
++  "addLens": "+ New lens",
++  "lensStudio": {
++    "title": "Lens Studio",
++    "preview": "Preview",
++    "propose": "Propose",
++    "autoApprove": "Auto-approve (approver role required)",
++    "proposed": "Proposed",
++    "proposeFailed": "Propose failed",
++    "previewRendered": "Preview rendered — close to view",
++    "jsonError": "Invalid JSON",
++    "notObject": "The spec must be a JSON object",
++    "unknownError": "Unknown error",
++    "close": "Close",
++    "guided": {
++      "tab": "Guided", "expertTab": "Expert", "name": "Lens name", "source": "Refines lens",
++      "meaning": "Meaning", "filter": "Filter", "field": "field", "value": "value",
++      "color": "Color", "colorBy": "color by", "insight": "Insight", "topN": "top N", "by": "by metric",
++      "op": "Operator", "scale": "Color scale",
++      "errors": {
++        "nameRequired": "Lens name is required.",
++        "sourceRequired": "Refines lens is required — a lens must name the upstream lens it composes.",
++        "predicateOperatorChar": "Filter field and values cannot contain < > = or ! — the backend predicate grammar would mis-read the expression and match no node at all.",
++        "insightTopN": "Top N must be a whole number of 1 or more.",
++        "insightBy": "Insight metric must be a single word (letters, digits, underscore) — e.g. pagerank, not in-degree."
++      }
++    }
++  }
+ }
+diff --git a/gitnexus-web/src/locales/zh-CN/header.json b/gitnexus-web/src/locales/zh-CN/header.json
+index 303ba02c..1c106fd7 100644
+--- a/gitnexus-web/src/locales/zh-CN/header.json
++++ b/gitnexus-web/src/locales/zh-CN/header.json
+@@ -12,5 +12,32 @@
+   "aiSettings": "AI 设置",
+   "help": "帮助",
+   "language": "语言",
+-  "selectLanguage": "选择语言"
++  "selectLanguage": "选择语言",
++  "addLens": "+ 新建镜头",
++  "lensStudio": {
++    "title": "镜头工作室",
++    "preview": "预览",
++    "propose": "提交",
++    "autoApprove": "自动批准（需要审批者角色）",
++    "proposed": "已提交",
++    "proposeFailed": "提交失败",
++    "previewRendered": "预览已渲染 — 关闭以查看",
++    "jsonError": "JSON 格式无效",
++    "notObject": "规范必须是一个 JSON 对象",
++    "unknownError": "未知错误",
++    "close": "关闭",
++    "guided": {
++      "tab": "引导式", "expertTab": "专家模式", "name": "镜头名称", "source": "细化自镜头",
++      "meaning": "含义", "filter": "过滤条件", "field": "字段", "value": "值",
++      "color": "颜色", "colorBy": "着色依据", "insight": "洞察", "topN": "前 N 项", "by": "依据指标",
++      "op": "运算符", "scale": "配色方案",
++      "errors": {
++        "nameRequired": "镜头名称为必填项。",
++        "sourceRequired": "必须填写「细化自镜头」——镜头必须指明其所组合的上游镜头。",
++        "predicateOperatorChar": "过滤条件的字段和值不能包含 < > = 或 ! ——后端谓词语法会错误解析该表达式，导致没有任何节点匹配。",
++        "insightTopN": "「前 N 项」必须是大于等于 1 的整数。",
++        "insightBy": "洞察指标必须是单个词（字母、数字、下划线）——例如 pagerank，而不是 in-degree。"
++      }
++    }
++  }
+ }
 diff --git a/gitnexus-web/src/services/backend-client.ts b/gitnexus-web/src/services/backend-client.ts
-index e887e390..82eb4c45 100644
+index e887e390..b5b0c345 100644
 --- a/gitnexus-web/src/services/backend-client.ts
 +++ b/gitnexus-web/src/services/backend-client.ts
-@@ -17,6 +17,12 @@ export interface BackendRepo {
+@@ -11,12 +11,31 @@ import { CircuitOpenError, ResilientFetchExhaustedError, resilientFetch } from '
+ 
+ // ── Types ──────────────────────────────────────────────────────────────────
+ 
++/**
++ * A single governance-lens insight. Structurally identical to
++ * `LensInsight` in `hooks/app-state/graph.tsx` — duplicated here rather
++ * than imported to keep this service module free of a hooks-layer
++ * dependency. Top-level field of `/api/graph?repo=<lens>` responses,
++ * produced by the sovereign brain-graph gateway's `evaluate()`.
++ */
++export interface LensInsight {
++  id: string;
++  name?: string;
++  value: number;
++}
++
+ export interface BackendRepo {
+   name: string;
+   path: string;
    repoPath?: string; // git HEAD returns "repoPath"; older versions return "path"
    indexedAt: string;
    lastCommit?: string;
@@ -11316,7 +12083,7 @@ index e887e390..82eb4c45 100644
    stats?: {
      files?: number;
      nodes?: number;
-@@ -24,6 +30,13 @@ export interface BackendRepo {
+@@ -24,6 +43,13 @@ export interface BackendRepo {
      communities?: number;
      processes?: number;
    };
@@ -11330,7 +12097,20 @@ index e887e390..82eb4c45 100644
  }
  
  export interface EnrichedSearchResult {
-@@ -500,9 +513,14 @@ export const probeBackend = async (): Promise<boolean> => {
+@@ -368,6 +394,12 @@ const assertOk = async (response: Response): Promise<void> => {
+       message = body.error;
+     } else if (body && typeof body.message === 'string') {
+       message = body.message;
++    } else if (body && typeof body.detail === 'string') {
++      // FastAPI's HTTPException(detail=...) shape (bridge-api propose route)
++      // — e.g. 403 "auto_approve requires an approver role" or 422 "spec
++      // must be a non-empty object". Without this branch those reasons are
++      // swallowed and the caller only sees "Forbidden"/"Unprocessable Entity".
++      message = body.detail;
+     }
+   } catch {
+     // Response body was not JSON
+@@ -500,9 +532,14 @@ export const probeBackend = async (): Promise<boolean> => {
    }
  };
  
@@ -11347,7 +12127,55 @@ index e887e390..82eb4c45 100644
    await assertOk(response);
    return response.json() as Promise<BackendRepo[]>;
  };
-@@ -578,6 +596,34 @@ export const fetchGraph = async (
+@@ -528,7 +565,18 @@ export const fetchRepoInfo = async (
+   return { ...data, repoPath: data.repoPath ?? data.path };
+ };
+ 
+-/** Fetch the graph (nodes + relationships). Content stripped by default. */
++/** Fetch the graph (nodes + relationships). Content stripped by default.
++ *
++ * `insights`/`meaning` are top-level fields the sovereign brain-graph
++ * gateway's `evaluate()` adds to the response when `repo` names an
++ * active governance lens (absent for ordinary repos). Only the
++ * plain-JSON response path below passes them through — the NDJSON
++ * streaming path (large repos) reconstructs solely `{nodes,
++ * relationships}` from its `{type:'node'|'relationship'}` records and
++ * has no wire representation for extra top-level fields yet, so a lens
++ * response served over that path would lose them. Not verified live
++ * which path lens responses actually take.
++ */
+ export const fetchGraph = async (
+   repo?: string,
+   opts?: {
+@@ -536,7 +584,12 @@ export const fetchGraph = async (
+     signal?: AbortSignal;
+     onProgress?: (downloaded: number, total: number | null) => void;
+   },
+-): Promise<{ nodes: GraphNode[]; relationships: GraphRelationship[] }> => {
++): Promise<{
++  nodes: GraphNode[];
++  relationships: GraphRelationship[];
++  insights?: LensInsight[];
++  meaning?: string;
++}> => {
+   const params = [repoParam(repo), opts?.includeContent ? 'includeContent=true' : '', 'stream=true']
+     .filter(Boolean)
+     .join('&');
+@@ -551,7 +604,12 @@ export const fetchGraph = async (
+   }
+ 
+   if (!opts?.onProgress || !response.body) {
+-    return response.json() as Promise<{ nodes: GraphNode[]; relationships: GraphRelationship[] }>;
++    return response.json() as Promise<{
++      nodes: GraphNode[];
++      relationships: GraphRelationship[];
++      insights?: LensInsight[];
++      meaning?: string;
++    }>;
+   }
+ 
+   // Streaming download with progress
+@@ -578,6 +636,142 @@ export const fetchGraph = async (
    return JSON.parse(new TextDecoder().decode(combined));
  };
  
@@ -11379,9 +12207,141 @@ index e887e390..82eb4c45 100644
 +  return response.json();
 +};
 +
++/**
++ * A governance lens' freshness verdict. Structurally identical to
++ * `LensFreshness` in `hooks/app-state/graph.tsx` — duplicated here for
++ * the same reason as `LensInsight` above (keep this service module free
++ * of a hooks-layer dependency).
++ */
++export interface LensFreshness {
++  stale?: boolean;
++  age_hours?: number;
++  ttl_hours?: number;
++  source_mtime?: string;
++}
++
++/**
++ * Fetch `meta.freshness` for an active governance lens.
++ *
++ * Option A (fork-only, see the Phase 1b Task 3 plan): `meta.freshness`
++ * is injected by the sovereign brain-graph gateway **only** on the
++ * `/lens/<name>` route, not on `/api/graph?repo=` (the route
++ * `fetchGraph` above uses for the actual render). This is a lightweight
++ * additional fetch triggered only when the active repo is a governance
++ * lens (see `switchRepo`'s `family` check) — never for ordinary repos,
++ * which have no `/lens/<name>` entry and would just 404.
++ *
++ * Best-effort by design: any failure (network, 404, malformed body)
++ * resolves to `null` rather than throwing, so a lens with an
++ * unreachable/misbehaving freshness endpoint still renders its graph —
++ * the caller surfaces `null` as "fraîcheur inconnue" (Zero-Masking)
++ * rather than crashing the switch.
++ *
++ * NOT VERIFIED LIVE — written against the documented `/lens/<name>`
++ * contract (`meta.freshness`), not exercised against a running
++ * gateway. See docs/superpowers/plans/2026-07-17-lens-souveraine-phase1b-browser-projector.md
++ * Task 3 + the Task 3 report.
++ */
++export const fetchLensFreshness = async (name: string): Promise<LensFreshness | null> => {
++  try {
++    const url = `${_backendUrl}/lens/${encodeURIComponent(name)}`;
++    const response = await fetchWithTimeout(url, {}, 10_000);
++    if (!response.ok) return null;
++    const payload = await response.json();
++    return (payload && payload.meta && payload.meta.freshness) || null;
++  } catch {
++    return null;
++  }
++};
++
++// ── Lens Atelier (authoring) — POST preview (gateway, no auth) + propose (bridge-api, Bearer) ──
++let _bridgeUrl = 'http://localhost:8000'; // ELYSIUM bridge-api; override via setBridgeUrl (prod: https://bridge.elysium.local)
++
++export const setBridgeUrl = (url: string): void => {
++  const trimmed = url.replace(/\/$/, '');
++  validateBackendUrl(trimmed); // same scheme guard as setBackendUrl (anti-SSRF/CSRF)
++  _bridgeUrl = trimmed;
++};
++export const getBridgeUrl = (): string => _bridgeUrl;
++
++export interface LensPreviewResult {
++  ok: boolean;
++  errors?: string[];
++  braingraph?: Record<string, unknown>; // {lens,nodes,relationships,meta,insights,meaning} on 200
++}
++
++/**
++ * Preview a lens spec against the gateway's `/lens/preview` endpoint.
++ *
++ * Wrapped in try/catch to honor its own type — `fetchWithTimeout` THROWS
++ * (`BackendError`/`TimeoutError`/`CircuitOpenError`) on a transport
++ * failure (gateway down, DNS failure, timeout), but the declared return
++ * type `Promise<LensPreviewResult>` claims to always resolve. Without
++ * this guard, a gateway-unreachable Preview would reject uncaught —
++ * `LensStudioModal.handlePreview` has no `catch` around `onPreview`, so
++ * the failure would silently show nothing instead of surfacing an error.
++ */
++export const previewLens = async (spec: Record<string, unknown>): Promise<LensPreviewResult> => {
++  try {
++    const response = await fetchWithTimeout(`${_backendUrl}/lens/preview`, {
++      method: 'POST',
++      headers: { 'Content-Type': 'application/json' },
++      body: JSON.stringify(spec),
++    });
++    if (response.status === 200) {
++      return { ok: true, braingraph: (await response.json()) as Record<string, unknown> };
++    }
++    const body = await response.json().catch(() => ({} as Record<string, unknown>));
++    const errors = Array.isArray((body as { errors?: unknown }).errors)
++      ? ((body as { errors: string[] }).errors)
++      : [String((body as { error?: unknown }).error ?? `HTTP ${response.status}`)];
++    return { ok: false, errors };
++  } catch (e) {
++    return { ok: false, errors: [(e as Error).message || 'preview request failed'] };
++  }
++};
++
++export const proposeLens = async (
++  spec: Record<string, unknown>,
++  autoApprove: boolean,
++  token: string,
++): Promise<{ id: string; status: string }> => {
++  const response = await fetchWithTimeout(`${_bridgeUrl}/elysium/lens/propose`, {
++    method: 'POST',
++    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
++    body: JSON.stringify({ spec, auto_approve: autoApprove }), // NO author — server derives it
++  });
++  await assertOk(response);
++  return (await response.json()) as { id: string; status: string };
++};
++
  const parseNdjsonGraphResponse = async (
    response: Response,
    onProgress?: (downloaded: number, total: number | null) => void,
+@@ -864,6 +1058,10 @@ export interface ConnectResult {
+   nodes: GraphNode[];
+   relationships: GraphRelationship[];
+   repoInfo: BackendRepo;
++  /** See `fetchGraph` doc comment — governance-lens fields, only carried
++   *  through the plain-JSON response path. */
++  insights?: LensInsight[];
++  meaning?: string;
+ }
+ 
+ /**
+@@ -886,10 +1084,10 @@ export async function connectToServer(
+   const repoInfo = await fetchRepoInfo(repoName, { awaitAnalysis: opts?.awaitAnalysis });
+ 
+   onProgress?.('downloading', 0, null);
+-  const { nodes, relationships } = await fetchGraph(repoName, {
++  const { nodes, relationships, insights, meaning } = await fetchGraph(repoName, {
+     signal,
+     onProgress: (downloaded, total) => onProgress?.('downloading', downloaded, total),
+   });
+ 
+-  return { nodes, relationships, repoInfo };
++  return { nodes, relationships, repoInfo, insights, meaning };
+ }
 diff --git a/gitnexus-web/vite.config.ts b/gitnexus-web/vite.config.ts
 index a62b9e58..46f7be42 100644
 --- a/gitnexus-web/vite.config.ts

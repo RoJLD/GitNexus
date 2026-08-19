@@ -214,6 +214,38 @@ commit({
   },
 });
 
+// Commit 13 (alice, 2025-02-20) — INTERNAL class inheritance so the class-diagram
+// export (`/sysml-export?format=mermaid-class`) can be asserted DETERMINISTICALLY in
+// CI. Measured 2026-07-12: the ingestion emits EXTENDS (class→superclass) + IMPLEMENTS
+// (class→interface). All bases here are IN-repo, so projectClassDiagram renders real
+// arrows (`Store <|-- UserStore`, `Cache <|.. MemoryCache`) — HMMstudio (external
+// bases only) could never exercise this path.
+commit({
+  author: ALICE,
+  date: '2025-02-20T10:00:00 +0100',
+  message: 'feat(store): internal class hierarchy (extends + implements)',
+  files: {
+    'src/store/store.ts': [
+      'export interface Cache {',
+      '  get(k: string): string;',
+      '}',
+      '',
+      'export class Store {',
+      '  read(): string { return ""; }',
+      '}',
+      '',
+      'export class UserStore extends Store {',
+      '  find(id: string): string { return id; }',
+      '}',
+      '',
+      'export class MemoryCache extends Store implements Cache {',
+      '  get(k: string): string { return k; }',
+      '}',
+      '',
+    ].join('\n'),
+  },
+});
+
 // Normalise the git repo so tar output is byte-identical across regens.
 // 1. gc packs loose objects and removes non-deterministic loose-object files.
 // 2. read-tree HEAD rewrites .git/index clearing per-file stat cache

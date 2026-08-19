@@ -4,7 +4,7 @@
  * The compose file is at the repo root: docker-compose.test.yml.
  * We resolve TEST_PROJECTS_ROOT to the extracted fixture by default.
  */
-import { execSync, spawn } from 'node:child_process';
+import { execSync, execFileSync, spawn } from 'node:child_process';
 import { existsSync, mkdtempSync, rmSync, cpSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
@@ -31,6 +31,17 @@ export function extractFixture() {
   const sep = String.fromCharCode(92); // backslash — avoids escaping issues
   const toFwd = (p) => p.split(sep).join('/');
   execSync(`tar --force-local -xzf "${toFwd(tarSrc)}" -C "${toFwd(dir)}"`, { stdio: 'pipe' });
+  // mkdtemp creates the dir 0700 owned by the host uid. On Linux CI the analyze
+  // container runs as `node` (uid 1000) ≠ the runner uid, so it cannot even
+  // traverse 0700 — let alone mkdir .gitnexus/parsedfile-cache under the mounted
+  // source → EACCES → analyze worker error. Open it so the container uid can
+  // read+write. No-op on Windows Docker Desktop (no POSIX uid enforcement), which
+  // is why the warm local run never hit this.
+  if (process.platform !== 'win32') {
+    // execFileSync (no shell) — dir is a machine-generated mkdtemp path, but the
+    // array form removes the shell-injection surface entirely.
+    try { execFileSync('chmod', ['-R', 'a+rwX', dir], { stdio: 'pipe' }); } catch { /* best effort */ }
+  }
   extractedFixtureDir = dir;
   return dir;
 }

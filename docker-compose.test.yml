@@ -33,10 +33,23 @@ services:
       - GITNEXUS_HOME=/data/gitnexus
       - HF_HOME=/data/hf-cache
       - NODE_ENV=production
+      # Cap the LadybugDB mmap reservation. The base image bakes
+      # GITNEXUS_LBUG_MAX_DB_SIZE=17179869184 (16 GiB); a CI runner cannot reserve
+      # that much address space, so `new lbug.Database(...)` aborts with "Buffer
+      # manager: Mmap failed" at the analyze worker's first native op → worker
+      # crash → retry x2 → job 'failed' in ~8s. WSL2/Windows overcommits address
+      # space, which is why the warm local run passed. 2 GiB is ample for any test
+      # fixture and fits the runner. (upstream lbug-config.ts reads this env.)
+      - GITNEXUS_LBUG_MAX_DB_SIZE=2147483648
     volumes:
       - gitnexus-test-data:/data/gitnexus
       - gitnexus-test-hf-cache:/data/hf-cache
-      - ${TEST_PROJECTS_ROOT:-./tests/fixtures/sample-repo-extracted}:/data/projects:ro
+      # RW (NOT :ro): analyze writes .gitnexus/parsedfile-cache/ next to the
+      # source. The fixture is a throwaway mkdtemp extraction (stack.mjs),
+      # cleaned on teardown, so mutating it is safe. :ro made every analyze
+      # fail with `ENOENT mkdir .../.gitnexus/parsedfile-cache` → the whole
+      # integration tier never had a green baseline (global-setup aborted here).
+      - ${TEST_PROJECTS_ROOT:-./tests/fixtures/sample-repo-extracted}:/data/projects
     healthcheck:
       # The CLI serves /api/health (200); /health is 404. Wrong endpoint here is
       # why the server was stuck "unhealthy" and blocked dependents. start_period
@@ -66,11 +79,25 @@ services:
       - VITE_GITNEXUS_BACKEND_URL=http://localhost:${TEST_PORT:-4747}
       - GITNEXUS_HOME=/data/gitnexus
       - GRAPHS_URL=http://gitnexus-graphs-test:4749
+      # The web server reaches the API container over the compose network for
+      # findRepoByName (every analytics route resolves the repo this way) and
+      # the analyze/import proxy. docker-server.mjs defaults this to
+      # http://gitnexus:4747 — the DEV container name, which does NOT resolve on
+      # the test network → every analytics call 404s "repo not found". Point it
+      # at the test API service. (This is why the tier never had a green
+      # baseline; the "green" e2e ran against the dev stack, not this compose.)
+      - GITNEXUS_API=http://gitnexus-server-test:4747
+      # Same 16 GiB→2 GiB mmap cap as the server (the web container also opens
+      # lbug read-side for the /api/graph-backed analytics routes).
+      - GITNEXUS_LBUG_MAX_DB_SIZE=2147483648
     volumes:
       # graph-templates routes run IN the web container: the research-fs
       # importer reads /data/projects/<source> and the JSON store writes under
       # /data/gitnexus/research-graphs (mirrors the dev web service mounts).
-      - ${TEST_PROJECTS_ROOT:-./tests/fixtures/sample-repo-extracted}:/data/projects:ro
+      # RW (NOT :ro): /ghosts/sync writes .gitnexus/{ghosts,clusters}.json +
+      # roadmap.yml next to the source (same throwaway-fixture rationale as the
+      # server container above).
+      - ${TEST_PROJECTS_ROOT:-./tests/fixtures/sample-repo-extracted}:/data/projects
       - gitnexus-test-data:/data/gitnexus
 
   # Kùzu sidecar (our image) — owns /data/gitnexus/graphs/<name>.kuzu. The web

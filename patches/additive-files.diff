@@ -490,10 +490,10 @@ index 00000000..46981a29
 +}
 diff --git a/docker-server-churn.mjs b/docker-server-churn.mjs
 new file mode 100644
-index 00000000..33f13d27
+index 00000000..1e9a9749
 --- /dev/null
 +++ b/docker-server-churn.mjs
-@@ -0,0 +1,183 @@
+@@ -0,0 +1,176 @@
 +/**
 + * Churn analytics — Phase 4A of the time-travel feature.
 + *
@@ -532,6 +532,8 @@ index 00000000..33f13d27
 +import { readdir, readFile, stat } from 'node:fs/promises';
 +import { findRepoByName, SNAPSHOTS_ROOT, safeSnapshotKey } from './docker-server-snapshots.mjs';
 +import { toCsv, writeCsv, safeFilename } from './docker-server-csv.mjs';
++import { getSnapshotNodeIds } from './docker-server-snapshot-nodeids.mjs';
++import { withETag } from './docker-server-etag.mjs';
 +
 +async function listSnapshotNamesAndDates(repoName) {
 +  const repoSnapshotsDir = join(SNAPSHOTS_ROOT, safeSnapshotKey(repoName));
@@ -560,25 +562,10 @@ index 00000000..33f13d27
 +  return out;
 +}
 +
-+// Fetch the node-id set for a given registered repo via Cypher. We use
-+// /api/query because it's much cheaper than /api/graph — we don't need
-+// edges, properties, or anything except the id list.
-+async function fetchNodeIds(repoName, api) {
-+  const resp = await fetch(`${api}/api/query`, {
-+    method: 'POST',
-+    headers: { 'Content-Type': 'application/json' },
-+    body: JSON.stringify({ cypher: 'MATCH (n) RETURN n.id AS id', repo: repoName }),
-+  });
-+  if (!resp.ok) {
-+    throw new Error(`cypher failed for ${repoName}: ${resp.status}`);
-+  }
-+  const data = await resp.json();
-+  const rows = data?.result || data?.rows || [];
-+  // Be tolerant of shape variations across gitnexus versions.
-+  return rows
-+    .map((row) => (typeof row === 'object' && row !== null ? row.id ?? row['n.id'] : null))
-+    .filter((id) => typeof id === 'string');
-+}
++// Node-id fetch is the shared, cached getSnapshotNodeIds (was a local
++// fetchNodeIds copy) — snapshot points are immutable so their id lists are
++// cached forever; the live point is keyed by indexedAt. See
++// docker-server-snapshot-nodeids.mjs.
 +
 +async function handleChurn(url, res, opts) {
 +  const repoName = url.searchParams.get('repo');
@@ -630,7 +617,12 @@ index 00000000..33f13d27
 +  const errors = [];
 +  for (const point of timeline) {
 +    try {
-+      const ids = await fetchNodeIds(point.name, opts.api);
++      const ids = await getSnapshotNodeIds(point.name, {
++        api: opts.api,
++        isLive: point.isLive,
++        liveKey: liveEntry.indexedAt,
++        cacheDir: liveEntry.path,
++      });
 +      for (const id of ids) {
 +        perNode[id] = (perNode[id] || 0) + 1;
 +      }
@@ -672,6 +664,7 @@ index 00000000..33f13d27
 +
 +export async function handleChurnRoute(req, url, res, opts) {
 +  if (url.pathname === '/churn' && req.method === 'GET') {
++    withETag(req, res);
 +    await handleChurn(url, res, opts);
 +    return true;
 +  }
@@ -2743,10 +2736,10 @@ index 00000000..0f8e30ee
 +}
 diff --git a/docker-server-coupling.mjs b/docker-server-coupling.mjs
 new file mode 100644
-index 00000000..e1e2ebdf
+index 00000000..93ea5bb7
 --- /dev/null
 +++ b/docker-server-coupling.mjs
-@@ -0,0 +1,266 @@
+@@ -0,0 +1,260 @@
 +/**
 + * Temporal coupling analytics — Phase 4B.
 + *
@@ -2788,6 +2781,8 @@ index 00000000..e1e2ebdf
 +import { join } from 'node:path';
 +import { SNAPSHOTS_ROOT, safeSnapshotKey } from './docker-server-snapshots.mjs';
 +import { toCsv, writeCsv, safeFilename } from './docker-server-csv.mjs';
++import { getSnapshotNodeIds } from './docker-server-snapshot-nodeids.mjs';
++import { withETag } from './docker-server-etag.mjs';
 +
 +const COUPLING_REGRESSION_THRESHOLD = Number(process.env.COUPLING_REGRESSION_THRESHOLD) || 0.5;
 +
@@ -2848,20 +2843,6 @@ index 00000000..e1e2ebdf
 +  return next === -1 ? rest : rest.slice(0, next);
 +}
 +
-+async function fetchNodeIds(repoName, api) {
-+  const resp = await fetch(`${api}/api/query`, {
-+    method: 'POST',
-+    headers: { 'Content-Type': 'application/json' },
-+    body: JSON.stringify({ cypher: 'MATCH (n) RETURN n.id AS id', repo: repoName }),
-+  });
-+  if (!resp.ok) throw new Error(`cypher failed for ${repoName}: ${resp.status}`);
-+  const data = await resp.json();
-+  const rows = data?.result || data?.rows || [];
-+  return rows
-+    .map((row) => (typeof row === 'object' && row !== null ? row.id ?? row['n.id'] : null))
-+    .filter((id) => typeof id === 'string');
-+}
-+
 +async function handleCoupling(url, res, opts) {
 +  const repoName = url.searchParams.get('repo');
 +  if (!repoName) {
@@ -2913,7 +2894,12 @@ index 00000000..e1e2ebdf
 +  const errors = [];
 +  for (const point of effectiveTimeline) {
 +    try {
-+      const ids = await fetchNodeIds(point.name, opts.api);
++      const ids = await getSnapshotNodeIds(point.name, {
++        api: opts.api,
++        isLive: point.isLive,
++        liveKey: liveEntry.indexedAt,
++        cacheDir: liveEntry.path,
++      });
 +      idSets.push(new Set(ids));
 +    } catch (err) {
 +      errors.push({ snapshot: point.name, error: err?.message || 'fetch failed' });
@@ -3008,6 +2994,7 @@ index 00000000..e1e2ebdf
 +
 +export async function handleCouplingRoute(req, url, res, opts) {
 +  if (url.pathname === '/coupling' && req.method === 'GET') {
++    withETag(req, res);
 +    await handleCoupling(url, res, opts);
 +    return true;
 +  }
@@ -3962,6 +3949,77 @@ index 00000000..c57e279d
 +    return true;
 +  }
 +  return false;
++}
+diff --git a/docker-server-etag.mjs b/docker-server-etag.mjs
+new file mode 100644
+index 00000000..c83d30b4
+--- /dev/null
++++ b/docker-server-etag.mjs
+@@ -0,0 +1,65 @@
++/**
++ * Conditional-GET (ETag / If-None-Match → 304) for the deterministic
++ * timeline-analytics endpoints (/churn, /growth, /lifespan, /coupling).
++ *
++ * The node-id compute is already cheap (P3 shared cache,
++ * docker-server-snapshot-nodeids.mjs); this adds the HTTP-level re-transfer
++ * saving. The ETag is a hash of the response body, so it is correct by
++ * construction: a frozen snapshot's identical body yields an identical ETag
++ * (→ 304), and the live point's changed body yields a new ETag (→ never served
++ * stale). See
++ * docs/superpowers/specs/2026-07-15-etag-conditional-get-frozen-analytics-design.md
++ */
++
++import { createHash } from 'node:crypto';
++
++/** Quoted ETag = first 32 hex chars of sha256(body). */
++export function computeETag(body) {
++  return '"' + createHash('sha256').update(body).digest('hex').slice(0, 32) + '"';
++}
++
++/**
++ * Wrap `res` so a 200 `application/json` string response carries an `ETag` and
++ * honors `If-None-Match` with a 304 (no body). Everything else — non-200,
++ * non-JSON, non-string bodies, streams — passes through untouched. Call once,
++ * before the handler writes to `res`.
++ */
++export function withETag(req, res) {
++  const ifNoneMatch = req && req.headers ? req.headers['if-none-match'] : undefined;
++  const origWriteHead = res.writeHead.bind(res);
++  const origEnd = res.end.bind(res);
++
++  let capturedStatus = 200;
++  let capturedHeaders = {};
++  let intercept = false;
++
++  res.writeHead = (code, ...rest) => {
++    // Tolerate writeHead(code, headers) and writeHead(code, statusMessage, headers).
++    const headers = rest.find((a) => a && typeof a === 'object') || {};
++    capturedStatus = code;
++    capturedHeaders = headers;
++    const ct = headers['Content-Type'] || headers['content-type'] || '';
++    intercept = code === 200 && /application\/json/i.test(ct);
++    // Defer the real writeHead only when intercepting — we need the body to
++    // compute the ETag before committing the status line.
++    if (intercept) return res;
++    return origWriteHead(code, ...rest);
++  };
++
++  res.end = (...args) => {
++    const body = args[0];
++    if (intercept && typeof body === 'string') {
++      const etag = computeETag(body);
++      if (ifNoneMatch && ifNoneMatch === etag) {
++        origWriteHead(304, { ETag: etag });
++        return origEnd();
++      }
++      origWriteHead(200, { ...capturedHeaders, ETag: etag });
++      return origEnd(body);
++    }
++    // Non-intercepted, or an intercepted 200 with a non-string body: flush the
++    // deferred writeHead (only when we intercepted) then end untouched.
++    if (intercept) origWriteHead(capturedStatus, capturedHeaders);
++    return origEnd(...args);
++  };
 +}
 diff --git a/docker-server-ghost-audit-core.mjs b/docker-server-ghost-audit-core.mjs
 new file mode 100644
@@ -5745,10 +5803,10 @@ index 00000000..f30716c8
 +}
 diff --git a/docker-server-graph-lens-core.mjs b/docker-server-graph-lens-core.mjs
 new file mode 100644
-index 00000000..98cf9081
+index 00000000..2dce40bc
 --- /dev/null
 +++ b/docker-server-graph-lens-core.mjs
-@@ -0,0 +1,107 @@
+@@ -0,0 +1,230 @@
 +/**
 + * Lens projections over a /api/graph KnowledgeGraph JSON. Pure, no I/O.
 + * Output is shaped like a research render ({nodes:[{id,type,label,path,stage}],
@@ -5851,6 +5909,129 @@ index 00000000..98cf9081
 +  return {
 +    schema_type: 'symbol-graph', template: 'symbol-graph', name: null, source: null,
 +    nodes, edges, report: { nodes: nodes.length, edges: edges.length },
++  };
++}
++
++const _CLASS_LABELS = new Set(['Class', 'Interface']);
++const _METHOD_LABELS = new Set(['Method', 'Function']);
++const _FIELD_LABELS = new Set(['Property', 'Field', 'Const', 'Variable']);
++
++/**
++ * Project a KnowledgeGraph to a CLASS-LEVEL structure for a mermaid `classDiagram`
++ * export. Classes = nodes with label Class|Interface. Members resolved via
++ * HAS_METHOD/HAS_PROPERTY (class->member) + MEMBER_OF (member->class). Associations
++ * from CALLS rolled up to owning classes (self + intra-class dropped, deduped).
++ *
++ * Inheritance is derived from EXTENDS (class → superclass) and IMPLEMENTS
++ * (class → interface) edges — the REAL types the ingestion emits, measured
++ * 2026-07-12 on a live internal-inheritance probe (TS + Python). `INHERITS`
++ * is accepted as a generic fallback. An edge is kept only when child AND parent
++ * are both rendered classes; a base outside the repo (Protocol, ABC, an unindexed
++ * lib class) is absent from the graph, so that inheritance is legitimately dropped
++ * and reported honestly via meta (Zero Masking). Output is class-structured (NOT
++ * the flat research-render shape) → consumed by renderMermaidClass, hence NOT in
++ * LENSES.
++ *
++ * `cap` bounds the number of rendered classes (richest-by-member-count first) to
++ * avoid a massive raw render; `meta.truncated_from` reports the original count.
++ */
++export function projectClassDiagram(graph, { cap = 150 } = {}) {
++  const nodes = Array.isArray(graph?.nodes) ? graph.nodes : [];
++  const rels = Array.isArray(graph?.relationships) ? graph.relationships : [];
++  const byId = new Map();
++  for (const n of nodes) if (n?.id != null) byId.set(n.id, n);
++  const isClass = (n) => !!n && _CLASS_LABELS.has(n.label);
++
++  const membersOf = new Map(); // classId -> [{kind,name}]
++  const ownerOf = new Map();   // memberId -> classId (for CALLS roll-up)
++  const seenMember = new Set();
++  const addMember = (classId, member) => {
++    if (!member) return;
++    const kind = _METHOD_LABELS.has(member.label) ? 'method'
++      : _FIELD_LABELS.has(member.label) ? 'field' : null;
++    if (!kind) return;
++    const name = (member.properties || {}).name || String(member.id);
++    ownerOf.set(member.id, classId);
++    const key = `${classId}\0${kind}\0${name}`;
++    if (seenMember.has(key)) return;
++    seenMember.add(key);
++    if (!membersOf.has(classId)) membersOf.set(classId, []);
++    membersOf.get(classId).push({ kind, name });
++  };
++  for (const r of rels) {
++    if (r?.type === 'HAS_METHOD' || r?.type === 'HAS_PROPERTY') {
++      if (isClass(byId.get(r.sourceId))) addMember(r.sourceId, byId.get(r.targetId));
++    } else if (r?.type === 'MEMBER_OF') {
++      if (isClass(byId.get(r.targetId))) addMember(r.targetId, byId.get(r.sourceId));
++    }
++  }
++
++  let classNodes = nodes.filter(isClass);
++  const total = classNodes.length;
++  classNodes = classNodes.slice().sort((a, b) =>
++    ((membersOf.get(b.id)?.length || 0) - (membersOf.get(a.id)?.length || 0))
++    || String(a.id).localeCompare(String(b.id)));
++  const truncated = total > cap;
++  if (truncated) classNodes = classNodes.slice(0, cap);
++  const kept = new Set(classNodes.map((n) => n.id));
++
++  const classes = classNodes.map((n) => ({
++    id: n.id,
++    name: (n.properties || {}).name || String(n.id),
++    path: (n.properties || {}).filePath || '',
++    stereotype: n.label === 'Interface' ? 'interface' : 'class',
++    members: membersOf.get(n.id) || [],
++  }));
++
++  const seenAssoc = new Set();
++  const associations = [];
++  for (const r of rels) {
++    if (r?.type !== 'CALLS') continue;
++    const s = ownerOf.get(r.sourceId), t = ownerOf.get(r.targetId);
++    if (!s || !t || s === t || !kept.has(s) || !kept.has(t)) continue;
++    const key = `${s}\0${t}`;
++    if (seenAssoc.has(key)) continue;
++    seenAssoc.add(key);
++    associations.push({ source: s, target: t, kind: 'calls' });
++  }
++
++  // Inheritance : the ingestion emits EXTENDS (class → superclass) and IMPLEMENTS
++  // (class → interface) edges — measured 2026-07-12 on a live internal-inheritance
++  // probe (source=subclass/impl → target=superclass/interface). `INHERITS` is kept as
++  // a generic fallback (mapped to 'extends'). We keep only edges whose child AND parent
++  // are BOTH rendered classes; a base outside the repo (Protocol, ABC, an unindexed lib
++  // class) is not in the graph, so that inheritance is legitimately absent — reported
++  // honestly via meta. `kind` drives the arrow style (extends → <|--, implements → <|..).
++  const _INHERIT_KIND = { EXTENDS: 'extends', INHERITS: 'extends', IMPLEMENTS: 'implements' };
++  const seenInh = new Set();
++  const inheritances = [];
++  for (const r of rels) {
++    const kind = _INHERIT_KIND[r?.type];
++    if (!kind) continue;
++    const child = r.sourceId, parent = r.targetId; // source=subclass/impl → target=super/iface
++    if (!kept.has(child) || !kept.has(parent) || child === parent) continue;
++    const key = `${child}\0${parent}\0${kind}`;
++    if (seenInh.has(key)) continue;
++    seenInh.add(key);
++    inheritances.push({ child, parent, kind });
++  }
++
++  return {
++    schema_type: 'class-diagram',
++    classes,
++    associations,
++    inheritances,
++    meta: {
++      // 'rendered' when in-graph inheritance exists ; 'none-in-graph' when the repo's
++      // classes inherit only from external/unindexed bases (Zero Masking: the diagram
++      // says WHY there are no arrows, it no longer claims inheritance is 'unavailable').
++      inheritance: inheritances.length > 0 ? 'rendered' : 'none-in-graph',
++      inheritance_count: inheritances.length,
++      total_classes: total,
++      rendered: classes.length,
++      truncated_from: truncated ? total : null,
++    },
++    report: { classes: classes.length, associations: associations.length, inheritances: inheritances.length },
 +  };
 +}
 +
@@ -8057,10 +8238,10 @@ index 00000000..7db9b38d
 +}
 diff --git a/docker-server-growth.mjs b/docker-server-growth.mjs
 new file mode 100644
-index 00000000..4e22daa7
+index 00000000..911d13a9
 --- /dev/null
 +++ b/docker-server-growth.mjs
-@@ -0,0 +1,185 @@
+@@ -0,0 +1,179 @@
 +/**
 + * Growth-by-category analytics — Phase 4D.
 + *
@@ -8099,6 +8280,8 @@ index 00000000..4e22daa7
 +  safeSnapshotKey,
 +} from './docker-server-snapshots.mjs';
 +import { toCsv, writeCsv, safeFilename } from './docker-server-csv.mjs';
++import { getSnapshotNodeIds } from './docker-server-snapshot-nodeids.mjs';
++import { withETag } from './docker-server-etag.mjs';
 +
 +async function listSnapshotNamesAndDates(repoName) {
 +  const dir = join(SNAPSHOTS_ROOT, safeSnapshotKey(repoName));
@@ -8120,20 +8303,6 @@ index 00000000..4e22daa7
 +    }
 +  }
 +  return out;
-+}
-+
-+async function fetchNodeIds(repoName, api) {
-+  const resp = await fetch(`${api}/api/query`, {
-+    method: 'POST',
-+    headers: { 'Content-Type': 'application/json' },
-+    body: JSON.stringify({ cypher: 'MATCH (n) RETURN n.id AS id', repo: repoName }),
-+  });
-+  if (!resp.ok) throw new Error(`cypher failed for ${repoName}: ${resp.status}`);
-+  const data = await resp.json();
-+  const rows = data?.result || data?.rows || [];
-+  return rows
-+    .map((row) => (typeof row === 'object' && row !== null ? row.id ?? row['n.id'] : null))
-+    .filter((id) => typeof id === 'string');
 +}
 +
 +function labelOf(id) {
@@ -8187,7 +8356,12 @@ index 00000000..4e22daa7
 +  for (const point of timeline) {
 +    let counts = {};
 +    try {
-+      const ids = await fetchNodeIds(point.name, opts.api);
++      const ids = await getSnapshotNodeIds(point.name, {
++        api: opts.api,
++        isLive: point.isLive,
++        liveKey: liveEntry.indexedAt,
++        cacheDir: liveEntry.path,
++      });
 +      for (const id of ids) {
 +        const lbl = labelOf(id);
 +        counts[lbl] = (counts[lbl] || 0) + 1;
@@ -8241,6 +8415,7 @@ index 00000000..4e22daa7
 +
 +export async function handleGrowthRoute(req, url, res, opts) {
 +  if (url.pathname === '/growth' && req.method === 'GET') {
++    withETag(req, res);
 +    await handleGrowth(url, res, opts);
 +    return true;
 +  }
@@ -8304,10 +8479,10 @@ index 00000000..907d3550
 +}
 diff --git a/docker-server-lifespan.mjs b/docker-server-lifespan.mjs
 new file mode 100644
-index 00000000..c998bf94
+index 00000000..1792ccb9
 --- /dev/null
 +++ b/docker-server-lifespan.mjs
-@@ -0,0 +1,386 @@
+@@ -0,0 +1,394 @@
 +/**
 + * Lifespan analytics — Phase 4C.
 + *
@@ -8362,10 +8537,12 @@ index 00000000..c998bf94
 +import { toCsv, writeCsv, safeFilename } from './docker-server-csv.mjs';
 +import { filterSnapshotsInWindow, unionSnapshotNodeIds } from './docker-server-nodes-alive-between.mjs';
 +import { computeWindowedBuckets } from './docker-server-lifespan-windowed-core.mjs';
++import { withETag } from './docker-server-etag.mjs';
++import { getSnapshotNodeIds } from './docker-server-snapshot-nodeids.mjs';
 +
 +const MAX_NODES_PER_BUCKET = 1000;
 +
-+async function listSnapshotNamesAndDates(repoName) {
++export async function listSnapshotNamesAndDates(repoName) {
 +  const dir = join(SNAPSHOTS_ROOT, safeSnapshotKey(repoName));
 +  let entries;
 +  try {
@@ -8379,26 +8556,20 @@ index 00000000..c998bf94
 +    if (!e.isDirectory()) continue;
 +    try {
 +      const commit = JSON.parse(await readFile(join(dir, e.name, 'commit.json'), 'utf8'));
-+      out.push({ name: `${repoName}@${e.name}`, date: commit.date, isLive: false });
++      // The snapshot dir name IS the shortHash. Expose it (+ a commit sub-object)
++      // so the windowed path can resolve/filter in-process without an HTTP round-trip.
++      out.push({
++        name: `${repoName}@${e.name}`,
++        date: commit.date,
++        isLive: false,
++        shortHash: e.name,
++        commit: { shortHash: e.name, date: commit.date },
++      });
 +    } catch {
 +      // half-built; skip
 +    }
 +  }
 +  return out;
-+}
-+
-+async function fetchNodeIds(repoName, api) {
-+  const resp = await fetch(`${api}/api/query`, {
-+    method: 'POST',
-+    headers: { 'Content-Type': 'application/json' },
-+    body: JSON.stringify({ cypher: 'MATCH (n) RETURN n.id AS id', repo: repoName }),
-+  });
-+  if (!resp.ok) throw new Error(`cypher failed for ${repoName}: ${resp.status}`);
-+  const data = await resp.json();
-+  const rows = data?.result || data?.rows || [];
-+  return rows
-+    .map((row) => (typeof row === 'object' && row !== null ? row.id ?? row['n.id'] : null))
-+    .filter((id) => typeof id === 'string');
 +}
 +
 +// Parse the display fields out of a node id. gitnexus ids follow a few
@@ -8482,7 +8653,12 @@ index 00000000..c998bf94
 +  for (let i = 0; i < timeline.length; i++) {
 +    let ids;
 +    try {
-+      ids = await fetchNodeIds(timeline[i].name, opts.api);
++      ids = await getSnapshotNodeIds(timeline[i].name, {
++        api: opts.api,
++        isLive: timeline[i].isLive,
++        liveKey: liveEntry.indexedAt,
++        cacheDir: liveEntry.path,
++      });
 +    } catch (err) {
 +      errors.push({ snapshot: timeline[i].name, error: err?.message || 'fetch failed' });
 +      continue;
@@ -8593,14 +8769,14 @@ index 00000000..c998bf94
 +      return;
 +    }
 +
-+    // Resolve snapshots — normalize to have shortHash at top level for
-+    // filterSnapshotsInWindow (which accesses s.shortHash, not s.commit.shortHash).
-+    const snapshotsResp = await fetch(`${api}/snapshots?repo=${encodeURIComponent(repoName)}`);
-+    const snapshotsBody = await snapshotsResp.json();
-+    const snapshots = (snapshotsBody.snapshots || [])
++    // Resolve snapshots IN-PROCESS (reads the snapshot dirs directly). The old
++    // `fetch(`${api}/snapshots`)` hit a 404 HTML page: /snapshots is a WEB-server
++    // route, but `api` points at the API server (used for /api/repos + /api/graph
++    // above), which has no /snapshots — so JSON.parse choked on "<!DOCTYPE …".
++    // Measured 2026-07-12. `filterSnapshotsInWindow` reads `s.shortHash`, now set.
++    const snapshots = (await listSnapshotNamesAndDates(repoName))
 +      .slice()
-+      .sort((a, b) => (a.commit?.date || '').localeCompare(b.commit?.date || ''))
-+      .map((s) => ({ ...s, shortHash: s.shortHash ?? s.commit?.shortHash }));
++      .sort((a, b) => (a.commit?.date || '').localeCompare(b.commit?.date || ''));
 +
 +    // Resolve aliases (same pattern as /nodes/alive-between)
 +    let resolvedFrom = from;
@@ -8660,6 +8836,12 @@ index 00000000..c998bf94
 +      });
 +
 +    const response = {
++      // The frontend gates on `totalPoints` (≥ 2 — useAppState.enterLifespanMode).
++      // Windowed mode's "points" are the snapshots inside the window; without this
++      // the frontend threw "Need at least 2 snapshots" even on a valid window
++      // (this was masked by the 404-HTML bug above until 2026-07-12).
++      totalPoints: windowed.length,
++      timeline: windowed.map((s) => ({ name: s.name, date: s.commit?.date, isLive: false })),
 +      counts: {
 +        foundational: buckets.foundational.size,
 +        recent: buckets.recent.size,
@@ -8689,6 +8871,7 @@ index 00000000..c998bf94
 +
 +export async function handleLifespanRoute(req, url, res, opts) {
 +  if (url.pathname === '/lifespan' && req.method === 'GET') {
++    withETag(req, res);
 +    await handleLifespan(url, res, opts);
 +    return true;
 +  }
@@ -8815,10 +8998,10 @@ index 00000000..7cea6630
 +}
 diff --git a/docker-server-nodes-alive-between.mjs b/docker-server-nodes-alive-between.mjs
 new file mode 100644
-index 00000000..67c2bef6
+index 00000000..959c2f95
 --- /dev/null
 +++ b/docker-server-nodes-alive-between.mjs
-@@ -0,0 +1,161 @@
+@@ -0,0 +1,166 @@
 +/**
 + * Backend endpoint /nodes/alive-between?repo=&from=&to= for the Timeline
 + * Temporal Filter Phase 2 Item #1 (permissive mode).
@@ -8830,6 +9013,8 @@ index 00000000..67c2bef6
 + * Pure fns first, HTTP wrapper at the bottom. See spec:
 + * docs/superpowers/specs/2026-05-27-timeline-temporal-filter-design.md
 + */
++
++import { listSnapshotNamesAndDates } from './docker-server-lifespan.mjs';
 +
 +/**
 + * Filter the snapshot list to those whose shortHash is in window [from, to].
@@ -8920,9 +9105,12 @@ index 00000000..67c2bef6
 +      return true;
 +    }
 +
-+    const snapshotsResp = await fetch(`${api}/snapshots?repo=${encodeURIComponent(repoName)}`);
-+    const snapshotsBody = await snapshotsResp.json();
-+    const snapshots = (snapshotsBody.snapshots || [])
++    // Snapshots live on the WEB server (this very process), not the API server.
++    // The old `fetch(${api}/snapshots)` hit the API base — where /snapshots is
++    // not a route — and got the SPA HTML back, so `.json()` threw
++    // "Unexpected token '<'" → 500. Read them in-process instead (same fix as
++    // the windowed /lifespan path).
++    const snapshots = (await listSnapshotNamesAndDates(repoName))
 +      .slice()
 +      .sort((a, b) => (a.commit?.date || '').localeCompare(b.commit?.date || ''));
 +
@@ -13053,6 +13241,138 @@ index 00000000..f141612c
 +  }
 +  return false;
 +}
+diff --git a/docker-server-snapshot-nodeids.mjs b/docker-server-snapshot-nodeids.mjs
+new file mode 100644
+index 00000000..ba29f52d
+--- /dev/null
++++ b/docker-server-snapshot-nodeids.mjs
+@@ -0,0 +1,126 @@
++/**
++ * Shared, cached node-id fetch for the time-travel analytics endpoints
++ * (/churn, /growth, /lifespan, /coupling).
++ *
++ * WHY: each of those endpoints walks a repo's snapshot timeline and, per
++ * point, POSTs `MATCH (n) RETURN n.id` to the API's /api/query. The API's
++ * lbug REST cache is single-entry, so each query against a different snapshot
++ * path cold-opens that path's DB (mmap+load) — measured at ~25 s for one live
++ * query, ~15-33 s per endpoint. The four endpoints also carried their own
++ * duplicated copy of this fetch and cached nothing.
++ *
++ * KEY INSIGHT: a snapshot point (`<repo>@<shortHash>`) is a frozen commit —
++ * its node-id list never changes, so it is cacheable FOREVER (memory + disk).
++ * Only the LIVE point moves, and only on reindex — so it is keyed by the live
++ * entry's `indexedAt` (a reindex changes it → natural invalidation) and kept
++ * in memory only (never persisted).
++ *
++ * Effect: opening /churn warms the cache; /growth, /lifespan, /coupling for
++ * the same repo then serve from memory instantly. A rebuild/restart re-warms
++ * snapshot ids from disk.
++ *
++ * See docs/superpowers/specs/2026-07-15-snapshot-nodeids-shared-cache-design.md
++ */
++
++import { join } from 'node:path';
++import { readFile, writeFile, mkdir } from 'node:fs/promises';
++
++// In-memory cache: cacheKey -> string[] of node ids.
++const memCache = new Map();
++// cacheDirs whose on-disk snapshot cache has been lazy-loaded this process.
++const loadedDirs = new Set();
++
++/**
++ * The single canonical Cypher call (was duplicated across the 4 handlers).
++ * `fetchImpl` is injectable for unit tests; defaults to the global fetch.
++ */
++export async function fetchNodeIds(repoName, api, { fetchImpl = fetch } = {}) {
++  const resp = await fetchImpl(`${api}/api/query`, {
++    method: 'POST',
++    headers: { 'Content-Type': 'application/json' },
++    body: JSON.stringify({ cypher: 'MATCH (n) RETURN n.id AS id', repo: repoName }),
++  });
++  if (!resp.ok) throw new Error(`cypher failed for ${repoName}: ${resp.status}`);
++  const data = await resp.json();
++  const rows = data?.result || data?.rows || [];
++  // Tolerate row-shape variations across gitnexus versions.
++  return rows
++    .map((row) => (typeof row === 'object' && row !== null ? row.id ?? row['n.id'] : null))
++    .filter((id) => typeof id === 'string');
++}
++
++function diskPath(cacheDir) {
++  return join(cacheDir, '.gitnexus', 'snapshot-nodeids-cache.json');
++}
++
++// Lazy-load a repo's on-disk snapshot cache into memory once per process.
++// Best-effort: absent/corrupt file → treated as empty (a miss just refetches).
++async function loadDisk(cacheDir) {
++  if (!cacheDir || loadedDirs.has(cacheDir)) return;
++  loadedDirs.add(cacheDir);
++  try {
++    const obj = JSON.parse(await readFile(diskPath(cacheDir), 'utf8'));
++    for (const [name, ids] of Object.entries(obj)) {
++      const key = `snap:${name}`;
++      if (Array.isArray(ids) && !memCache.has(key)) memCache.set(key, ids);
++    }
++  } catch {
++    /* absent or corrupt — nothing to warm from */
++  }
++}
++
++// Write-through a snapshot point to disk (re-read + merge so a concurrent
++// endpoint's entries aren't clobbered). Best-effort — failures are ignored.
++async function persistSnapshot(cacheDir, pointName, ids) {
++  if (!cacheDir) return;
++  try {
++    let obj = {};
++    try {
++      obj = JSON.parse(await readFile(diskPath(cacheDir), 'utf8')) || {};
++    } catch {
++      /* first write — start fresh */
++    }
++    obj[pointName] = ids;
++    await mkdir(join(cacheDir, '.gitnexus'), { recursive: true });
++    await writeFile(diskPath(cacheDir), JSON.stringify(obj), 'utf8');
++  } catch {
++    /* best-effort: a failed persist just means a refetch next process */
++  }
++}
++
++/**
++ * Return the node-id list for one timeline point, cached.
++ *
++ * @param {string} pointName            e.g. "HMMstudio@f6e2bcf" or "HMMstudio" (live)
++ * @param {object} opts
++ * @param {string} opts.api             API base (http://gitnexus:4747)
++ * @param {boolean} [opts.isLive]       true for the live point (reindex-keyed)
++ * @param {string} [opts.liveKey]       live entry's indexedAt — invalidates live on reindex
++ * @param {string} [opts.cacheDir]      live repo dir; snapshot ids persist under <dir>/.gitnexus/
++ * @param {Function} [opts.fetchImpl]   injectable fetch (tests)
++ * @returns {Promise<string[]>}
++ */
++export async function getSnapshotNodeIds(
++  pointName,
++  { api, isLive = false, liveKey = '', cacheDir = '', fetchImpl } = {},
++) {
++  const memKey = isLive ? `live:${pointName}:${liveKey}` : `snap:${pointName}`;
++  if (memCache.has(memKey)) return memCache.get(memKey);
++
++  // Snapshot points may already be warm on disk from a previous process.
++  if (!isLive) {
++    await loadDisk(cacheDir);
++    if (memCache.has(memKey)) return memCache.get(memKey);
++  }
++
++  const ids = await fetchNodeIds(pointName, api, { fetchImpl });
++  memCache.set(memKey, ids);
++  if (!isLive) await persistSnapshot(cacheDir, pointName, ids);
++  return ids;
++}
++
++// Test hook — reset all in-process cache state (also simulates a restart).
++export function __clearCache() {
++  memCache.clear();
++  loadedDirs.clear();
++}
 diff --git a/docker-server-snapshots-bulk.mjs b/docker-server-snapshots-bulk.mjs
 new file mode 100644
 index 00000000..086ce146
@@ -13740,10 +14060,10 @@ index 00000000..c20c6e42
 +}
 diff --git a/docker-server-sysml-export-core.mjs b/docker-server-sysml-export-core.mjs
 new file mode 100644
-index 00000000..65f5880a
+index 00000000..f4c9258b
 --- /dev/null
 +++ b/docker-server-sysml-export-core.mjs
-@@ -0,0 +1,145 @@
+@@ -0,0 +1,221 @@
 +// upstream/docker-server-sysml-export-core.mjs
 +//
 +// Pure renderers for SysML export. No I/O. Consumes runtime ghosts (from
@@ -13889,16 +14209,114 @@ index 00000000..65f5880a
 +  }
 +  return lines.join('\n') + '\n';
 +}
++
++// Member-name sanitizer for mermaid class bodies. Unlike safeId it does NOT trim
++// leading/trailing underscores (dunders like __init__ are meaningful). The wiki
++// TS mermaid-sanitizer is not runtime-importable from this .mjs, so we sanitize inline.
++function memberLabel(s) {
++  const out = String(s == null ? '' : s).replace(/[^A-Za-z0-9_$]/g, '_');
++  return out.length ? out : 'x';
++}
++
++/**
++ * Render a class-diagram projection (projectClassDiagram output) as mermaid
++ * `classDiagram` text. Consumes { classes, associations, meta, repoName }.
++ * Class ids are de-duplicated (mermaid ids must be unique) — same-named classes
++ * get a numeric suffix. Inheritance is surfaced as a comment when unavailable
++ * (Zero Masking: the diagram states what it does not show).
++ */
++export function renderMermaidClass({ classes, associations, inheritances, meta, repoName }) {
++  const list = Array.isArray(classes) ? classes : [];
++  const lines = ['classDiagram'];
++  lines.push(`%% gitnexus — Class diagram (${repoName || 'unknown'})`);
++  if (meta && meta.inheritance === 'rendered') {
++    lines.push(`%% inheritance: ${meta.inheritance_count} relation(s) (EXTENDS/IMPLEMENTS)`);
++  } else {
++    // Zero Masking : dire POURQUOI il n'y a pas de flèches (pas « unavailable »
++    // faux — l'ingestion émet EXTENDS/IMPLEMENTS ; ce repo hérite de bases externes/non-indexées).
++    lines.push('%% inheritance: none in-graph (classes inherit only from external/unindexed bases)');
++  }
++  if (meta && meta.truncated_from) {
++    lines.push(`%% truncated: showing ${list.length}/${meta.truncated_from} classes (by member count)`);
++  }
++
++  // Unique mermaid id per class id (dedupe same display names).
++  const idOf = new Map();
++  const used = new Map();
++  for (const c of list) {
++    let base = safeId(c.name);
++    if (used.has(base)) { const n = used.get(base) + 1; used.set(base, n); base = `${base}_${n}`; }
++    else used.set(base, 0);
++    idOf.set(c.id, base);
++  }
++
++  for (const c of list) {
++    const cid = idOf.get(c.id);
++    lines.push(`class ${cid} {`);
++    if (c.stereotype === 'interface') lines.push('  <<interface>>');
++    for (const m of (c.members || [])) {
++      const nm = memberLabel(m.name);
++      lines.push(m.kind === 'method' ? `  +${nm}()` : `  +${nm}`);
++    }
++    lines.push('}');
++  }
++
++  const seen = new Set();
++  for (const a of (associations || [])) {
++    const s = idOf.get(a.source), t = idOf.get(a.target);
++    if (!s || !t) continue;
++    const key = `${s}\0${t}`;
++    if (seen.has(key)) continue;
++    seen.add(key);
++    lines.push(`${s} ..> ${t} : ${a.kind || 'calls'}`);
++  }
++  // Inheritance/realization arrows — mermaid `Parent <|-- Child` for a class
++  // extending a superclass (solid), `Interface <|.. Class` for a class realizing
++  // an interface (dashed). Child/impl is always on the right of the arrowhead.
++  const seenInh = new Set();
++  for (const h of (inheritances || [])) {
++    const p = idOf.get(h.parent), c = idOf.get(h.child);
++    if (!p || !c) continue;
++    const arrow = h.kind === 'implements' ? '<|..' : '<|--';
++    const key = `${p}\0${c}\0${arrow}`;
++    if (seenInh.has(key)) continue;
++    seenInh.add(key);
++    lines.push(`${p} ${arrow} ${c}`);
++  }
++  return lines.join('\n') + '\n';
++}
 diff --git a/docker-server-sysml-export.mjs b/docker-server-sysml-export.mjs
 new file mode 100644
-index 00000000..e0647c02
+index 00000000..4dace0a3
 --- /dev/null
 +++ b/docker-server-sysml-export.mjs
-@@ -0,0 +1,60 @@
+@@ -0,0 +1,85 @@
 +// upstream/docker-server-sysml-export.mjs
-+import { renderPlantUml, renderMermaid } from './docker-server-sysml-export-core.mjs';
++import { renderPlantUml, renderMermaid, renderMermaidClass } from './docker-server-sysml-export-core.mjs';
++import { projectClassDiagram } from './docker-server-graph-lens-core.mjs';
 +import { readLatestGhosts } from './docker-server-ghosts.mjs';
 +import { findRepoByName } from './docker-server-snapshots.mjs';
++
++const GITNEXUS_API = process.env.GITNEXUS_API || 'http://gitnexus:4747';
++
++// Class-diagram export reads the KnowledgeGraph (/api/graph) directly — no ghosts,
++// no repoPath — like the lens route (docker-server-graph-lens.mjs).
++async function handleClassDiagram(repoName, res) {
++  try {
++    const r = await fetch(`${GITNEXUS_API}/api/graph?repo=${encodeURIComponent(repoName)}`);
++    if (!r.ok) {
++      res.writeHead(502, { 'Content-Type': 'application/json' });
++      return res.end(JSON.stringify({ error: `upstream /api/graph ${r.status}` }));
++    }
++    const graph = await r.json();
++    const cd = projectClassDiagram(graph);
++    res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
++    res.end(renderMermaidClass({ ...cd, repoName }));
++  } catch (err) {
++    res.writeHead(500, { 'Content-Type': 'application/json' });
++    res.end(JSON.stringify({ error: err.message }));
++  }
++}
 +
 +async function buildSysmlExport(repoPath, { format = 'plantuml', tierFilter, repoName }) {
 +  const runtime = await readLatestGhosts(repoPath);
@@ -13923,6 +14341,9 @@ index 00000000..e0647c02
 +  if (!repoName) {
 +    res.writeHead(400, { 'Content-Type': 'application/json' });
 +    return res.end(JSON.stringify({ error: 'missing repo' }));
++  }
++  if (format === 'mermaid-class') {
++    return handleClassDiagram(repoName, res);
 +  }
 +  if (format !== 'plantuml' && format !== 'mermaid') {
 +    res.writeHead(400, { 'Content-Type': 'application/json' });
@@ -19237,12 +19658,465 @@ index 00000000..cedd9395
 +    </div>
 +  );
 +};
+diff --git a/gitnexus-web/src/components/GuidedLensForm.tsx b/gitnexus-web/src/components/GuidedLensForm.tsx
+new file mode 100644
+index 00000000..e8d4b48b
+--- /dev/null
++++ b/gitnexus-web/src/components/GuidedLensForm.tsx
+@@ -0,0 +1,92 @@
++import { useTranslation } from 'react-i18next';
++import type { LensFormState, PredicateOp } from '@/lib/lens-form-spec';
++
++const OPS: PredicateOp[] = ['==', '!=', '>=', '<=', '>', '<', 'in'];
++const SCALES = ['categorical', 'heat', 'community'] as const;
++
++const inputCls =
++  'w-full rounded-lg border border-border-subtle bg-void px-2 py-1.5 text-xs text-text-primary focus:border-accent focus:outline-none';
++
++interface GuidedLensFormProps {
++  state: LensFormState;
++  onChange: (next: LensFormState) => void;
++}
++
++export const GuidedLensForm = ({ state, onChange }: GuidedLensFormProps) => {
++  const { t } = useTranslation(['header']);
++  const set = (patch: Partial<LensFormState>) => onChange({ ...state, ...patch });
++  const row = state.predicates[0] ?? { field: '', op: '==' as PredicateOp, value: '' };
++  const setRow = (patch: Partial<typeof row>) => set({ predicates: [{ ...row, ...patch }] });
++
++  return (
++    <div className="space-y-3">
++      <label className="block text-xs text-text-secondary">
++        {t('header:lensStudio.guided.name')}
++        <input data-testid="guided-name" className={inputCls} value={state.name}
++          onChange={(e) => set({ name: e.target.value })} />
++      </label>
++      <label className="block text-xs text-text-secondary">
++        {t('header:lensStudio.guided.source')}
++        <input data-testid="guided-source" className={inputCls} value={state.sourceLens}
++          onChange={(e) => set({ sourceLens: e.target.value })} />
++      </label>
++      <label className="block text-xs text-text-secondary">
++        {t('header:lensStudio.guided.meaning')}
++        <input data-testid="guided-meaning" className={inputCls} value={state.meaning}
++          onChange={(e) => set({ meaning: e.target.value })} />
++      </label>
++
++      <fieldset className="rounded-lg border border-border-subtle p-2">
++        <legend className="px-1 text-[10px] uppercase tracking-wider text-text-muted">
++          {t('header:lensStudio.guided.filter')}
++        </legend>
++        <div className="flex gap-2">
++          <input data-testid="guided-pred-field" className={inputCls} placeholder={t('header:lensStudio.guided.field')}
++            value={row.field} onChange={(e) => setRow({ field: e.target.value })} />
++          {/* Unlike the three fields above, a <select> has no wrapping <label>
++              to name it — without a title a screen reader announces "listbox,
++              ==" and never says what it drives. */}
++          <select data-testid="guided-pred-op" className={inputCls} value={row.op}
++            title={t('header:lensStudio.guided.op')}
++            onChange={(e) => setRow({ op: e.target.value as PredicateOp })}>
++            {OPS.map((op) => <option key={op} value={op}>{op}</option>)}
++          </select>
++          <input data-testid="guided-pred-value" className={inputCls} placeholder={t('header:lensStudio.guided.value')}
++            value={row.value} onChange={(e) => setRow({ value: e.target.value })} />
++        </div>
++      </fieldset>
++
++      <fieldset className="rounded-lg border border-border-subtle p-2">
++        <legend className="px-1 text-[10px] uppercase tracking-wider text-text-muted">
++          {t('header:lensStudio.guided.color')}
++        </legend>
++        <div className="flex gap-2">
++          <input data-testid="guided-color-by" className={inputCls} placeholder={t('header:lensStudio.guided.colorBy')}
++            value={state.colorBy} onChange={(e) => set({ colorBy: e.target.value })} />
++          <select data-testid="guided-color-scale" className={inputCls} value={state.colorScale}
++            title={t('header:lensStudio.guided.scale')}
++            onChange={(e) => set({ colorScale: e.target.value as LensFormState['colorScale'] })}>
++            {SCALES.map((s) => <option key={s} value={s}>{s}</option>)}
++          </select>
++        </div>
++      </fieldset>
++
++      <fieldset className="rounded-lg border border-border-subtle p-2">
++        <legend className="px-1 text-[10px] uppercase tracking-wider text-text-muted">
++          {t('header:lensStudio.guided.insight')}
++        </legend>
++        <div className="flex gap-2">
++          {/* min/step are advisory only — no <form> wraps this and the buttons
++              are type="button", so HTML constraint validation never fires.
++              `validateFormState` is the real gate (a fractional or zero N
++              renders an empty insights panel with no error at all). */}
++          <input data-testid="guided-insight-n" type="number" min={1} step={1} className={inputCls}
++            placeholder={t('header:lensStudio.guided.topN')} value={state.insightTopN}
++            onChange={(e) => set({ insightTopN: e.target.value === '' ? '' : Number(e.target.value) })} />
++          <input data-testid="guided-insight-by" className={inputCls} placeholder={t('header:lensStudio.guided.by')}
++            value={state.insightBy} onChange={(e) => set({ insightBy: e.target.value })} />
++        </div>
++      </fieldset>
++    </div>
++  );
++};
+diff --git a/gitnexus-web/src/components/LensFreshnessBadge.tsx b/gitnexus-web/src/components/LensFreshnessBadge.tsx
+new file mode 100644
+index 00000000..7338d863
+--- /dev/null
++++ b/gitnexus-web/src/components/LensFreshnessBadge.tsx
+@@ -0,0 +1,97 @@
++/**
++ * LensFreshnessBadge — pure presentational badge for a governance lens'
++ * `meta.freshness` field (`{stale, age_hours, ttl_hours, source_mtime}`),
++ * injected by the sovereign brain-graph gateway **only** on the
++ * `/lens/<name>` route (NOT on `/api/graph?repo=`, which the explorer's
++ * main render fetch uses — see `useAppState`/`backend-client`'s
++ * `fetchLensFreshness` for the additional fetch that sources this prop).
++ *
++ * Pure component: props in, JSX out. No internal state, no fetch — the
++ * caller is responsible for sourcing `freshness` (see `useAppState` —
++ * `lensFreshness`/`setLensFreshness`) and deciding when to mount it.
++ *
++ * Doctrine Zero-Masking: an absent/unreadable freshness verdict renders
++ * an explicit "fraîcheur inconnue" badge rather than silently rendering
++ * nothing — the caller must never be able to mistake "we don't know" for
++ * "it's fresh". A verdict of `stale:false` renders nothing (discreet —
++ * ordinary repos and up-to-date lenses see no extra chrome).
++ */
++
++export interface LensFreshness {
++  stale?: boolean;
++  age_hours?: number;
++  ttl_hours?: number;
++  source_mtime?: string;
++}
++
++interface LensFreshnessBadgeProps {
++  freshness?: LensFreshness | null;
++}
++
++export const LensFreshnessBadge = ({ freshness }: LensFreshnessBadgeProps) => {
++  const stale = freshness?.stale;
++
++  // stale === false — up to date. Discreet: render nothing so ordinary
++  // repos/fresh lenses see no extra chrome (decision recorded in the
++  // Phase 1b Task 3 plan: "discret/rien pour ne pas encombrer").
++  if (stale === false) return null;
++
++  // freshness == null, or present but without a `stale` verdict — Zero-
++  // Masking: say so rather than staying silent (silence would read as
++  // "fresh", which we cannot claim).
++  if (stale === undefined) {
++    return (
++      <div
++        data-testid="lens-freshness-badge"
++        data-freshness="unknown"
++        style={{
++          display: 'inline-flex',
++          alignItems: 'baseline',
++          gap: 4,
++          fontFamily: 'var(--font-mono, monospace)',
++          fontSize: 11,
++          fontWeight: 500,
++          borderRadius: 6,
++          padding: '2px 8px',
++          width: 'fit-content',
++          color: '#9ca3af',
++          background: '#1a1a24',
++          border: '0.5px solid rgba(255,255,255,0.12)',
++        }}
++      >
++        fraîcheur inconnue
++      </div>
++    );
++  }
++
++  // stale === true
++  const hasAgeTtl = freshness?.age_hours !== undefined && freshness?.ttl_hours !== undefined;
++
++  return (
++    <div
++      data-testid="lens-freshness-badge"
++      data-freshness="stale"
++      style={{
++        display: 'inline-flex',
++        alignItems: 'baseline',
++        gap: 4,
++        fontFamily: 'var(--font-mono, monospace)',
++        fontSize: 11,
++        fontWeight: 600,
++        borderRadius: 6,
++        padding: '2px 8px',
++        width: 'fit-content',
++        color: '#f59e0b',
++        background: 'rgba(245,158,11,0.12)',
++        border: '0.5px solid rgba(245,158,11,0.35)',
++      }}
++    >
++      <span>PÉRIMÉ</span>
++      {hasAgeTtl && (
++        <span style={{ color: '#d1a15c', fontWeight: 500 }}>
++          ({freshness!.age_hours}h / {freshness!.ttl_hours}h)
++        </span>
++      )}
++    </div>
++  );
++};
+diff --git a/gitnexus-web/src/components/LensInsightsPanel.tsx b/gitnexus-web/src/components/LensInsightsPanel.tsx
+new file mode 100644
+index 00000000..1c2982e6
+--- /dev/null
++++ b/gitnexus-web/src/components/LensInsightsPanel.tsx
+@@ -0,0 +1,77 @@
++/**
++ * LensInsightsPanel — pure presentational panel for a governance lens'
++ * `insights`/`meaning` fields (top-level, produced by the sovereign
++ * brain-graph gateway's `evaluate()`, surfaced by `/api/graph?repo=<lens>`).
++ *
++ * Pure component: props in, JSX out. No internal state, no fetch — the
++ * caller is responsible for sourcing `meaning`/`insights` (see
++ * `useAppState` — `lensMeaning`/`lensInsights`) and deciding when to
++ * mount it. Renders nothing when both are empty/absent, so ordinary
++ * repos (which never carry these fields) see no extra chrome.
++ *
++ * Style follows the HelpPanel.tsx convention (inline styles, dark
++ * card-on-card palette) rather than the Tailwind-class panels, since
++ * this is a small standalone widget, not a floating mode panel wired
++ * to useAppState.
++ */
++
++export interface LensInsight {
++  id: string;
++  name?: string;
++  value: number;
++}
++
++interface LensInsightsPanelProps {
++  meaning?: string;
++  insights?: LensInsight[];
++}
++
++export const LensInsightsPanel = ({ meaning, insights }: LensInsightsPanelProps) => {
++  const hasMeaning = !!meaning && meaning.trim().length > 0;
++  const hasInsights = !!insights && insights.length > 0;
++
++  if (!hasMeaning && !hasInsights) return null;
++
++  return (
++    <div
++      data-testid="lens-insights-panel"
++      style={{
++        background: '#12121a',
++        border: '0.5px solid rgba(255,255,255,0.12)',
++        borderRadius: 12,
++        padding: '12px 14px',
++        display: 'flex',
++        flexDirection: 'column',
++        gap: 8,
++        fontFamily: 'var(--font-mono, monospace)',
++      }}
++    >
++      {hasMeaning && (
++        <p style={{ fontSize: 12, color: '#e2e2e8', margin: 0, lineHeight: 1.5 }}>{meaning}</p>
++      )}
++      {hasInsights && (
++        <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: 4 }}>
++          {insights!.map((insight) => (
++            <li
++              key={insight.id}
++              data-testid="lens-insight-row"
++              style={{
++                display: 'flex',
++                alignItems: 'baseline',
++                gap: 4,
++                fontSize: 11,
++                color: '#9ca3af',
++              }}
++            >
++              <span style={{ color: '#e2e2e8', fontWeight: 500 }}>
++                {insight.name || insight.id}
++              </span>
++              <span>{':'}</span>
++              <span style={{ color: '#a78bfa', fontWeight: 500 }}>{insight.value}</span>
++            </li>
++          ))}
++        </ul>
++      )}
++    </div>
++  );
++};
+diff --git a/gitnexus-web/src/components/LensStudioModal.tsx b/gitnexus-web/src/components/LensStudioModal.tsx
+new file mode 100644
+index 00000000..72ac9efb
+--- /dev/null
++++ b/gitnexus-web/src/components/LensStudioModal.tsx
+@@ -0,0 +1,163 @@
++import { useState } from 'react';
++import { X, Eye, Send, AlertCircle } from '@/lib/lucide-icons';
++import { useTranslation } from 'react-i18next';
++import { GuidedLensForm } from './GuidedLensForm';
++import {
++  EMPTY_FORM_STATE,
++  formStateToSpec,
++  isFormPristine,
++  validateFormState,
++  type LensFormState,
++} from '@/lib/lens-form-spec';
++
++interface LensStudioModalProps {
++  isOpen: boolean;
++  onClose: () => void;
++  onPreview: (spec: Record<string, unknown>) => Promise<{ ok: boolean; errors?: string[] }>;
++  onPropose: (spec: Record<string, unknown>, autoApprove: boolean) => Promise<{ id: string; status: string }>;
++}
++
++const EXAMPLE = `{
++  "name": "my_lens",
++  "source": { "lens": "sigil" },
++  "select": { "node_where": "inLens == true" },
++  "color": { "by": "domainType", "scale": "categorical" },
++  "meaning": "Ma lentille."
++}`;
++
++export const LensStudioModal = ({ isOpen, onClose, onPreview, onPropose }: LensStudioModalProps) => {
++  const { t } = useTranslation(['header']);
++  const [text, setText] = useState(EXAMPLE);
++  const [errors, setErrors] = useState<string[]>([]);
++  const [toast, setToast] = useState<string | null>(null);
++  const [autoApprove, setAutoApprove] = useState(false);
++  const [busy, setBusy] = useState(false);
++  const [mode, setMode] = useState<'guided' | 'expert'>('expert');
++  const [form, setForm] = useState<LensFormState>(EMPTY_FORM_STATE);
++
++  if (!isOpen) return null;
++
++  const parse = (): Record<string, unknown> | null => {
++    if (mode === 'guided') {
++      // The guided branch cannot fail on JSON, but it CAN produce a spec the
++      // canon must never see (no name, no upstream lens, an insight the backend
++      // silently drops, a predicate its grammar mis-partitions). Returning null
++      // hands the existing `if (!spec) return;` guard its job back — for
++      // Propose, the only action on this surface with a persistent side effect,
++      // as much as for Preview.
++      const issues = validateFormState(form);
++      if (issues.length > 0) {
++        setErrors(issues.map((code) => t(`header:lensStudio.guided.errors.${code}`)));
++        return null;
++      }
++      setErrors([]);
++      return formStateToSpec(form);
++    }
++    try {
++      const spec = JSON.parse(text);
++      if (!spec || typeof spec !== 'object' || Array.isArray(spec)) {
++        setErrors([t('header:lensStudio.notObject')]);
++        return null;
++      }
++      setErrors([]);
++      return spec as Record<string, unknown>;
++    } catch (e) {
++      setErrors([`${t('header:lensStudio.jsonError')}: ${(e as Error).message}`]);
++      return null;
++    }
++  };
++
++  const switchMode = (next: 'guided' | 'expert') => {
++    // Switching to expert reveals the JSON the form just produced — but ONLY if
++    // the form actually holds something. The direction alone is not consent:
++    // an expert -> guided -> expert round-trip on an untouched form would
++    // otherwise replace hand-written JSON with `{"name":"","source":{"lens":""}}`.
++    if (next === 'expert' && mode === 'guided' && !isFormPristine(form)) {
++      setText(JSON.stringify(formStateToSpec(form), null, 2));
++    }
++    setErrors([]);   // a parse error from the other surface must not leak across the switch
++    setToast(null);
++    setMode(next);
++  };
++
++  const handlePreview = async () => {
++    const spec = parse();
++    if (!spec) return;
++    setBusy(true); setToast(null);
++    try {
++      const r = await onPreview(spec);
++      if (!r.ok) setErrors(r.errors ?? [t('header:lensStudio.unknownError')]);
++      else setToast(t('header:lensStudio.previewRendered'));
++    } finally { setBusy(false); }
++  };
++
++  const handlePropose = async () => {
++    const spec = parse();
++    if (!spec) return;
++    setBusy(true); setToast(null);
++    try {
++      const r = await onPropose(spec, autoApprove);
++      setToast(`${t('header:lensStudio.proposed')}: ${r.id} (${r.status})`);
++    } catch (e) {
++      setErrors([`${t('header:lensStudio.proposeFailed')}: ${(e as Error).message}`]);
++    } finally { setBusy(false); }
++  };
++
++  return (
++    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
++      <div className="w-[min(680px,calc(100vw-2rem))] max-h-[min(760px,calc(100vh-4rem))] overflow-hidden rounded-2xl border border-border-subtle bg-surface shadow-2xl flex flex-col">
++        <div className="flex shrink-0 items-center gap-2 border-b border-border-subtle px-4 py-3">
++          <Eye className="h-4 w-4 text-accent" />
++          <span className="font-medium text-text-primary">{t('header:lensStudio.title')}</span>
++          <div className="ml-3 flex overflow-hidden rounded-lg border border-border-subtle text-xs">
++            <button type="button" data-testid="lens-mode-guided" aria-pressed={mode === 'guided'} onClick={() => switchMode('guided')}
++              className={`px-2 py-1 ${mode === 'guided' ? 'bg-accent text-white' : 'text-text-muted hover:bg-hover'}`}>
++              {t('header:lensStudio.guided.tab')}
++            </button>
++            <button type="button" data-testid="lens-mode-expert" aria-pressed={mode === 'expert'} onClick={() => switchMode('expert')}
++              className={`px-2 py-1 ${mode === 'expert' ? 'bg-accent text-white' : 'text-text-muted hover:bg-hover'}`}>
++              {t('header:lensStudio.guided.expertTab')}
++            </button>
++          </div>
++          <button type="button" onClick={onClose} className="ml-auto cursor-pointer rounded p-1 text-text-muted transition-colors hover:bg-hover hover:text-text-primary" title={t('header:lensStudio.close')}>
++            <X className="h-4 w-4" />
++          </button>
++        </div>
++        <div className="space-y-3 p-4 overflow-y-auto">
++          {mode === 'guided' ? (
++            <GuidedLensForm state={form} onChange={setForm} />
++          ) : (
++            <textarea
++              value={text}
++              onChange={(e) => setText(e.target.value)}
++              spellCheck={false}
++              className="h-64 w-full resize-y rounded-lg border border-border-subtle bg-void px-3 py-2 font-mono text-xs text-text-primary focus:border-accent focus:outline-none"
++            />
++          )}
++          {errors.length > 0 && (
++            <div className="rounded-lg border border-red-500/40 bg-red-500/10 p-2 text-xs text-red-300">
++              {errors.map((err, i) => (
++                <div key={i} className="flex items-start gap-1.5"><AlertCircle className="mt-0.5 h-3 w-3 shrink-0" /><span>{err}</span></div>
++              ))}
++            </div>
++          )}
++          {toast && <div className="rounded-lg border border-accent/40 bg-accent/10 p-2 text-xs text-accent">{toast}</div>}
++          <label className="flex items-center gap-2 text-xs text-text-secondary">
++            <input type="checkbox" checked={autoApprove} onChange={(e) => setAutoApprove(e.target.checked)} />
++            {t('header:lensStudio.autoApprove')}
++          </label>
++        </div>
++        <div className="flex shrink-0 items-center gap-2 border-t border-border-subtle px-4 py-3">
++          <button type="button" data-testid="lens-preview-btn" onClick={handlePreview} disabled={busy}
++            className="flex items-center gap-2 rounded-lg border border-border-subtle px-3 py-2 text-sm text-text-primary transition-colors hover:bg-hover disabled:opacity-50">
++            <Eye className="h-4 w-4" />{t('header:lensStudio.preview')}
++          </button>
++          <button type="button" onClick={handlePropose} disabled={busy}
++            className="ml-auto flex items-center gap-2 rounded-lg bg-accent px-4 py-2 text-sm font-medium text-white transition-all hover:bg-accent/90 disabled:opacity-50">
++            <Send className="h-4 w-4" />{t('header:lensStudio.propose')}
++          </button>
++        </div>
++      </div>
++    </div>
++  );
++};
 diff --git a/gitnexus-web/src/components/LifespanPanel.tsx b/gitnexus-web/src/components/LifespanPanel.tsx
 new file mode 100644
-index 00000000..23238326
+index 00000000..24dd9d90
 --- /dev/null
 +++ b/gitnexus-web/src/components/LifespanPanel.tsx
-@@ -0,0 +1,260 @@
+@@ -0,0 +1,261 @@
 +import { useMemo, useState } from 'react';
 +import {
 +  X,
@@ -19372,17 +20246,18 @@ index 00000000..23238326
 +
 +  return (
 +    <div
++      data-testid="lifespan-panel"
 +      className="pointer-events-auto absolute right-3 bottom-3 z-30 flex flex-col overflow-hidden rounded-xl border border-border-subtle bg-surface/95 shadow-xl backdrop-blur"
 +      style={{ width: PANEL_WIDTH_PX, maxHeight: 'calc(100% - 1.5rem)' }}
 +    >
 +      <div className="flex shrink-0 items-center gap-2 border-b border-border-subtle px-3 py-2">
 +        <History className="h-3.5 w-3.5 text-amber-300" />
 +        <div className="flex flex-col gap-1">
-+          <span className="text-xs font-semibold text-text-primary">
++          <span data-testid="lifespan-header" className="text-xs font-semibold text-text-primary">
 +            Lifespan {lifespanData?.windowed && <span className="text-text-muted">(window)</span>}
 +          </span>
 +          {lifespanData?.windowed && (
-+            <span className="rounded bg-accent/10 px-1.5 py-0.5 font-mono text-[10px] text-accent">
++            <span data-testid="lifespan-window-badge" className="rounded bg-accent/10 px-1.5 py-0.5 font-mono text-[10px] text-accent">
 +              {lifespanData.windowed.from} → {lifespanData.windowed.to} · {lifespanData.windowed.snapshotCount} snapshots
 +            </span>
 +          )}
@@ -25994,6 +26869,186 @@ index 00000000..9fb3e02b
 +    durationMs: end - start,
 +  } satisfies WorkerOutput);
 +};
+diff --git a/gitnexus-web/src/lib/lens-form-spec.ts b/gitnexus-web/src/lib/lens-form-spec.ts
+new file mode 100644
+index 00000000..57cf337a
+--- /dev/null
++++ b/gitnexus-web/src/lib/lens-form-spec.ts
+@@ -0,0 +1,174 @@
++export type PredicateOp = '==' | '!=' | '>=' | '<=' | '>' | '<' | 'in';
++
++export interface PredicateRow {
++  field: string;
++  op: PredicateOp;
++  value: string;
++}
++
++export interface LensFormState {
++  name: string;
++  sourceLens: string;
++  meaning: string;
++  predicates: PredicateRow[];
++  colorBy: string;
++  colorScale: 'heat' | 'categorical' | 'community';
++  insightTopN: number | '';
++  insightBy: string;
++}
++
++export const EMPTY_FORM_STATE: LensFormState = {
++  name: '',
++  sourceLens: '',
++  meaning: '',
++  predicates: [{ field: '', op: '==', value: '' }],
++  colorBy: '',
++  colorScale: 'categorical',
++  insightTopN: '',
++  insightBy: '',
++};
++
++/** Items of an `in` list: `a, b ,c` -> ['a','b','c'] (blanks dropped). */
++const inItems = (value: string): string[] => value.split(',').map((v) => v.trim()).filter(Boolean);
++
++/** `status == critical` | `kind in [a, b, c]` — mirrors the backend's eval_predicate grammar. */
++export const predicateRowToExpr = (r: PredicateRow): string => {
++  const field = r.field.trim();
++  if (r.op === 'in') return `${field} in [${inItems(r.value).join(', ')}]`;
++  return `${field} ${r.op} ${r.value.trim()}`;
++};
++
++/**
++ * The predicate row `formStateToSpec` would emit: a row becomes usable once it
++ * has a field AND at least one real value. Shared with `validateFormState` so
++ * the surface that validates and the surface that emits can never disagree
++ * about *which* row is under discussion.
++ */
++const usablePredicateRow = (s: LensFormState): PredicateRow | undefined =>
++  s.predicates.find((p) => {
++    if (!p.field.trim()) return false;
++    return p.op === 'in' ? inItems(p.value).length > 0 : p.value.trim() !== '';
++  });
++
++/**
++ * `insight.rank` is read back by the backend with
++ * `re.match(r"top\s+(\d+)\s+by\s+(\w+)")`, and when it does NOT match — or
++ * matches with N=0 — the engine returns `[]` with no error whatsoever
++ * (lens_engine.py:117-119). `top 0 by pagerank`, `top -3 by x`, `top 2.5 by x`
++ * and `top 5 by in-degree` therefore all render a green, empty, unexplained
++ * insights panel. Neither half may reach the spec.
++ */
++const isValidTopN = (n: number | ''): boolean => Number.isInteger(n) && (n as number) >= 1;
++const isValidInsightBy = (by: string): boolean => /^\w+$/.test(by.trim());
++const isEmittableInsight = (s: LensFormState): boolean =>
++  isValidTopN(s.insightTopN) && isValidInsightBy(s.insightBy);
++
++/**
++ * Translate the guided form into the SAME canonical lens spec the expert
++ * textarea produces. Cardinal rule: OMIT a block rather than emit it empty —
++ * the backend grammar rejects `color` without `color.by` (E6), and an empty
++ * `select`/`insight` would be meaningless. Only ONE predicate is emitted:
++ * eval_predicate has no conjunction, so joining rows would produce an
++ * unparseable expression.
++ *
++ * Emission is deliberately NOT the validation gate (see `validateFormState`):
++ * it only refuses to emit what the backend would silently mis-read anyway.
++ */
++export const formStateToSpec = (s: LensFormState): Record<string, unknown> => {
++  const spec: Record<string, unknown> = {
++    name: s.name.trim(),
++    source: { lens: s.sourceLens.trim() },
++  };
++  if (s.meaning.trim()) spec.meaning = s.meaning.trim();
++
++  const row = usablePredicateRow(s);
++  if (row) spec.select = { node_where: predicateRowToExpr(row) };
++
++  if (s.colorBy.trim()) spec.color = { by: s.colorBy.trim(), scale: s.colorScale };
++
++  if (isEmittableInsight(s)) {
++    spec.insight = { rank: `top ${s.insightTopN} by ${s.insightBy.trim()}` };
++  }
++  return spec;
++};
++
++/**
++ * Operand characters the backend's `eval_predicate` scans for by *containment
++ * over the whole expression*, in operator order, BEFORE it ever reaches the
++ * ` in ` branch (lens_expr.py:39-46). An operand carrying one of them
++ * mis-partitions the expression — `path in [a>b, c]` splits on `>` and yields
++ * the property name `path in [`, so every node evaluates False, `apply_select`
++ * sets `inLens=False` everywhere and the lens renders a fully dimmed graph
++ * with no error raised anywhere. Reject client-side until that grammar
++ * tokenises instead of scanning.
++ */
++const OPERATOR_CHAR = /[<>=!]/;
++
++/** i18n suffixes under `header:lensStudio.guided.errors.*`. */
++export type FormIssue =
++  | 'nameRequired'
++  | 'sourceRequired'
++  | 'predicateOperatorChar'
++  | 'insightTopN'
++  | 'insightBy';
++
++/**
++ * The single client-side gate of the guided surface — returns issue CODES, not
++ * sentences, so this module stays pure, React-free and locale-free.
++ *
++ * The expert surface is guarded de facto by `JSON.parse` + the object check;
++ * the guided one had nothing, so a pristine form could POST
++ * `{"name":"","source":{"lens":""}}` straight into the sovereign canon.
++ */
++export const validateFormState = (s: LensFormState): FormIssue[] => {
++  const issues: FormIssue[] = [];
++  if (!s.name.trim()) issues.push('nameRequired');
++  // `source.lens` is ALWAYS required — authoring is composition-based. An empty
++  // one is *falsy*, so the promoter's referential-integrity guard
++  // (`if upstream and upstream not in existing`) is skipped entirely and the
++  // lens enters the canon with its composition intent silently dropped; when
++  // the name happens to carry a legacy prefix the preview even renders, but
++  // rebuilt from scratch rather than composed.
++  if (!s.sourceLens.trim()) issues.push('sourceRequired');
++
++  const row = usablePredicateRow(s);
++  if (row) {
++    const operands = [row.field.trim(), ...(row.op === 'in' ? inItems(row.value) : [row.value.trim()])];
++    if (operands.some((o) => OPERATOR_CHAR.test(o))) issues.push('predicateOperatorChar');
++  }
++
++  // Both blank = the user simply wants no insight (omission, not an error).
++  // Anything else must be FULLY valid: silently dropping a half-filled or
++  // out-of-range block while the screen still shows its content is exactly the
++  // silent failure this gate exists to close.
++  if (s.insightTopN !== '' || s.insightBy.trim()) {
++    if (!isValidTopN(s.insightTopN)) issues.push('insightTopN');
++    if (!isValidInsightBy(s.insightBy)) issues.push('insightBy');
++  }
++
++  return issues;
++};
++
++/**
++ * True when nothing has been entered in the form.
++ *
++ * Guards the guided -> expert serialization: the mode toggle only knows the
++ * DIRECTION of the switch, so an untouched expert -> guided -> expert
++ * round-trip would overwrite hand-written JSON with the empty form's
++ * `{"name":"","source":{"lens":""}}` — silent, un-undoable destruction of work
++ * the user never even typed a character into the form for.
++ *
++ * Keyed off `EMPTY_FORM_STATE`'s own keys so a new field cannot silently escape
++ * the comparison.
++ */
++export const isFormPristine = (s: LensFormState): boolean =>
++  (Object.keys(EMPTY_FORM_STATE) as (keyof LensFormState)[]).every((k) => {
++    if (k !== 'predicates') return s[k] === EMPTY_FORM_STATE[k];
++    return (
++      s.predicates.length === EMPTY_FORM_STATE.predicates.length &&
++      s.predicates.every((p, i) => {
++        const e = EMPTY_FORM_STATE.predicates[i];
++        return p.field === e.field && p.op === e.op && p.value === e.value;
++      })
++    );
++  });
 diff --git a/gitnexus-web/src/lib/metrics-view.ts b/gitnexus-web/src/lib/metrics-view.ts
 new file mode 100644
 index 00000000..a70ff336

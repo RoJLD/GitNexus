@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { connectRepo } from '../helpers/connect';
 
 /**
  * E2E — Augmented graph view (roadmap-predictive Tier 3.x).
@@ -18,7 +19,7 @@ const REPO = process.env.E2E_REPO || 'sample-repo';
 
 test.describe('Augmented graph view', () => {
   test('Show ghosts toggle reveals per-Tier sub-toggles', async ({ page }) => {
-    await page.goto('/');
+    await connectRepo(page);
 
     // Open the fixture repo (sidebar list).
     await page.getByText(REPO, { exact: false }).first().click();
@@ -37,7 +38,7 @@ test.describe('Augmented graph view', () => {
   });
 
   test('Cancelled toggle hidden by default; appears unchecked when master ON', async ({ page }) => {
-    await page.goto('/');
+    await connectRepo(page);
     await page.getByText(REPO, { exact: false }).first().click();
     await page.waitForSelector('canvas', { timeout: 15_000 });
 

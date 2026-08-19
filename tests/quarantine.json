@@ -1,0 +1,34 @@
+{
+  "_doc": "Registre de quarantaine des tests e2e/integration (roadmap phase i.3 — 'quarantaine EXPLICITE avec verdict, jamais permanente'). Un test quarantiné est SKIPPÉ via test.describe.fixme dans son spec ET listé ici avec verdict + condition de dé-quarantaine falsifiable. Le plafond `cap` interdit d'ajouter une entrée sans le re-ratifier explicitement. Un test qui teste une surface abandonnée par design n'est PAS un rouge à masquer : c'est une quarantaine-avec-verdict (le vrai gate est nommé dans real_proof) — MAIS elle reste temporaire par construction : soit la surface renaît et le test est dé-quarantiné, soit l'abandon est acté et le test est RETIRÉ avec verdict (cf. `retired` ci-dessous).",
+  "cap": 0,
+  "_cap_rationale": "0 depuis 2026-07-21. La liste est vide ; un plafond de 8 sur une liste vide autoriserait 8 nouvelles quarantaines sans re-ratification — exactement le mécanisme que la règle voulait empêcher. À 0, toute nouvelle quarantaine exige de relever le plafond dans un commit, donc un acte délibéré et revu. La cible datée de la phase (i) item 3 ('≤8 fin (i), 0 fin (ii)') est atteinte.",
+  "quarantined": [],
+  "retired": [
+    {
+      "spec": "e2e/specs/copilot-panel.spec.ts",
+      "describes": [
+        "Tier 3.7 — CopilotPanel E2E",
+        "Tier 3.7 — /copilot/metrics Prometheus endpoint"
+      ],
+      "count": 8,
+      "quarantined_on": "2026-07-11",
+      "retired_on": "2026-07-21",
+      "sigil": "Σ-COPILOT-IS-SIDECAR-ONLY",
+      "verdict": "Retiré, pas dé-quarantiné : la surface testée n'a jamais existé et son abandon est acté. Re-mesuré le 2026-07-21, inchangé depuis le 11/07 — routes /copilot/* dans upstream/docker-server-routes.mjs : 0 occurrence ; modules copilot COPY'd dans upstream/Dockerfile.web : 0 occurrence ; panel React dans upstream/gitnexus-web/src/components/ : aucun. La décision sidecar-only a été ratifiée par l'utilisateur le 2026-07-11 et confirmée par la réconciliation v1.6.7.",
+      "why_not_a_coverage_loss": "Les 8 tests assertaient une INTERFACE (rendu des sous-panneaux, bouton Refresh, toast d'erreur, onglets, indicateur de cache, endpoint Prometheus) — pas la logique du copilot. Ce n'est donc pas de la couverture perdue : c'est la SPÉCIFICATION d'une fonctionnalité abandonnée. Le vrai gate du copilot reste `node mcp-server/smoke.mjs`, qui couvre les 4 outils de données et passe (inventory gate=GREEN, 9/9 endpoints mappés). Attention : le smoke n'est PAS un équivalent de ces tests — il couvre la donnée, eux couvraient l'UI. Il n'y a pas d'équivalence, il y a un abandon assumé.",
+      "recover_with": "git show 8f1d19a3:tests/e2e/specs/copilot-panel.spec.ts",
+      "_recover_verified": "Commande exécutée le 2026-07-21 : rend 204 lignes. Le pointeur est utilisable, pas décoratif.",
+      "specified_behaviours": [
+        "rend les 4 sous-panneaux (inventory, BLT, cluster, forge)",
+        "le bouton Refresh déclenche l'état de chargement et émet la requête inventory",
+        "une réponse inventory mockée s'affiche dans le panneau",
+        "une erreur de fetch rend un toast et ne fait jamais planter le panneau",
+        "les onglets de filtre changent le sous-panneau actif",
+        "l'en-tête X-Elysium-Cache remonte en indicateur hit/miss",
+        "/copilot/metrics répond en Prometheus text exposition v0.0.4",
+        "le compteur de metrics s'incrémente après un appel copilot"
+      ],
+      "rebuild_when": "Si le panel web renaît, les trois conditions restent celles écrites au moment de la quarantaine : enregistrer les routes /copilot/* (docker-server-routes.mjs) + COPY les modules copilot (Dockerfile.web) + monter le panel React. Récupérer alors le spec via `recover_with`, et corriger le faux fallback qu'il contenait (commentaire 'accept absence' mais assertion toContain qui échoue sur absence)."
+    }
+  ]
+}
