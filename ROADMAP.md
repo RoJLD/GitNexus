@@ -1,7 +1,7 @@
 # GitNexus — Roadmap
 
 État vivant des fonctionnalités déjà livrées et des prochaines pistes.
-Dernière mise à jour : **2026-07-15** — voir « Update 2026-07-15 (4) » ci-dessous (P1 CI clos, gates integration+e2e re-durcis evidence-backed, `.vsix` v0.1/v0.2 packagé)
+Dernière mise à jour : **2026-08-19** — voir « Update 2026-08-19 — Balayage complet 5 angles (code, git, mémoire, prod live) » ci-dessous (périmés purgés, ouverts consolidés). Avant : « Update 2026-07-15 (4) » (P1 CI clos, gates integration+e2e re-durcis evidence-backed, `.vsix` v0.1/v0.2 packagé)
 (✅ le split-brain de versions est **résolu** : le re-bump v1.6.7 a été **ré-exécuté le 2026-07-11** —
 sources+patches = image CLI = `v1.6.7` ; le revert du 2026-07-07 après l'incident de gutting est
 désormais de l'histoire, cf. INVENTORY.md entête + phase (i).4 ✅). Ancienne entrée : 2026-06-14 (bump upstream v1.6.5 → v1.6.7 + cohabitation diff resync — v1.6.6 mega-release ~190 PRs (Scope-resolution RFC #909, Linux-kernel-scale parallel indexing, cross-service API graphs, legacy resolution engine deleted, web Tree/Circles views, .gitnexusrc), v1.6.7 patch (vendored tree-sitter prebuilds, MCP list_repos pagination, C++ inheritance-lattice fixes, taint/PDG substrate M0). Patches lbug-staleness + incremental-dump réappliqués. Avant : Multi-repo unified graph livré (#65) — `GET /graph/merged?group=` fusionne les graphes per-repo au niveau fichier + arêtes cross-repo des contrats ; groupe synchronisé via `gitnexus group` (endpoints worker + `docker-server-group.mjs`) ; mode "Group graph" dans le canvas (`GroupGraphPanel` + `group-graph-adapter.ts`). **4/8 items enterprise couverts** (Code Wiki, Auto-reindexing, Regression forensics, Multi-repo support ✅). Avant : Regression forensics polish (#62) — coupling 6e métrique watchable/auto-forensiquable + "Locate regression" dans EntropyCommitTimeline. Aussi : Commit-level time-travel A+B+C COMPLET — mode Commits timeline (#60) + baseline auto-seed caché/promote (#61) + pré-chauffage des diffs (#63). Avant : "Auto" regression forensics (#59), Regression Phase 2 (#58), MVP (#57), Auto-reindexing (#56), Code Wiki UI (#55).).
@@ -14,6 +14,154 @@ L'objectif global : transformer GitNexus en **outil d'archéologie + de
 diagnostic structurel** pour un écosystème de dépôts, pas juste un
 visualiseur de code. Chaque ligne ici décrit une promesse précise — pas
 un nom marketing — et son premier pas concret.
+
+---
+
+## Update 2026-08-19 — Balayage complet 5 angles (code, git, mémoire, prod live) : périmés purgés, ouverts consolidés
+
+Balayage consolidé sur 5 angles (lecture code source, historique git commits/PRs, mémoire
+hot-tier ELYSIUM, état prod live, cross-check PRs GitHub fork+ELYSIUM) pour trancher le backlog
+GitNexus entre items réellement **CLOS** (preuve à l'appui, retirés du backlog actif) et items
+toujours **OUVERT** (listés tels quels, aucun n'est ré-inventé ici).
+
+### 🔴 OUVERT — Production/infra (priorité critique)
+
+- **[OUVERT]** Fraîcheur des données de la lens en prod — Le bridge SIGIL-1699 journalise
+  `synced=0/2` et purge les health-files >168h (`purged-stale`) ; le healer Σ-ASCLEPIOS reste
+  inerte pour la même raison. Distinct du bug de routing (déjà corrigé, voir PÉRIMÉ ci-dessous).
+  Même symptôme signalé dès le 07-10 (`register-health-fresh` resté ouvert) et encore le 08-10
+  sans commit de fix depuis.
+- **[OUVERT]** Dérive gitops/ingress GitNexus — Le manifeste gitops ne déclare que `/` → web
+  alors que le live sert déjà `/api/*`, `/home`, `/graphs`, `/lens/*`. Un sync ArgoCD sur l'état
+  actuel du gitops écraserait ces routes. Risque latent, pas encore matérialisé.
+- **[OUVERT]** 4 outils MCP copilot en fail-loud — `inventoryMCPTools`/`readBLTLedger`/
+  `readClusterOpsLedger`/`readForgeContext` lèvent explicitement « copilot modules unavailable ...
+  pending v1.6.7 reconciliation » (`server.mjs:84-93`). Preuve code directe, la plus récente
+  disponible.
+- **[OUVERT]** Divergence upstream v1.6.7 vs main non tranchée — Fork épinglé sur le tag v1.6.7
+  (resync 07-11) ; dry-run contre `main` amont montre +257 commits d'écart et 10 fichiers à
+  réappliquer à la main. C'est la cause racine probable de l'item précédent (reconciliation
+  v1.6.7). **[TRAITER EN DERNIER, APRÈS TOUT LE RESTE]**
+- **[OUVERT]** `query_meta_graph` MCP retourne un stub — Documenté dans le code lui-même :
+  « returns a stub when the bridge is unavailable » (le bridge KuzuDB ELYSIUM doit tourner pour
+  interroger `inter_graph.kuzu` en direct).
+- **[OUVERT]** 2 tests E2E quarantainés depuis 2026-07-12 — `06-cluster-halos.spec.ts` (toggle
+  jamais ouvert par le test + fixture 0 cluster) et `timeline-zoom-and-diff.spec.ts` (wheel event
+  non-passif inatteignable en Chromium headless — la feature marche interactivement, c'est un
+  problème de test).
+
+### 🟠 OUVERT — Lentille Souveraine / Atelier (priorité moyenne)
+
+- **[OUVERT]** Atelier lentilles Phase 2 — surface guidée — `lens_promoter` (reconciler
+  create-only des lentilles authored) reste `status: active`, jamais livré. Dernière mention
+  « reste Atelier = surface guidée future (Phase 2) + démo select/insight » datée 07-28, aucune
+  preuve de livraison postérieure.
+- **[OUVERT]** Composition de lentilles (Phase 2+ north-star) — Contrairement à narration et
+  lentilles-code (voir PÉRIMÉ plus bas), aucun rapport ne trouve de commit/PR couvrant la
+  composition de lentilles annoncée dans le plan Phase 2+.
+- **[OUVERT]** Branche `feat/classdiagram-export-and-class-lens` non proposée en PR — En avance
+  sur la dernière PR mergée du fork (#6), commit HEAD `4b06e68f`, jamais poussée/PR'd.
+- **[OUVERT]** Graphe des couches — 4 disputes non tranchées — 7 nœuds « -studio » à trancher
+  (code à ouvrir), D3 (octoprint), D4 (finance/academia), D6 (assets). Dernière mention 08-10,
+  jamais rouverte depuis.
+
+### 🟡 OUVERT — Backlog GitNexus core / Tier 2bis (priorité moyenne-basse)
+
+- **[OUVERT]** Ghost Cluster auto-cluster-id instable — `auto-cluster-<sha256(...)>` casse si
+  les membres du cluster changent ; fix stable-id (pivot invariant) explicitement DEFERRED le
+  07-11.
+- **[OUVERT]** Repo ID stable pas encore consommé par les endpoints cross-repo — MVP livré
+  (Tier 2bis.5) mais refactor de consommation reporté à 2bis.5b.
+- **[INCERTAIN]** Watches — pas de surface dynamique POST/DELETE (2bis.3b) — Roadmap dit
+  « déclaratif uniquement via `.gitnexus.json` édité à la main », mais un outil MCP
+  `gitnexus_watches` existe et est actuellement callable — à vérifier si ça couvre le besoin.
+- **[OUVERT]** Ghost `placementAccuracy` — STAY-FROZEN — Backend Leiden levé mais aucune
+  vérité-terrain falsifiable disponible pour scorer un placement fichier↔communauté.
+- **[INCERTAIN]** « Co-commits même bracket » — scope jamais élucidé — Référencé une seule fois
+  (ROADMAP l.206), aucun détail retrouvé malgré plusieurs recherches.
+
+### ⚪ OUVERT — UX / architecture (priorité basse)
+
+- **[OUVERT]** Croissance UI horizontale — Audit/Gantt encore en panneaux flottants/modals ;
+  auto-sélection du groupe actif dans le sélecteur 3-segments manquante.
+- **[OUVERT]** Vision architecturale — 3 chemins non tranchés formellement — Chemin B
+  (Architect's Copilot) recommandé mais jamais validé explicitement « avant pivot ».
+- **[OUVERT]** Tier 3.6 Architectural CI — réévaluation Option B jamais faite — Condition de
+  réévaluation (Phase (i) close) remplie depuis l'Update (4) du 07-15, mais la réévaluation
+  elle-même n'a pas eu lieu.
+
+### ⚫ GELÉ / BACKLOG sans trigger atteint (priorité la plus basse — pour mémoire)
+
+- Tier 3.1/3.2/3.3/3.4/3.5/3.8/3.10 — Dead code instrumentation runtime, profils d'auteurs
+  git-only, Conway's Law audit, auto-PR refactoring, modèle prédictif de bugs, domain-specific
+  AST extractors, plugin architecture analytics — tous GELÉS/gated measure-first, aucun trigger
+  atteint.
+- Optimisations d'existant programmées, sans trigger — Index inversé repoId, round-trip
+  export/import versionné (fail-loud préventif posé), snapshot storage structural sharing,
+  semantic label cache invalidation, frontend bundle code-splitting par panel.
+- Graph Platform — backlog pur — P2.3 reste (assortativité, diamètre, Leiden multi-niveaux,
+  arêtes pondérées, UI kNN/slider/spectral, couverture MCP complète), Template Library
+  « Domaines », LoD riche, Follow-ups IA.
+- VSCode extension — probe usage réel jamais lancé — Code livré, action opérationnelle
+  (installer + laisser tourner 7 jours) reste à faire.
+- `doc-counters-autogen` — réconciliation 34 vs 36 tools non faite.
+- Revue vocabulaire souverain SDK publics — explicitement différée.
+- `gitnexus_multigraph_viewer` — Phase 9, stade brainstorm.
+- `gitnexus_viewer` alpha — runbook humain non créé, MCP bridge annoncé « plus tard ».
+- `gitnexus_assimilator` — phase 0 registration, catalog-only.
+- Health-lens générique + Brain-Kuzu DomainNode unifié — Item northstar « P1 next », aucune
+  preuve de livraison.
+- **[INCERTAIN]** `data-path-decision` / Timeline Task 11 — Mentionnés une seule fois chacun,
+  jamais détaillés ni recroisés ailleurs.
+
+### ✅ PÉRIMÉ-DÉJÀ-FAIT — vérifiés résolus (retirés du backlog actif)
+
+- **[CLOS]** Graph Atlas Home (#827) déploiement prod — Preuve : image `20260811-couches`
+  (révision 10), `/home` (9672 o) et `/graphs` (15369 o) répondent en direct avec du contenu
+  réel.
+- **[CLOS]** Routing `/lens/*` (gap Σ-COUCHES, « 6 lentilles jamais joignables ») — Preuve :
+  toutes les routes testées renvoient des payloads distincts (4 Ko à 1,6 Mo) ; noms invalides →
+  vrai 404. Symptôme « 200/1808 o partout » disparu (#966/#968/#969, 08-11).
+- **[CLOS]** Cache-réponse ETag/304 ((ii).4) — Preuve : livré le même jour que l'Update (4) du
+  07-15, texte « reste ETag » était un résidu de rédaction.
+- **[CLOS]** Lens Atelier « Gate live » (non testé unitairement) — Preuve : MAJ 07-28 « Gate live
+  DÉPLOYÉ : bridge-api:0.1.75, routes 404→401 confirmé ».
+- **[CLOS]** Lens narration + lentilles-code (Phase 2 north-star) — Preuve : PR fork #4 « câbler
+  la narration des lentilles au MCP » (07-21) et PR ELYSIUM #609 « lentilles-code via PROXY
+  gateway→fork » (07-18), toutes deux MERGED.
+- **[CLOS]** Pipeline de rebuild d'image gateway — Preuve : déploiement live montre 10 révisions
+  successives réussies, dernière datée 08-11.
+- **[CLOS]** `lens_declaration_parity` — statut flow.json stale — Preuve : décrit comme « gate
+  armé vert » mais status jamais remonté à livré — hygiène de doc, pas un gap fonctionnel.
+- **[CLOS]** Merger PR #452 / #439 (références brainstorm 07-10) — Preuve : largement dépassées
+  par le volume de travail mergé depuis (jusqu'à #1036+).
+- **[CLOS]** Phase T quick-win (CLAUDE.md 5482→16504 nœuds) — Preuve : le fichier CLAUDE.md
+  reflète déjà 16504 nœuds.
+
+### ⚠️ CONTRADICTIONS NON TRANCHÉES
+
+1. PR fork #5 « fermer la quarantaine copilot » (07-21, MERGED) vs code toujours fail-loud
+   (`server.mjs:84-93`, « pending v1.6.7 reconciliation ») — #5 a probablement fermé une
+   quarantaine de TESTS, pas résolu la reconciliation v1.6.7 sous-jacente. À vérifier en lisant
+   le diff de #5.
+2. Outil MCP `gitnexus_watches` existant vs « pas de surface dynamique POST/DELETE »
+   (Tier 2bis.3b) — pas clair si le tool MCP satisfait le besoin roadmap.
+3. « Composition » de lentilles — présente dans le plan Phase 2+ mais absente de toute PR/
+   vérification live. Traité comme OUVERT par défaut.
+
+### PRs mergées ELYSIUM (RoJLD/ELYSIUM) touchant gitnexus après le 2026-07-15
+
+#832 (03-08), #884 (10-08), #919 (10-08), #949 (10-08), #966 (11-08), #968 (11-08), #969
+(11-08), #827 (29-07), #602 (17-07), #609 (18-07), #649 (20-07), #686 (21-07), #861 (04-08).
+Aucune PR gitnexus ouverte côté RoJLD/ELYSIUM.
+
+### PRs mergées fork GitNexus (RoJLD/GitNexus, remote sovereign) après le 2026-07-15
+
+#1 P0-5 prompt-injection guard (18-07), #3 Lens Studio shell authoring (19-07), #4 narration
+lentilles MCP (21-07), #5 fermer quarantaine copilot (21-07), #6 re-auditer triggers Tier 3
+gelés (21-07). Aucune PR ouverte. Branche locale checked-out
+`feat/classdiagram-export-and-class-lens` (HEAD `4b06e68f`) est EN AVANCE sur #6, jamais
+proposée en PR.
 
 ---
 
