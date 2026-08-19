@@ -26,10 +26,13 @@ concurrency:
 env:
   # GIT tag form ('v' prefix) — consumed by scripts/apply-upstream-patches.mjs.
   # The docker IMAGE tag is derived from Dockerfile.cli in the pre-pull steps.
-  # Re-bumped to v1.6.7 on 2026-07-11 (sources+patches now v1.6.7-based). If a
-  # repo-level `vars.GITNEXUS_VERSION` is set it MUST be v1.6.7 or the patches
-  # (v1.6.7-based) will not apply to a v1.6.5 clone.
-  GITNEXUS_VERSION: ${{ vars.GITNEXUS_VERSION || 'v1.6.7' }}
+  # Re-bumped to v1.6.9 on 2026-08-19 (sources+patches now v1.6.9-based). If a
+  # repo-level `vars.GITNEXUS_VERSION` is set it MUST be v1.6.9 or the patches
+  # (v1.6.9-based) will not apply to a clone of any other tag.
+  # This tag and the Dockerfile.cli image tag are TWO sources for ONE version:
+  # move them together, or CI tests a v1.6.9 tree on a 1.6.7 base image — green
+  # and false.
+  GITNEXUS_VERSION: ${{ vars.GITNEXUS_VERSION || 'v1.6.9' }}
   # 22.12.0 is the engines floor of @rolldown/binding-* (^20.19.0 || >=22.12.0).
   # On 22.11.0 npm SILENTLY SKIPS the optional native binding (engines-gated
   # optional dep) → vitest dies at startup with "Cannot find native binding"

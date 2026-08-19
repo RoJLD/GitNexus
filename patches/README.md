@@ -2,13 +2,17 @@
 
 Two diff files capture every modification we apply to the
 [gitnexus/gitnexus](https://github.com/abhigyanpatwari/gitnexus)
-repository (tag `v1.6.7`) for this deployment:
+repository (tag `v1.6.9`) for this deployment:
 
-- **`additive-files.diff`** — ~136 new files we own entirely (measured
-  2026-07-11, post re-bump v1.6.7 + 4 copilot modules re-posed). These never
-  conflict with upstream changes because they are new files, not edits.
-- **`inplace-edits.diff`** — 21 modified upstream files (measured 2026-07-11).
-  This is the real conflict surface when bumping upstream.
+- **`additive-files.diff`** — <!-- COUNTER:additive-files -->143<!-- /COUNTER --> new
+  files we own entirely. These never conflict with upstream changes because
+  they are new files, not edits.
+- **`inplace-edits.diff`** — <!-- COUNTER:inplace-files -->26<!-- /COUNTER --> modified
+  upstream files. This is the real conflict surface when bumping upstream.
+
+Both counts are AUTOGEN — regenerate with `node scripts/check-doc-counters.mjs
+--write` after every diff regeneration. They were hand-written prose until
+2026-08-19 and had silently drifted to "~136 / 21" against a real 143 / 25.
 
 We don't track `upstream/` itself in this repo — it's a working clone we
 modify in place and use as the Docker build context. Tracking it would
@@ -19,7 +23,7 @@ deltas here so the work is reproducible and reviewable.
 
 ```powershell
 # From the repo root
-git clone --depth 1 --branch v1.6.7 https://github.com/abhigyanpatwari/gitnexus.git upstream
+git clone --depth 1 --branch v1.6.9 https://github.com/abhigyanpatwari/gitnexus.git upstream
 cd upstream
 git apply ../patches/additive-files.diff
 git apply ../patches/inplace-edits.diff
@@ -27,14 +31,15 @@ git apply ../patches/inplace-edits.diff
 git status
 ```
 
-`git apply` will fail loudly if upstream has drifted from the v1.6.7
+`git apply` will fail loudly if upstream has drifted from the v1.6.9
 baseline (e.g. you cloned a different tag, or upstream rewrote one of
 the files we patch). When that happens, regenerate the diffs after
 manually re-applying the changes — see "Regenerate the diffs" below.
 
 ## What's inside
 
-~136 additive files (new files we own, in `additive-files.diff`) + 21
+<!-- COUNTER:additive-files -->143<!-- /COUNTER --> additive files (new files we
+own, in `additive-files.diff`) + <!-- COUNTER:inplace-files -->26<!-- /COUNTER -->
 in-place edits to upstream files (the real conflict surface, in
 `inplace-edits.diff`); zero deletions.
 
@@ -95,7 +100,16 @@ as **clean** / **conflict** / **fail**.
 The first run against `main` is in
 [`patches/bump-dry-run-main.md`](bump-dry-run-main.md): 107 clean /
 0 conflict / 9 fail (the 9 in-place files that will need manual re-merge
-for a future bump to `main`).
+for a future bump to `main`). **That report and
+[`bump-dry-run-v1.6.7.md`](bump-dry-run-v1.6.7.md) are DATED records taken
+against older bases — do not read them as the current conflict forecast.**
+
+The current base's report is
+[`patches/bump-dry-run-v1.6.9.md`](bump-dry-run-v1.6.9.md): **169 clean /
+0 conflict / 0 fail**, i.e. a fresh `v1.6.9` clone plus the two committed
+diffs reproduces our tree exactly. That zero is the post-bump invariant to
+re-verify before landing any change to `patches/` — a non-zero here means the
+diffs and the base have parted ways again.
 
 ## Cohabitation contract
 
@@ -161,6 +175,44 @@ turns `build-gate` red; a missing `Dockerfile.web` COPY turns `boot-smoke`
 red), and `unit` + `inventory-check` are no longer `continue-on-error`. Proof
 archived in
 [`docs/superpowers/specs/2026-07-11-build-gate-falsification.md`](../docs/superpowers/specs/2026-07-11-build-gate-falsification.md).
+
+### Bump v1.6.7 -> v1.6.9 (2026-08-19) — no recurrence
+
+Third bump, first one done in a single pass from a single base. What the two
+guttings taught, applied:
+
+- **One clone, one base.** `upstream/` was re-pointed to `v1.6.9` exactly once
+  (`FORCE_CLEAN_UPSTREAM=1 GITNEXUS_VERSION=v1.6.9`), and BOTH diffs were
+  regenerated from that same clone. No throwaway clone was ever used as a
+  second source — that is the mechanism of both guttings.
+- **`scripts/apply-upstream-patches.mjs` defaulted to `v1.6.5`**, two versions
+  stale. CI masked it by passing the tag through env, so a bare local run would
+  have cloned v1.6.5 and produced a third base. Fixed to `v1.6.9` BEFORE any
+  re-pose.
+- **Measured surface:** 25 in-place files -> 14 clean / 11 conflicted, matching
+  the dry-run prediction file-for-file (61/4/2/5/2/9/1/5/6/2/3 conflict blocks).
+- **`package-lock.json` was never hand-merged** (61 blocks): the lock was reset
+  to the upstream v1.6.9 blob and regenerated with `npm install
+  --package-lock-only` from the resolved `package.json`.
+- **Two silent breaks the conflict markers did NOT show**, both caught by
+  running `tsc -b` on the merged tree rather than trusting a clean apply:
+  1. upstream deleted `import { createKnowledgeGraph }` from `useAppState.tsx`
+     (it extracted the loop into `lib/apply-connect-result.ts`). Our patch
+     carried that import only as CONTEXT, so the 3-way merge accepted the
+     deletion — while 7 fork call sites still needed it. Restored.
+  2. upstream's #2178 introduced `graphMode: 'full' | 'chatOnly'` on AppState,
+     colliding with the fork's pre-existing `graphMode: 'single' | 'diff'`
+     (Timeline compare). Same identifier, incompatible types, zero conflict
+     markers. **The fork side was renamed** to `timelineGraphMode` — renaming
+     upstream's would have to be re-applied at every future bump; renaming ours
+     is paid once.
+- **Obsolete patch dropped, not re-posed:** our recopy of the
+  `createKnowledgeGraph()` -> `addNode`/`addRelationship` loop in `App.tsx` and
+  `useAppState.tsx`. Upstream extracted the same loop into
+  `buildGraphFromConnectResult()`; only `applyLensMetadata(...)` survives from
+  our side.
+- **Gates run cold before landing:** `tsc -b` (0 errors), `vite build` (ok),
+  `vitest run` (361/361), `check-patch-drift` (0), `check-doc-counters` (0).
 
 To stop this recurring:
 

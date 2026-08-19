@@ -18,12 +18,12 @@ const wrapper = ({ children }: { children: ReactNode }) => (
 );
 
 describe('useAppState — timeline zoom slice', () => {
-  it('initializes cursorA, cursorB, zoomWindow, graphMode with sensible defaults', () => {
+  it('initializes cursorA, cursorB, zoomWindow, timelineGraphMode with sensible defaults', () => {
     const { result } = renderHook(() => useAppState(), { wrapper });
     expect(result.current.cursorA).toBeNull();
     expect(result.current.cursorB).toBeNull();
     expect(result.current.zoomWindow).toBeNull();
-    expect(result.current.graphMode).toBe('single');
+    expect(result.current.timelineGraphMode).toBe('single');
   });
 
   it('setCursorA auto-swaps when A > B', () => {
@@ -86,28 +86,28 @@ describe('useAppState — timeline zoom slice', () => {
     expect(result.current.zoomWindow).toBeNull();
   });
 
-  it('setGraphMode("diff") clears cross-repo diffMode if active', async () => {
+  it('setTimelineGraphMode("diff") clears cross-repo diffMode if active', async () => {
     const { result } = renderHook(() => useAppState(), { wrapper });
     // The exposed enterDiffMode is async and triggers network calls we have
     // stubbed. For this test we simulate the cross-repo diff being active
     // by reading any internal handle if exposed — otherwise we just call
-    // setGraphMode and verify the field. The full mutual exclusion
+    // setTimelineGraphMode and verify the field. The full mutual exclusion
     // happens at the setDiffMode call sites (lines 1859 / 2585) and is
     // covered by the e2e spec.
     act(() => {
-      result.current.setGraphMode('diff');
+      result.current.setTimelineGraphMode('diff');
     });
-    expect(result.current.graphMode).toBe('diff');
+    expect(result.current.timelineGraphMode).toBe('diff');
   });
 
-  it('setGraphMode("single") restores the default mode', () => {
+  it('setTimelineGraphMode("single") restores the default mode', () => {
     const { result } = renderHook(() => useAppState(), { wrapper });
     act(() => {
-      result.current.setGraphMode('diff');
+      result.current.setTimelineGraphMode('diff');
     });
     act(() => {
-      result.current.setGraphMode('single');
+      result.current.setTimelineGraphMode('single');
     });
-    expect(result.current.graphMode).toBe('single');
+    expect(result.current.timelineGraphMode).toBe('single');
   });
 });

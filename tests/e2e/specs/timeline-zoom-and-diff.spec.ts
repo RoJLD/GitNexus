@@ -7,7 +7,7 @@ import { connectRepo } from '../helpers/connect';
  *
  * Coverage as of commits 9ec002e8...40594689 :
  *   - Tasks 1-9 + Task 10 button + Task 12 keyboard shortcuts
- *   - Task 11 (graphMode='diff' → Sigma coloring) — CORRIGÉ 2026-07-11 : le
+ *   - Task 11 (timelineGraphMode='diff' → Sigma coloring) — CORRIGÉ 2026-07-11 : le
  *     commentaire « DEFERRED » ci-devant était PÉRIMÉ. Mesure du code : la chaîne
  *     est CÂBLÉE de bout en bout — enterCursorDiff (useAppState) → computeGraphDiff
  *     → setDiffData → diffData.nodeStatus → GraphCanvas diffNodeStatus → le
@@ -69,7 +69,7 @@ test.describe('Timeline zoom + cursor diff (Phase 1)', () => {
     await expect(page.locator('button:has-text("Zoom to window")')).toBeVisible();
   });
 
-  test('"Compare A↔B" toggles graphMode state (button label switch)', async ({ page }) => {
+  test('"Compare A↔B" toggles timelineGraphMode state (button label switch)', async ({ page }) => {
     await expect(page.locator('button:has-text("Compare A↔B")')).toBeVisible();
     await page.click('button:has-text("Compare A↔B")');
     await expect(page.locator('button:has-text("Exit compare")')).toBeVisible();

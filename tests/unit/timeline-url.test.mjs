@@ -10,7 +10,7 @@ describe('serializeTimelineToParams', () => {
       cursorAShortHash: 'a8f3c2d',
       cursorBShortHash: 'live',
       zoom: true,
-      graphMode: 'diff',
+      timelineGraphMode: 'diff',
       filterMode: 'strict',
     });
     expect(set).toEqual({
@@ -28,7 +28,7 @@ describe('serializeTimelineToParams', () => {
       cursorAShortHash: null,
       cursorBShortHash: null,
       zoom: false,
-      graphMode: 'single',
+      timelineGraphMode: 'single',
       filterMode: 'off',
     });
     expect(set).toEqual({});
@@ -36,16 +36,16 @@ describe('serializeTimelineToParams', () => {
   });
 
   it('filter=off → tlFilter removed; filter=normal → tlFilter set', () => {
-    const off = serializeTimelineToParams({ cursorAShortHash: 'x', cursorBShortHash: 'y', zoom: false, graphMode: 'single', filterMode: 'off' });
+    const off = serializeTimelineToParams({ cursorAShortHash: 'x', cursorBShortHash: 'y', zoom: false, timelineGraphMode: 'single', filterMode: 'off' });
     expect(off.remove).toContain('tlFilter');
-    const normal = serializeTimelineToParams({ cursorAShortHash: 'x', cursorBShortHash: 'y', zoom: false, graphMode: 'single', filterMode: 'normal' });
+    const normal = serializeTimelineToParams({ cursorAShortHash: 'x', cursorBShortHash: 'y', zoom: false, timelineGraphMode: 'single', filterMode: 'normal' });
     expect(normal.set.tlFilter).toBe('normal');
   });
 
-  it('graphMode=single → tlMode removed; diff → tlMode set', () => {
-    const single = serializeTimelineToParams({ cursorAShortHash: 'x', cursorBShortHash: 'y', zoom: false, graphMode: 'single', filterMode: 'off' });
+  it('timelineGraphMode=single → tlMode removed; diff → tlMode set', () => {
+    const single = serializeTimelineToParams({ cursorAShortHash: 'x', cursorBShortHash: 'y', zoom: false, timelineGraphMode: 'single', filterMode: 'off' });
     expect(single.remove).toContain('tlMode');
-    const diff = serializeTimelineToParams({ cursorAShortHash: 'x', cursorBShortHash: 'y', zoom: false, graphMode: 'diff', filterMode: 'off' });
+    const diff = serializeTimelineToParams({ cursorAShortHash: 'x', cursorBShortHash: 'y', zoom: false, timelineGraphMode: 'diff', filterMode: 'off' });
     expect(diff.set.tlMode).toBe('diff');
   });
 });
@@ -57,7 +57,7 @@ describe('parseTimelineParams', () => {
       cursorAShortHash: 'a8f3c2d',
       cursorBShortHash: 'live',
       zoom: true,
-      graphMode: 'diff',
+      timelineGraphMode: 'diff',
       filterMode: 'permissive',
     });
   });
@@ -68,7 +68,7 @@ describe('parseTimelineParams', () => {
       cursorAShortHash: null,
       cursorBShortHash: null,
       zoom: false,
-      graphMode: 'single',
+      timelineGraphMode: 'single',
       filterMode: 'off',
     });
   });
@@ -86,13 +86,13 @@ describe('parseTimelineParams', () => {
   });
 
   it('tlMode only diff for exactly "diff"', () => {
-    expect(parseTimelineParams(new URLSearchParams('tlMode=diff')).graphMode).toBe('diff');
-    expect(parseTimelineParams(new URLSearchParams('tlMode=single')).graphMode).toBe('single');
-    expect(parseTimelineParams(new URLSearchParams('tlMode=xyz')).graphMode).toBe('single');
+    expect(parseTimelineParams(new URLSearchParams('tlMode=diff')).timelineGraphMode).toBe('diff');
+    expect(parseTimelineParams(new URLSearchParams('tlMode=single')).timelineGraphMode).toBe('single');
+    expect(parseTimelineParams(new URLSearchParams('tlMode=xyz')).timelineGraphMode).toBe('single');
   });
 
   it('round-trips with serializeTimelineToParams (set values)', () => {
-    const state = { cursorAShortHash: 'aaa', cursorBShortHash: 'bbb', zoom: true, graphMode: 'diff', filterMode: 'strict' };
+    const state = { cursorAShortHash: 'aaa', cursorBShortHash: 'bbb', zoom: true, timelineGraphMode: 'diff', filterMode: 'strict' };
     const { set } = serializeTimelineToParams(state);
     const params = new URLSearchParams(set);
     const parsed = parseTimelineParams(params);

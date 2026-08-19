@@ -21885,7 +21885,7 @@ index 00000000..3842afce
 +}
 diff --git a/gitnexus-web/src/components/Timeline.tsx b/gitnexus-web/src/components/Timeline.tsx
 new file mode 100644
-index 00000000..e103a406
+index 00000000..f0f90cb2
 --- /dev/null
 +++ b/gitnexus-web/src/components/Timeline.tsx
 @@ -0,0 +1,1622 @@
@@ -22017,12 +22017,12 @@ index 00000000..e103a406
 +    cursorA,
 +    cursorB,
 +    zoomWindow,
-+    graphMode,
++    timelineGraphMode,
 +    setCursorA,
 +    setCursorB,
 +    enterZoom,
 +    exitZoom,
-+    setGraphMode,
++    setTimelineGraphMode,
 +    // Temporal Filter (Phase 2 Item #1)
 +    temporalFilterMode,
 +    setTemporalFilterMode,
@@ -22448,12 +22448,12 @@ index 00000000..e103a406
 +        else enterZoom();
 +      } else if (e.shiftKey && (e.key === 'D' || e.key === 'd')) {
 +        e.preventDefault();
-+        setGraphMode(graphMode === 'diff' ? 'single' : 'diff');
++        setTimelineGraphMode(timelineGraphMode === 'diff' ? 'single' : 'diff');
 +      }
 +    };
 +    window.addEventListener('keydown', onKeyDown);
 +    return () => window.removeEventListener('keydown', onKeyDown);
-+  }, [cursorA, cursorB, points, zoomWindow, graphMode, enterZoom, exitZoom, setGraphMode]);
++  }, [cursorA, cursorB, points, zoomWindow, timelineGraphMode, enterZoom, exitZoom, setTimelineGraphMode]);
 +
 +  // Wheel zoom — continuous, mouse-anchored, coupled to cursors. The rapid
 +  // wheel burst only updates a transient window (rAF-throttled). A debounced
@@ -23244,7 +23244,7 @@ index 00000000..e103a406
 +      </button>
 +
 +      {/* Compare A↔B toggle — Phase 1 timeline-zoom-cursors Task 10. Toggles
-+          graphMode between 'single' and 'diff'. Actual diff fetch + coloring
++          timelineGraphMode between 'single' and 'diff'. Actual diff fetch + coloring
 +          pipeline is wired in App.tsx (Task 11). The button only manages
 +          state here — the visual diff overlay is the App-level effect's job. */}
 +      <button
@@ -23261,23 +23261,23 @@ index 00000000..e103a406
 +            if (a && b && a.hash !== b.hash) compareCommits(a.hash, b.hash);
 +            return;
 +          }
-+          setGraphMode(graphMode === 'diff' ? 'single' : 'diff');
++          setTimelineGraphMode(timelineGraphMode === 'diff' ? 'single' : 'diff');
 +        }}
 +        disabled={!cursorA || !cursorB}
 +        className={`flex shrink-0 cursor-pointer items-center gap-1 rounded-md border px-1.5 py-1 text-[10px] transition-all disabled:cursor-not-allowed disabled:opacity-40 ${
-+          graphMode === 'diff'
++          timelineGraphMode === 'diff'
 +            ? 'border-emerald-500/40 bg-emerald-500/15 text-emerald-400 hover:bg-emerald-500/25'
 +            : 'border-border-subtle bg-elevated text-text-secondary hover:bg-hover hover:text-text-primary'
 +        }`}
 +        title={
 +          !cursorA || !cursorB
 +            ? 'Set both cursors A and B to enable comparison'
-+            : graphMode === 'diff'
++            : timelineGraphMode === 'diff'
 +              ? 'Exit compare — restore single-snapshot view (Shift+D)'
 +              : 'Compare A↔B — show diff between snapshots at cursors (Shift+D)'
 +        }
 +      >
-+        {(navMode === 'commits' ? !!diffMode : graphMode === 'diff') ? 'Exit compare' : 'Compare A↔B'}
++        {(navMode === 'commits' ? !!diffMode : timelineGraphMode === 'diff') ? 'Exit compare' : 'Compare A↔B'}
 +      </button>
 +
 +      {/* Temporal filter dropdown — Phase 2 Item #1.
@@ -25135,7 +25135,7 @@ index 00000000..d14ffea6
 +}
 diff --git a/gitnexus-web/src/hooks/useTimelineUrlSync.ts b/gitnexus-web/src/hooks/useTimelineUrlSync.ts
 new file mode 100644
-index 00000000..f405dfe6
+index 00000000..df0b0ff8
 --- /dev/null
 +++ b/gitnexus-web/src/hooks/useTimelineUrlSync.ts
 @@ -0,0 +1,113 @@
@@ -25145,7 +25145,7 @@ index 00000000..f405dfe6
 +
 +/**
 + * Two-way sync between Timeline state and the URL query string :
-+ *   - WRITE : on any change to cursorA/B/zoomWindow/graphMode/temporalFilterMode,
++ *   - WRITE : on any change to cursorA/B/zoomWindow/timelineGraphMode/temporalFilterMode,
 + *     replaceState the 5 tl* params (resolving cursor dates -> shortHash).
 + *   - READ : one-shot on mount once snapshots are available, parse the URL
 + *     params (resolving shortHash -> date) and apply to state.
@@ -25160,12 +25160,12 @@ index 00000000..f405dfe6
 +    cursorA,
 +    cursorB,
 +    zoomWindow,
-+    graphMode,
++    timelineGraphMode,
 +    temporalFilterMode,
 +    setCursorA,
 +    setCursorB,
 +    enterZoom,
-+    setGraphMode,
++    setTimelineGraphMode,
 +    setTemporalFilterMode,
 +  } = useAppState();
 +
@@ -25220,7 +25220,7 @@ index 00000000..f405dfe6
 +    if (dateA) setCursorA(dateA);
 +    if (dateB) setCursorB(dateB);
 +    if (parsed.filterMode !== 'off') setTemporalFilterMode(parsed.filterMode);
-+    if (parsed.graphMode === 'diff') setGraphMode('diff');
++    if (parsed.timelineGraphMode === 'diff') setTimelineGraphMode('diff');
 +    if (parsed.zoom && dateA && dateB) pendingZoom.current = true;
 +    readDone.current = true;
 +    // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -25242,7 +25242,7 @@ index 00000000..f405dfe6
 +      cursorAShortHash: dateToShortHash(cursorA),
 +      cursorBShortHash: dateToShortHash(cursorB),
 +      zoom: zoomWindow !== null,
-+      graphMode,
++      timelineGraphMode,
 +      filterMode: temporalFilterMode,
 +    });
 +    const urlObj = new URL(window.location.href);
@@ -25250,7 +25250,7 @@ index 00000000..f405dfe6
 +    for (const k of remove) urlObj.searchParams.delete(k);
 +    window.history.replaceState(null, '', urlObj.toString());
 +    // eslint-disable-next-line react-hooks/exhaustive-deps
-+  }, [cursorA, cursorB, zoomWindow, graphMode, temporalFilterMode, availableRepos, baseRepo]);
++  }, [cursorA, cursorB, zoomWindow, timelineGraphMode, temporalFilterMode, availableRepos, baseRepo]);
 +}
 diff --git a/gitnexus-web/src/lib/adjacency-matrix.ts b/gitnexus-web/src/lib/adjacency-matrix.ts
 new file mode 100644
@@ -26267,7 +26267,7 @@ index 00000000..066ca005
 +}
 diff --git a/gitnexus-web/src/lib/graph-diff.ts b/gitnexus-web/src/lib/graph-diff.ts
 new file mode 100644
-index 00000000..d01d2f87
+index 00000000..d23f4dcf
 --- /dev/null
 +++ b/gitnexus-web/src/lib/graph-diff.ts
 @@ -0,0 +1,122 @@
@@ -26386,7 +26386,7 @@ index 00000000..d01d2f87
 +/**
 + * Diff between two snapshots of the same repo. Algorithm is identical to
 + * cross-repo diff (set membership on node id + edge triple) — only the
-+ * naming differs. Used by Timeline.tsx in graphMode='diff' (Phase 1 of
++ * naming differs. Used by Timeline.tsx in timelineGraphMode='diff' (Phase 1 of
 + * timeline-zoom-cursors design, Task 9) to compare snapshots at cursorA
 + * and cursorB.
 + *
@@ -27443,7 +27443,7 @@ index 00000000..8e9a8951
 +}
 diff --git a/gitnexus-web/src/lib/timeline-url.ts b/gitnexus-web/src/lib/timeline-url.ts
 new file mode 100644
-index 00000000..c9b09f1f
+index 00000000..cf527d56
 --- /dev/null
 +++ b/gitnexus-web/src/lib/timeline-url.ts
 @@ -0,0 +1,63 @@
@@ -27457,7 +27457,7 @@ index 00000000..c9b09f1f
 +  cursorAShortHash: string | null;   // shortHash or 'live' or null
 +  cursorBShortHash: string | null;
 +  zoom: boolean;
-+  graphMode: 'single' | 'diff';
++  timelineGraphMode: 'single' | 'diff';
 +  filterMode: 'off' | 'strict' | 'normal' | 'permissive';
 +}
 +
@@ -27482,7 +27482,7 @@ index 00000000..c9b09f1f
 +  if (state.zoom) set.tlZoom = '1';
 +  else remove.push('tlZoom');
 +
-+  if (state.graphMode === 'diff') set.tlMode = 'diff';
++  if (state.timelineGraphMode === 'diff') set.tlMode = 'diff';
 +  else remove.push('tlMode');
 +
 +  if (state.filterMode !== 'off') set.tlFilter = state.filterMode;
@@ -27506,7 +27506,7 @@ index 00000000..c9b09f1f
 +    cursorAShortHash: params.get('tlA'),
 +    cursorBShortHash: params.get('tlB'),
 +    zoom: params.get('tlZoom') === '1',
-+    graphMode: params.get('tlMode') === 'diff' ? 'diff' : 'single',
++    timelineGraphMode: params.get('tlMode') === 'diff' ? 'diff' : 'single',
 +    filterMode: validFilter,
 +  };
 +}

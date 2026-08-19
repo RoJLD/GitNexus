@@ -2,7 +2,7 @@
 
 This folder is the **deployment + analytics extension** on top of
 upstream [gitnexus/gitnexus](https://github.com/abhigyanpatwari/gitnexus)
-(pinned to `v1.6.7`). Our deltas live in two places: the few files we
+(pinned to `v1.6.9`). Our deltas live in two places: the few files we
 own at this folder's root (`Dockerfile.cli`, `docker-compose.yml`,
 `scripts/`), and serialized diffs of everything we patch in `upstream/`
 (`patches/additive-files.diff` for new files, `patches/inplace-edits.diff`
@@ -332,7 +332,7 @@ gitnexus/
 │   ├── bump-dry-run-main.md    First dry-run report against main: 107 clean / 0 conflict / 9 fail
 │   ├── example-gitnexus-domains.json   Sample for the dissonance feature
 │   └── README.md               How to re-apply patches
-├── upstream/                   Git clone of gitnexus@v1.6.7, .gitignored
+├── upstream/                   Git clone of gitnexus@v1.6.9, .gitignored
 │   ├── Dockerfile.web          We modify this (zip/unzip/git deps, COPY blocks)
 │   ├── docker-server.mjs       Minimal shim: imports + calls docker-server-routes.mjs (in-place, reduced)
 │   ├── docker-server-routes.mjs  Route registry shim: registerGitnexusRoutes + startGitnexusCron (additive)
