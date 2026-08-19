@@ -145,39 +145,68 @@ test.describe('Timeline zoom + cursor diff (Phase 1)', () => {
     await expect(cursorB).toHaveAttribute('aria-valuemin', '0');
   });
 
-  // QUARANTINED 2026-07-12 (surfaced by the newly-built harness). Fails
-  // consistently under headless chromium: `page.mouse.wheel` does not appear to
-  // reach the non-passive `wheel` listener on `timelineBarRef` (the wheel-zoom
-  // handler) — the mini-map never commits. Reproduces the fork's quarantine-
-  // with-verdict doctrine: this is a test/headless-input concern (or a wrong
-  // wheel target coordinate), NOT a fix-cursor-race regression — the feature
-  // works interactively. Needs a dedicated look at wheel-event delivery /
-  // dispatching a real DOM WheelEvent on timelineBarRef. Un-fixme once resolved.
-  test.fixme('mousewheel zooms in (mini-map appears, tlZoom=1) and out (exits)', async ({ page }) => {
-    // Locate the timeline track via the cursor slider's position.
+  // DE-QUARANTINED 2026-08-19 (was `test.fixme` since 2026-07-12). Root
+  // cause confirmed against the source (components/Timeline.tsx): the
+  // zoom handler is `el.addEventListener('wheel', onWheel, { passive:
+  // false })` on `timelineBarRef` — a NON-PASSIVE listener. Chromium
+  // headless is documented to not reliably deliver `page.mouse.wheel`
+  // (a synthesized OS-level input via CDP) to non-passive wheel
+  // listeners; it never reached `onWheel`, so the mini-map never
+  // committed. Fix: dispatch a real `WheelEvent` directly on the
+  // element via `element.dispatchEvent(...)` inside `page.evaluate` —
+  // this invokes the JS event pipeline synchronously and always
+  // reaches the listener, headless or not, matching the same
+  // deltaY/clientX contract `onWheel` reads (see additive-files.diff
+  // around `mapPositionToDate` / `applyWheelZoom`). The feature itself
+  // was never broken — this was purely a headless-input delivery gap.
+  test('mousewheel zooms in (mini-map appears, tlZoom=1) and out (exits)', async ({ page }) => {
+    // Locate the timeline track via the cursor slider's position. The
+    // slider's DIRECT DOM parent is the `ref={timelineBarRef}` div that
+    // owns the non-passive wheel listener (see the JSX: the "Cursor A"
+    // slider div is a direct child of the timeline-bar div — no
+    // wrapper in between).
     const cursorA = page.locator('[role="slider"][aria-label="Cursor A"]');
     await expect(cursorA).toBeVisible();
+    const timelineBar = cursorA.locator('xpath=..');
     const box = await cursorA.boundingBox();
     expect(box).not.toBeNull();
     if (!box) return;
 
-    // Wheel UP (deltaY<0) over the middle of the timeline → zoom in.
     const cx = box.x + 150;
     const cy = box.y;
-    await page.mouse.move(cx, cy);
+
+    async function dispatchWheel(deltaY: number) {
+      await timelineBar.evaluate(
+        (el, { deltaY, clientX, clientY }) => {
+          el.dispatchEvent(
+            new WheelEvent('wheel', {
+              deltaY,
+              deltaMode: 0, // DOM_DELTA_PIXEL — matches a real mouse wheel
+              clientX,
+              clientY,
+              bubbles: true,
+              cancelable: true,
+            }),
+          );
+        },
+        { deltaY, clientX: cx, clientY: cy },
+      );
+    }
+
+    // Wheel UP (deltaY<0) over the middle of the timeline → zoom in.
     for (let i = 0; i < 3; i++) {
-      await page.mouse.wheel(0, -120);
+      await dispatchWheel(-120);
       await page.waitForTimeout(60);
     }
-    // After the settle debounce, zoom is committed: mini-map visible + URL param.
+    // After the settle debounce (WHEEL_ZOOM_SETTLE_MS = 200ms), zoom is
+    // committed: mini-map visible + URL param.
     await page.waitForTimeout(600);
     await expect(page.getByRole('region', { name: /mini-map/i })).toBeVisible();
     expect(page.url()).toMatch(/tlZoom=1/);
 
     // Wheel DOWN (deltaY>0) hard → zoom out fully → exits.
-    await page.mouse.move(cx, cy);
     for (let i = 0; i < 6; i++) {
-      await page.mouse.wheel(0, 240);
+      await dispatchWheel(240);
       await page.waitForTimeout(60);
     }
     await page.waitForTimeout(600);

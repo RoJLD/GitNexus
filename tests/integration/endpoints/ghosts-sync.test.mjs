@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { FIXTURE } from '../helpers/analyze.mjs';
+import { fixtureDeclaredGhostIds } from '../helpers/fixture-ghosts.mjs';
 
 const BASE = `http://localhost:${process.env.TEST_WEB_PORT || 4173}`;
 
@@ -10,8 +11,12 @@ describe('POST /ghosts/sync', () => {
     const body = await res.json();
     expect(body.synced).toBe(true);
     expect(Array.isArray(body.ghosts)).toBe(true);
-    // Fixture ROADMAP has 2 table rows + 3 Tier sections = 5 ghosts.
-    expect(body.ghosts.length).toBe(6);
+    // The expected set is DERIVED from the fixture tarball via the server's own
+    // roadmap parser (helpers/fixture-ghosts.mjs), so adding a Tier section to
+    // tests/fixtures/make-fixture.mjs updates this assertion by construction.
+    // The previous hardcoded `6` shipped with a comment claiming "2 table rows
+    // + 3 Tier sections = 5 ghosts" — three numbers, none of them true.
+    expect(body.ghosts.map(g => g.id)).toEqual(fixtureDeclaredGhostIds());
   });
 
   it('a second sync is idempotent (same ids, same order)', async () => {
