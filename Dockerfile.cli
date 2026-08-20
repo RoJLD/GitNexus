@@ -1,43 +1,136 @@
-# Derived image that fixes two upstream bugs in
-# ghcr.io/abhigyanpatwari/gitnexus:1.6.9 without re-vendoring the full source
-# tree. See notes/decisions.md (2026-05-07 REVERSAL entry) for the rationale.
+# GitNexus CLI/API image — upstream v1.6.9 runtime, dist/ COMPILED FROM OUR
+# PATCHED SOURCES.
 #
-# Bumped 2026-06-14: v1.6.5 → v1.6.7. v1.6.6 was a mega-release (~190 PRs:
-# Scope-resolution RFC #909, Linux-kernel-scale parallel indexing, cross-
-# service API graphs, legacy resolution engine deleted). v1.6.7 added
-# vendored tree-sitter prebuilds (no toolchain in CI), MCP list_repos
-# pagination, C++ inheritance-lattice fixes, and taint/PDG substrate M0
-# (inert/additive). Bump is justified despite cohabitation-contract §3.1
-# 'v1.7.x+' rule because v1.6.6 is functionally a major and v1.7 is not yet
-# tagged. Patches re-applied: lbug-staleness + incremental-dump.
+# ---------------------------------------------------------------------------
+# 2026-08-20 — WHY THIS FILE IS NOW MULTI-STAGE (read before "simplifying" it)
+# ---------------------------------------------------------------------------
+# Until today this image was `FROM ghcr.io/abhigyanpatwari/gitnexus:<tag>` plus
+# three rewrites of the PRE-BUILT dist/. That base image is compiled by upstream
+# from UPSTREAM sources. Consequence, measured inside
+# 192.168.1.21:5443/elysium/gitnexus-cli:1.6.9-elysium:
 #
-# The two remaining upstream bugs (as of v1.6.9):
-#   1. /data/hf-cache is never created with the right ownership, so USER node
-#      can't write the HuggingFace embedding cache (EACCES at first analyze
-#      run with --embeddings).
-#   2. The REST API caches LadybugDB connections by path
-#      (lbug-adapter.ts ensureLbugInitialized line 267) and never evicts
-#      them when the analyze worker (a child process) rewrites the lbug
-#      file. After a re-analyze, /api/graph and /api/query keep returning
-#      the pre-analyze data until the server restarts or a *different* repo
-#      is queried. The MCP backend already does the right thing
-#      (mcp/local/local-backend.ts line 439); we add the same staleness
-#      check to the REST adapter via scripts/patch-lbug-staleness.mjs.
+#   dist/server/middleware.js:51
+#       export function createLocalhostOriginGuard(boundHost)   <- ONE parameter
+#   grep -rl TRUSTED_WRITE_ORIGINS    /app  ->  0   (PR #11 allow-list: ABSENT)
+#   grep -rl ANTI_INJECTION_DIRECTIVE /app  ->  0   (P0-5 guard: ABSENT, always)
 #
-# Note: bug #3 from the v1.6.3 era (install-duckdb-extension.mjs missing
-# from runtime stage) is FIXED upstream as of v1.6.5 — we no longer need
-# to vendor the script.
+# The four CLI hunks of patches/inplace-edits.diff were applied by
+# scripts/apply-upstream-patches.mjs — which only .github/workflows/test.yml
+# ever calls. NO image build ever ran it. Our CLI patches were compiled by CI,
+# proven by tests, and then thrown away at build time: two security guards
+# written, committed and merged that never existed in production.
 #
+# The web image never had this problem — Dockerfile.web builds from the patched
+# upstream/ tree. Only the CLI package was asymmetric. This file removes the
+# asymmetry.
+#
+# WHAT CHANGED
+#   * a `cli-builder` stage materialises the PATCHED sources (the build context
+#     already contains upstream/: apply-upstream-patches.mjs puts it there in
+#     CI, the initContainer does in gitops/jobs/image-ci/) and runs the
+#     package's own build — `npm run build --prefix gitnexus` -> node
+#     scripts/build.js -> pure tsc, no bundler, 1:1 src/**.ts -> dist/**.js;
+#   * the runtime stage still starts FROM the upstream image, so every native
+#     dependency (tree-sitter vendor/, onnxruntime, LadybugDB bindings, the
+#     baked DuckDB/FTS extension, hooks/, skills/, the /usr/local/bin/gitnexus
+#     symlink) stays exactly as upstream resolved and tested it. We borrow only
+#     the `tsc` half of upstream's builder — we do NOT re-own the native chain.
+#     Re-owning it is the cost notes/decisions.md (2026-05-07 REVERSAL) refused.
+#
+# ONE SOURCE OF TRUTH: the .ts. No new dist/-rewriting script was added; the
+# three legacy ones (lbug-staleness, incremental-dump, wiki-worker) still run,
+# unchanged, on top of OUR dist. Measured 2026-08-20 against a freshly compiled
+# v1.6.9+patches dist: patch-lbug-staleness matched and applied, and
+# patch-incremental-dump's anchor line
+# `const subgraph = extractChangedSubgraph(pipelineResult.graph, effectiveWriteSet);`
+# is present — our four patches touch neither shape.
+#
+# ORDER IS LOAD-BEARING. `COPY --from=cli-builder ... /app/gitnexus/dist` MUST
+# come BEFORE the two `RUN node ...patch-*.mjs`. Reversed, the COPY silently
+# erases both dist/ fixes and the build still goes green. The final `dist` gate
+# below is what makes that mistake fatal instead of invisible — it was verified
+# to go RED on exactly that ordering before being committed.
+#
+# -- history (kept) ---------------------------------------------------------
+# Bumped 2026-06-14: v1.6.5 -> v1.6.7 (vendored tree-sitter prebuilds, MCP
+# list_repos pagination, C++ inheritance-lattice, taint/PDG substrate M0).
 # Bumped 2026-08-19: v1.6.7 -> v1.6.9 (147 commits). v1.6.9 is the HEAD of the
-# stable line, not a way-point: there is no `chore: release` between it and
-# upstream main. Chosen over main because main rewrites docker-server.mjs
-# (#2804 render deploy) — the entry point of our 63 additive route modules —
-# which would add our most structural file to the conflict surface for zero
-# functional gain. Both patch scripts re-applied unchanged.
+# stable line, not a way-point. Chosen over main because main rewrites
+# docker-server.mjs (#2804), the entry point of our 63 additive route modules.
 #
-# Both remaining fixes are minimal layers on top of the upstream image — no
-# rebuild of gitnexus from source.
+# Upstream bugs this image still fixes on top of v1.6.9:
+#   1. /data/hf-cache is never created with the right ownership, so USER node
+#      can't write the HuggingFace embedding cache (EACCES at the first
+#      `analyze --embeddings`).
+#   2. The REST API caches LadybugDB connections by path and never evicts them
+#      when the analyze worker (a child process) rewrites the lbug file. After
+#      a re-analyze, /api/graph and /api/query keep returning pre-analyze data
+#      until the server restarts. The MCP backend already does the right thing
+#      (mcp/local/local-backend.ts); we mirror the staleness check into the
+#      REST adapter via scripts/patch-lbug-staleness.mjs.
 
+ARG NPM_VERSION=11.14.1
+
+# -- stage 1 : cli-builder — compile the PATCHED sources ---------------------
+# Same pinned digest as upstream's own Dockerfile.cli builder AND runtime, so
+# the dist/ we produce targets the exact Node (v22.22.2) that will execute it,
+# with the same module format ("type": "module", NodeNext) and the same tsc
+# (5.9.3 for gitnexus, 6.0.3 for gitnexus-shared — each package's own lockfile).
+FROM node:22-bookworm-slim@sha256:9f6d5975c7dca860947d3915877f85607946403fc55349f39b4bc3688448bb6e AS cli-builder
+ARG NPM_VERSION
+
+WORKDIR /src
+
+RUN npx --yes npm@${NPM_VERSION} install -g npm@${NPM_VERSION}
+
+# No python3/make/g++ here — on purpose. `--ignore-scripts` skips `postinstall`
+# (build-tree-sitter-grammars.cjs, the ONLY node-gyp consumer) and `prepare`,
+# hence the explicit build invocation further down. We never copy node_modules/
+# or vendor/ out of this stage: the runtime image already carries the grammars
+# upstream built and tested.
+
+# gitnexus-shared first — gitnexus depends on it as `file:../gitnexus-shared`,
+# and scripts/build.js compiles it with ITS OWN node_modules/.bin/tsc.
+COPY upstream/gitnexus-shared/package.json upstream/gitnexus-shared/package-lock.json ./gitnexus-shared/
+RUN npm ci --prefix gitnexus-shared --ignore-scripts --no-audit --no-fund
+COPY upstream/gitnexus-shared/tsconfig.json ./gitnexus-shared/
+COPY upstream/gitnexus-shared/src ./gitnexus-shared/src
+
+# package.json + lockfile BEFORE the sources so the slow, network-bound npm
+# layer survives every source-only change.
+COPY upstream/gitnexus/package.json upstream/gitnexus/package-lock.json ./gitnexus/
+RUN npm ci --prefix gitnexus --ignore-scripts --no-audit --no-fund
+
+# Exactly what tsc + scripts/build.js need. Deliberately NOT
+# `COPY upstream/gitnexus ./gitnexus`: on a dev machine
+# upstream/gitnexus/node_modules exists, is host-built, and would land on top of
+# the npm ci above. Verified 2026-08-20: this narrow set produces a dist/
+# byte-identical (1578 files, `diff -r` clean) to one built from the full
+# package directory.
+COPY upstream/gitnexus/tsconfig.json ./gitnexus/
+COPY upstream/gitnexus/scripts ./gitnexus/scripts
+COPY upstream/gitnexus/src ./gitnexus/src
+
+# GATE (source side) — refuse to spend the tsc minutes on a tree that does not
+# carry our patches. Same script the build Job runs before Kaniko starts, and
+# the same script that asserts the finished image at the end of this file:
+# ONE text, three readers (Sigma-DEUX-SOURCES, seven occurrences paid for here).
+COPY scripts/gate-cli-patch-markers.sh /gate.sh
+RUN sh /gate.sh src /src
+
+# A stale tsbuildinfo would make `composite: true` (gitnexus-shared) skip work.
+RUN rm -f gitnexus-shared/tsconfig.tsbuildinfo gitnexus/tsconfig.tsbuildinfo
+
+# THE build command: `node scripts/build.js` — tsc(gitnexus-shared) ->
+# tsc(gitnexus) -> copy the shared dist into dist/_shared -> rewrite bare
+# 'gitnexus-shared' specifiers to relative paths -> chmod 755 dist/cli/index.js.
+# Its step 6 (gitnexus-web) self-skips: gitnexus-web/ is not in this stage.
+# A type error in our four patched files now FAILS THE IMAGE. That is the whole
+# point — the end of "compiled in CI, thrown away at build".
+RUN npm run build --prefix gitnexus
+
+
+# -- stage 2 : runtime — upstream image, our dist/ ---------------------------
 FROM ghcr.io/abhigyanpatwari/gitnexus:1.6.9
 
 USER root
@@ -52,24 +145,40 @@ RUN mkdir -p /data/hf-cache && chown -R node:node /data
 # (No effect on Windows Docker Desktop, where the on-disk uid already matches.)
 RUN git config --system --add safe.directory '*'
 
+# FIRST, before any dist/ patcher. See the ORDER note in the header.
+# Only dist/ is taken from the builder: node_modules/, vendor/, hooks/, skills/
+# and the baked FTS extension stay as upstream resolved them. Our patches add
+# zero dependencies — inplace-edits.diff carries no hunk on
+# gitnexus/package.json — so upstream's node_modules is exactly right for this
+# dist. Mode 755 on dist/cli/index.js is preserved by COPY, which keeps the
+# /usr/local/bin/gitnexus symlink usable — wiki-worker.mjs spawns it by name.
+COPY --from=cli-builder --chown=node:node /src/gitnexus/dist /app/gitnexus/dist
+
+# Post-condition for the COPY above: the symlink target must still be
+# executable and the CLI must still boot against upstream's node_modules.
+# Run the boot check as `node` with the runtime HOME, exactly like upstream's
+# install-duckdb-extension step, so nothing root-owned can land in /home/node.
+RUN test -x /app/gitnexus/dist/cli/index.js \
+ && test -L /usr/local/bin/gitnexus \
+ && su node -s /bin/sh -c "HOME=/home/node gitnexus --version"
+
 # Apply the lbug staleness patch. The script is idempotent and verifies the
-# target shape — if a future upstream release changes ensureLbugInitialized
-# the build will fail loudly here rather than silently producing a broken
-# image. Run as root because the target lives under /app (node:node owns it
-# but the COPY above runs as root too).
+# target shape — if a future upstream release changes ensureLbugInitialized the
+# build fails loudly here rather than silently producing a broken image. Run as
+# root because the target lives under /app (node:node owns it, but the COPY
+# above runs as root too).
 COPY --chown=node:node scripts/patch-lbug-staleness.mjs /app/gitnexus/scripts/patch-lbug-staleness.mjs
 RUN node /app/gitnexus/scripts/patch-lbug-staleness.mjs
 
-# Apply the incremental-dump patch (Phase C of incremental-snapshots
-# design, see docs/superpowers/specs/2026-05-26-incremental-snapshots-
-# phase-c-design.md). Adds ~25 lines to run-analyze.js that serialise the
-# in-memory `subgraph` + `hashDiff` to <repoPath>/.gitnexus/_last-
-# incremental-subgraph.json right before LBugDB write-back. Always-on, no
-# env gate — the dump is cheap (~1-3 MB write, ephemeral, gitignored) and
-# gives the /snapshot/incremental endpoint everything it needs without
-# orchestrating env vars between containers. Same self-validation pattern
-# as patch-lbug-staleness.mjs: build fails loudly if the marker line moves
-# in a future upstream bump.
+# Apply the incremental-dump patch (Phase C of incremental-snapshots design,
+# see docs/superpowers/specs/2026-05-26-incremental-snapshots-phase-c-design.md).
+# Adds ~25 lines to run-analyze.js that serialise the in-memory `subgraph` +
+# `hashDiff` to <repoPath>/.gitnexus/_last-incremental-subgraph.json right
+# before LBugDB write-back. Always-on, no env gate — the dump is cheap (~1-3 MB
+# write, ephemeral, gitignored) and gives the /snapshot/incremental endpoint
+# everything it needs without orchestrating env vars between containers. Same
+# self-validation pattern as patch-lbug-staleness.mjs: the build fails loudly
+# if the anchor line moves in a future upstream bump.
 COPY --chown=node:node scripts/patch-incremental-dump.mjs /app/gitnexus/scripts/patch-incremental-dump.mjs
 RUN node /app/gitnexus/scripts/patch-incremental-dump.mjs
 
@@ -77,6 +186,13 @@ RUN node /app/gitnexus/scripts/patch-incremental-dump.mjs
 # spawns the public `gitnexus wiki` CLI on demand. See docs/superpowers/specs/
 # 2026-05-28-code-wiki-web-ui-design.md.
 COPY --chown=node:node wiki-worker.mjs /app/wiki-worker.mjs
+
+# GATE (artifact side) — the post-condition that was missing from the very
+# beginning. It speaks about the IMAGE, not about the repository: every marker
+# is read out of the files this image will actually execute. Last instruction
+# that can fail, so nothing added after it escapes the assertion.
+COPY --chown=node:node scripts/gate-cli-patch-markers.sh /app/gitnexus/scripts/gate-cli-patch-markers.sh
+RUN sh /app/gitnexus/scripts/gate-cli-patch-markers.sh dist /app
 
 USER node
 

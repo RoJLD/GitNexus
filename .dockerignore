@@ -1,0 +1,31 @@
+# Build-context exclusions for the contexts rooted at THIS folder:
+#   Dockerfile.cli    (docker-compose `gitnexus`, docker-compose.test `gitnexus-server-test`,
+#                      gitops/jobs/image-ci kaniko-cli)
+#   Dockerfile.graphs (docker-compose `gitnexus-graphs`)
+#
+# NOT the web image: Dockerfile.web's context is ./upstream, and Docker reads
+# <context>/.dockerignore — upstream/ has its own. This file cannot affect it.
+#
+# Added 2026-08-20 with the multi-stage Dockerfile.cli. The CLI builder now
+# copies from upstream/gitnexus{,-shared}/. On a dev machine those directories
+# carry a host-built node_modules/ and a full-history .git/ (~60 MB) that have
+# no business in a Linux build context. Dockerfile.cli's COPYs are narrow
+# enough that nothing could leak into the image anyway — this is about context
+# size and transfer time, and about never tempting a future `COPY upstream/…`
+# into shipping a Windows-built native module.
+#
+# Nothing Dockerfile.cli or Dockerfile.graphs copies is matched below:
+#   upstream/gitnexus{,-shared}/{package.json,package-lock.json,tsconfig.json,src,scripts}
+#   scripts/*.mjs, scripts/gate-cli-patch-markers.sh, wiki-worker.mjs
+#   graphs-sidecar/** (its node_modules is (re)installed inside the image)
+
+**/.git
+**/node_modules
+**/*.rej
+**/*.orig
+
+# Compiled outputs: the builder produces its own; a stale host build must never
+# reach a layer.
+upstream/gitnexus/dist
+upstream/gitnexus-shared/dist
+upstream/gitnexus-web/dist

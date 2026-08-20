@@ -1,1 +1,8 @@
 patches/*.diff text eol=lf
+
+# Files consumed by Linux containers must never reach them with CRLF.
+# core.autocrlf=true on the Windows dev box would otherwise hand a `#!/bin/sh\r`
+# to busybox (bad interpreter) and a `RUN ... \` + CR to BuildKit.
+*.sh text eol=lf
+Dockerfile* text eol=lf
+.dockerignore text eol=lf

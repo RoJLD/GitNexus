@@ -109,7 +109,9 @@ Fichiers à la racine du repo, qui rendent le setup reproductible sur poste Wind
 
 | Fichier | Rôle |
 |---|---|
-| [Dockerfile.cli](Dockerfile.cli) | Image 9 lignes dérivée d'`upstream:1.6.3` — fixe permissions `/data/hf-cache` + vendor `install-duckdb-extension.mjs` manquant du tarball npm |
+| [Dockerfile.cli](Dockerfile.cli) | **Multi-stage depuis 2026-08-20** : un stage `cli-builder` compile les sources PATCHÉES (`npm run build --prefix gitnexus`), un stage runtime `FROM upstream:1.6.9` reçoit ce `dist/`. Fixe aussi les permissions `/data/hf-cache`, `git safe.directory`, et applique les trois greffes historiques (lbug-staleness, incremental-dump, wiki-worker). |
+| [.dockerignore](.dockerignore) | Exclusions pour les contextes enracinés ici (`Dockerfile.cli`, `Dockerfile.graphs`) — pas le web, dont le contexte est `./upstream` |
+| [scripts/gate-cli-patch-markers.sh](scripts/gate-cli-patch-markers.sh) | **Gate born-dead** — porte la liste des marqueurs de nos patches CLI **une seule fois**, pour trois lecteurs : l'initContainer du Job de build (mode `src`), le stage builder (mode `src`), et la dernière instruction du stage runtime (mode `dist`, sur l'artefact) |
 | [docker-compose.yml](docker-compose.yml) | Services + volumes globalement nommés + bind mount `PROJECTS_ROOT` |
 | [.env.example](.env.example) | Template par-machine |
 | [start.bat](start.bat) / [start.ps1](start.ps1) | Launchers desktop-clickable (CMD pour bypass PS policy). `start.ps1 -Elysium` émet des marqueurs `[ELYSIUM] k/7` + supprime ses `Read-Host` / l'ouverture navigateur (piloté par le splash Elysium ; mode normal inchangé). |
@@ -120,7 +122,23 @@ Fichiers à la racine du repo, qui rendent le setup reproductible sur poste Wind
 | [scripts/install-duckdb-extension.mjs](scripts/install-duckdb-extension.mjs) | Vendoré depuis `gitnexus@a418c47` |
 | [scripts/patch-lbug-staleness.mjs](scripts/patch-lbug-staleness.mjs) | Patch runtime du bug stale-lbug-connection (adaptateur REST) |
 
-**Pourquoi une image dérivée** : `:1.6.3` upstream ship avec 2 bugs connus dans son `Dockerfile.cli` (mkdir `hf-cache` sans `node:node` → EACCES, et oubli de `gitnexus/scripts/` → DuckDB FTS+VECTOR non installés). Notre layer fixe les deux.
+**Pourquoi une image dérivée** : l'amont ship avec des bugs connus dans son `Dockerfile.cli` (mkdir `hf-cache` sans `node:node` → EACCES ; connexions LadybugDB mises en cache par chemin et jamais évincées → `/api/graph` sert des données pré-analyze). Notre layer les fixe.
+
+**Pourquoi MULTI-STAGE depuis le 2026-08-20** — l'image partait de l'image amont **pré-construite**, compilée par l'amont depuis les sources de l'**amont**. Les quatre hunks CLI de `patches/inplace-edits.diff` (`server/middleware.ts`, `server/api.ts`, `core/wiki/prompts.ts`, `core/wiki/generator.ts`) n'atteignaient donc **jamais** l'artefact : `scripts/apply-upstream-patches.mjs` n'est appelé que par `.github/workflows/test.yml`, par aucun build d'image. Mesuré dans `192.168.1.21:5443/elysium/gitnexus-cli:1.6.9-elysium` :
+
+```text
+dist/server/middleware.js:51  export function createLocalhostOriginGuard(boundHost)   <- 1 paramètre
+grep -rl TRUSTED_WRITE_ORIGINS    /app -> 0      (liste blanche d'origines, PR #11)
+grep -rl ANTI_INJECTION_DIRECTIVE /app -> 0      (garde anti-prompt-injection P0-5)
+```
+
+Le paquet **web** n'a jamais eu ce défaut — `Dockerfile.web` compile l'arbre patché. Seul le CLI était asymétrique. Le stage `cli-builder` compile désormais nos `.ts` (tsc pur via `scripts/build.js`), et le stage runtime reste `FROM ghcr.io/abhigyanpatwari/gitnexus:1.6.9` : toutes les dépendances natives (vendor/ tree-sitter, onnxruntime, bindings LadybugDB, extension DuckDB/FTS cuite, `hooks/`, `skills/`, symlink `/usr/local/bin/gitnexus`) restent celles que l'amont a résolues. On n'emprunte que la moitié `tsc` de son builder — pas la chaîne native.
+
+⚠️ **L'ordre est porteur** : `COPY --from=cli-builder … /app/gitnexus/dist` doit précéder les deux `RUN node …patch-*.mjs`. Inversé, la copie efface en silence les deux greffes `dist/` et le build reste vert. Le gate `dist` en dernière instruction est ce qui rend cette erreur fatale.
+
+Effet de bord voulu : `build-gate` (CI) **compile réellement** le paquet CLI. Une erreur de type dans nos quatre `.ts` patchés fait maintenant échouer l'image.
+
+Vérifié depuis l'image `1.6.9-elysium-v2` (pod jetable, pas depuis le dépôt) : `TRUSTED_WRITE_ORIGINS` → 4 fichiers, `ANTI_INJECTION_DIRECTIVE` → 3 fichiers, `createLocalhostOriginGuard(boundHost, trustedWriteOrigins)`, `PATCHED:lbug-staleness-check` ×1, `INCREMENTAL-DUMP` ×2, `wiki-worker.mjs` présent, `gitnexus --version` = 1.6.9.
 
 ### B.2 Time-travel + analytics
 **Implémentation : patches sur upstream** (clone gitignoré, deltas sérialisés dans deux fichiers diff — voir ci-dessous).
