@@ -4,10 +4,10 @@ Two diff files capture every modification we apply to the
 [gitnexus/gitnexus](https://github.com/abhigyanpatwari/gitnexus)
 repository (tag `v1.6.9`) for this deployment:
 
-- **`additive-files.diff`** — <!-- COUNTER:additive-files -->143<!-- /COUNTER --> new
+- **`additive-files.diff`** — <!-- COUNTER:additive-files -->144<!-- /COUNTER --> new
   files we own entirely. These never conflict with upstream changes because
   they are new files, not edits.
-- **`inplace-edits.diff`** — <!-- COUNTER:inplace-files -->26<!-- /COUNTER --> modified
+- **`inplace-edits.diff`** — <!-- COUNTER:inplace-files -->28<!-- /COUNTER --> modified
   upstream files. This is the real conflict surface when bumping upstream.
 
 Both counts are AUTOGEN — regenerate with `node scripts/check-doc-counters.mjs
@@ -38,8 +38,8 @@ manually re-applying the changes — see "Regenerate the diffs" below.
 
 ## What's inside
 
-<!-- COUNTER:additive-files -->143<!-- /COUNTER --> additive files (new files we
-own, in `additive-files.diff`) + <!-- COUNTER:inplace-files -->26<!-- /COUNTER -->
+<!-- COUNTER:additive-files -->144<!-- /COUNTER --> additive files (new files we
+own, in `additive-files.diff`) + <!-- COUNTER:inplace-files -->28<!-- /COUNTER -->
 in-place edits to upstream files (the real conflict surface, in
 `inplace-edits.diff`); zero deletions.
 
@@ -64,6 +64,52 @@ Key highlights:
   upstream components.
 - **`gitnexus-web/package.json`** + **`package-lock.json`** (in-place) —
   new deps for the 3D graph mode and analytics panels.
+- **`gitnexus/src/server/middleware.ts`** + **`gitnexus/src/server/api.ts`**
+  (in-place) — `GITNEXUS_TRUSTED_WRITE_ORIGINS`, see below.
+
+## `GITNEXUS_TRUSTED_WRITE_ORIGINS`
+
+v1.6.9 added `gitnexus/src/server/middleware.ts`: a same-host guard on the six
+**write** routes (`POST /api/analyze`, `POST /api/analyze/upload`,
+`POST /api/embed`, `DELETE /api/repo`, `DELETE /api/analyze/:jobId`,
+`DELETE /api/embed/:jobId`). It admits loopback origins, plus the origin
+matching the server's own **bind address** — `createLocalhostOriginGuard(host)`
+and `app.listen(port, host)` are handed the *same* `host`.
+
+Our CLI container runs `serve --host 0.0.0.0` (`Dockerfile.cli`). A wildcard
+bind has no single host identity, so `normalizeBoundHost()` returns `undefined`
+and writes collapse to loopback-only: a browser on the reverse-proxied hostname
+gets `403 origin_not_allowed` on all six routes. Upstream's own remedy — "bind
+`--host <that-address>`" — cannot apply behind a proxy, where the browser Origin
+is a **hostname** that resolves to the load balancer, not a bindable local
+address (`EADDRNOTAVAIL`).
+
+`GITNEXUS_TRUSTED_WRITE_ORIGINS` decouples *which origins may write* from
+*which address we listen on*, without disarming anything:
+
+```sh
+GITNEXUS_TRUSTED_WRITE_ORIGINS=http://gitnexus.elysium.local,https://gitnexus.elysium.local
+```
+
+- **Unset (the default) ⇒ upstream behaviour, unchanged.** Nothing is added.
+- Comma-separated **full origins** (`scheme://host[:port]`). Matching is
+  whole-origin equality against the WHATWG-canonical form — never a prefix or
+  substring test, so `http://gitnexus.elysium.local.evil.com` is refused by an
+  entry of `http://gitnexus.elysium.local`.
+- Invalid entries (unparseable, non-`http(s)`, carrying credentials / a path /
+  a query / a fragment) are **dropped with a boot warning** — never a crash,
+  and never a degradation to "everything passes".
+- **No wildcard.** `*` is rejected with its own message. A magic allow-all value
+  would turn a CSRF guard into a no-op for the whole LAN, which is exactly what
+  the guard exists to prevent.
+- The boot log names the origins actually loaded and every entry rejected, so an
+  operator can read back what was taken into account.
+
+The rejected alternative was a Traefik middleware stripping the `Origin` header
+on those paths: that re-opens CSRF to every device on the LAN — disarming the
+guard instead of configuring it.
+
+Locked by `gitnexus/test/unit/trusted-write-origins.test.ts` (additive).
 
 ## Regenerate the diffs
 
@@ -105,7 +151,7 @@ for a future bump to `main`). **That report and
 against older bases — do not read them as the current conflict forecast.**
 
 The current base's report is
-[`patches/bump-dry-run-v1.6.9.md`](bump-dry-run-v1.6.9.md): **169 clean /
+[`patches/bump-dry-run-v1.6.9.md`](bump-dry-run-v1.6.9.md): **172 clean /
 0 conflict / 0 fail**, i.e. a fresh `v1.6.9` clone plus the two committed
 diffs reproduces our tree exactly. That zero is the post-bump invariant to
 re-verify before landing any change to `patches/` — a non-zero here means the

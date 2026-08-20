@@ -28774,6 +28774,361 @@ index 00000000..1ba3d672
 +  cache.set(repo, { at: now, promise });
 +  return promise;
 +}
+diff --git a/gitnexus/test/unit/trusted-write-origins.test.ts b/gitnexus/test/unit/trusted-write-origins.test.ts
+new file mode 100644
+index 00000000..e5c54955
+--- /dev/null
++++ b/gitnexus/test/unit/trusted-write-origins.test.ts
+@@ -0,0 +1,349 @@
++/**
++ * GITNEXUS_TRUSTED_WRITE_ORIGINS — opt-in allowlist of browser origins that may
++ * reach the write routes, decoupled from the bind address.
++ *
++ * Context: `createLocalhostOriginGuard(host)` in api.ts derives the admitted
++ * origins from the *same* `host` that is handed to `app.listen`. Behind a
++ * reverse proxy the browser Origin is a hostname that is not a bindable
++ * address, so upstream's own remedy ("bind --host <that-address>") cannot
++ * apply, and a wildcard bind collapses the guard to loopback-only. This suite
++ * locks the allowlist that closes that gap *without* disarming the guard.
++ *
++ * Two kinds of test live here and they have opposite obligations:
++ *
++ *   - NEW BEHAVIOUR (allowlist admits, parser, api.ts wiring) — these MUST go
++ *     red when the patch is removed. That is the proof they lock something.
++ *   - PRESERVED UPSTREAM BEHAVIOUR (refusals, env-absent, no-Origin) — these
++ *     MUST stay green with or without the patch. They are regression locks;
++ *     a red here would mean the patch weakened the guard.
++ *
++ * The refusal tests (prefix attack, malformed entry, wildcard) cannot be proven
++ * by deleting the patch — everything is refused when nothing is allowed. They
++ * are proven by *mutation* instead: a `startsWith` match, a parser that trusts
++ * unparseable input, a parser that honours `*`. See the PR body for the runs.
++ */
++import { describe, expect, it } from 'vitest';
++import { readFileSync } from 'node:fs';
++import path from 'node:path';
++import { fileURLToPath } from 'node:url';
++import express from 'express';
++import type { AddressInfo } from 'node:net';
++import {
++  createLocalhostOriginGuard,
++  parseTrustedWriteOrigins,
++  TRUSTED_WRITE_ORIGINS_ENV,
++} from '../../src/server/middleware.js';
++
++const PROXY_ORIGIN = 'http://gitnexus.elysium.local';
++
++/**
++ * Drive the guard exactly as Express does, and report what happened.
++ * `trustedRaw` is the raw env-var string, so every test exercises the real
++ * parser + the real guard — never a hand-built set that could encode a
++ * different canonicalization than production does.
++ */
++function callGuard(opts: {
++  boundHost?: string;
++  trustedRaw?: string;
++  origin?: string;
++}): { passed: boolean; status: number; body?: { error?: string; code?: string } } {
++  const parsed = parseTrustedWriteOrigins(opts.trustedRaw);
++  const guard = createLocalhostOriginGuard(opts.boundHost, parsed.origins);
++  let passed = false;
++  let status = 0;
++  let body: { error?: string; code?: string } | undefined;
++  const req = { headers: opts.origin === undefined ? {} : { origin: opts.origin } } as never;
++  const res = {
++    status: (c: number) => {
++      status = c;
++      return {
++        json: (b: { error?: string; code?: string }) => {
++          body = b;
++        },
++      };
++    },
++  } as never;
++  guard(req, res, () => {
++    passed = true;
++  });
++  return { passed, status, body };
++}
++
++describe('parseTrustedWriteOrigins', () => {
++  it('defaults to an empty allowlist when the env var is absent or blank', () => {
++    // The whole patch hinges on this: no env var ⇒ nothing added ⇒ upstream guard.
++    expect(parseTrustedWriteOrigins(undefined).origins.size).toBe(0);
++    expect(parseTrustedWriteOrigins('').origins.size).toBe(0);
++    expect(parseTrustedWriteOrigins('   ').origins.size).toBe(0);
++    expect(parseTrustedWriteOrigins(undefined).rejected).toEqual([]);
++  });
++
++  it('canonicalizes entries to WHATWG origins (scheme + host + non-default port)', () => {
++    const { origins, rejected } = parseTrustedWriteOrigins(
++      'http://GitNexus.Elysium.Local, https://other.internal:8443 ,http://10.0.0.5:4747,',
++    );
++    expect(rejected).toEqual([]);
++    expect([...origins].sort()).toEqual([
++      'http://10.0.0.5:4747',
++      'http://gitnexus.elysium.local',
++      'https://other.internal:8443',
++    ]);
++  });
++
++  it('drops the default port so it matches what a browser actually sends', () => {
++    // A browser sending Origin for http://host:80 emits `http://host`.
++    const { origins } = parseTrustedWriteOrigins('http://gitnexus.elysium.local:80');
++    expect([...origins]).toEqual(['http://gitnexus.elysium.local']);
++  });
++
++  it('rejects a malformed entry without crashing and without opening anything', () => {
++    const { origins, rejected } = parseTrustedWriteOrigins('not-a-url, http://ok.internal');
++    // The good entry survives; the bad one is reported, not silently swallowed.
++    expect([...origins]).toEqual(['http://ok.internal']);
++    expect(rejected).toHaveLength(1);
++    expect(rejected[0].entry).toBe('not-a-url');
++    expect(rejected[0].reason).toMatch(/parseable/i);
++  });
++
++  it('never degrades to "allow everything" when every entry is malformed', () => {
++    // The dangerous failure mode: a parser that opens up on bad input.
++    const { origins, rejected } = parseTrustedWriteOrigins('not-a-url, ///, ftp://x, @@@');
++    expect(origins.size).toBe(0);
++    expect(rejected.length).toBeGreaterThan(0);
++  });
++
++  it('refuses a wildcard entry outright, with its own reason', () => {
++    for (const raw of ['*', 'http://*', 'http://*.elysium.local']) {
++      const { origins, rejected } = parseTrustedWriteOrigins(raw);
++      expect(origins.size).toBe(0);
++      expect(rejected).toHaveLength(1);
++      expect(rejected[0].reason).toMatch(/wildcard/i);
++    }
++  });
++
++  it('refuses non-http(s) schemes, credentials, paths, queries and fragments', () => {
++    const cases: Array<[string, RegExp]> = [
++      ['ftp://gitnexus.elysium.local', /scheme/i],
++      ['file:///etc/passwd', /scheme/i],
++      ['http://user:pw@gitnexus.elysium.local', /credential/i],
++      ['http://gitnexus.elysium.local/write', /path/i],
++      ['http://gitnexus.elysium.local/?a=1', /path|query/i],
++      ['http://gitnexus.elysium.local/#f', /path|fragment/i],
++    ];
++    for (const [raw, reason] of cases) {
++      const { origins, rejected } = parseTrustedWriteOrigins(raw);
++      expect(origins.size, `"${raw}" must admit nothing`).toBe(0);
++      expect(rejected[0]?.reason, `"${raw}" reason`).toMatch(reason);
++    }
++  });
++
++  it('never stores the opaque origin "null" (sandboxed iframe / file:// pages send it)', () => {
++    for (const raw of ['null', 'about:blank', 'data:text/html,x']) {
++      expect(parseTrustedWriteOrigins(raw).origins.has('null')).toBe(false);
++    }
++  });
++});
++
++describe('createLocalhostOriginGuard + trusted write origins', () => {
++  it('admits a whitelisted origin behind a wildcard bind (the deployment case)', () => {
++    // HOST=0.0.0.0 ⇒ normalizeBoundHost() is undefined ⇒ upstream = loopback only.
++    const r = callGuard({ boundHost: '0.0.0.0', trustedRaw: PROXY_ORIGIN, origin: PROXY_ORIGIN });
++    expect(r.passed).toBe(true);
++    expect(r.status).toBe(0);
++  });
++
++  it('admits every origin of a multi-entry list', () => {
++    const raw = `${PROXY_ORIGIN},https://gitnexus.elysium.local`;
++    expect(callGuard({ boundHost: '0.0.0.0', trustedRaw: raw, origin: PROXY_ORIGIN }).passed).toBe(
++      true,
++    );
++    expect(
++      callGuard({ boundHost: '0.0.0.0', trustedRaw: raw, origin: 'https://gitnexus.elysium.local' })
++        .passed,
++    ).toBe(true);
++  });
++
++  it('still refuses an origin that is not on the list (403 origin_not_allowed)', () => {
++    const r = callGuard({
++      boundHost: '0.0.0.0',
++      trustedRaw: PROXY_ORIGIN,
++      origin: 'http://attacker.internal',
++    });
++    expect(r.passed).toBe(false);
++    expect(r.status).toBe(403);
++    expect(r.body?.code).toBe('origin_not_allowed');
++  });
++
++  it('REFUSES a prefix-extension of a whitelisted origin (the substring-match trap)', () => {
++    // `http://gitnexus.elysium.local.evil.com`.startsWith('http://gitnexus.elysium.local')
++    // is TRUE. An implementation using startsWith/includes admits the attacker's
++    // domain. Whole-origin equality must refuse it.
++    for (const hostile of [
++      'http://gitnexus.elysium.local.evil.com',
++      'http://gitnexus.elysium.local.attaquant.com',
++      'http://gitnexus.elysium.locality',
++      'http://gitnexus.elysium.local@evil.com',
++      'http://evil.com/http://gitnexus.elysium.local',
++    ]) {
++      const r = callGuard({ boundHost: '0.0.0.0', trustedRaw: PROXY_ORIGIN, origin: hostile });
++      expect(r.passed, `${hostile} must be refused`).toBe(false);
++      expect(r.status, `${hostile} status`).toBe(403);
++    }
++  });
++
++  it('REFUSES a suffix/scheme/port variation of a whitelisted origin', () => {
++    const r = (origin: string) =>
++      callGuard({ boundHost: '0.0.0.0', trustedRaw: PROXY_ORIGIN, origin });
++    // different scheme
++    expect(r('https://gitnexus.elysium.local').passed).toBe(false);
++    // different port
++    expect(r('http://gitnexus.elysium.local:8080').passed).toBe(false);
++    // subdomain of the whitelisted host
++    expect(r('http://evil.gitnexus.elysium.local').passed).toBe(false);
++  });
++
++  it('a malformed list entry admits nothing (fail-closed, no crash)', () => {
++    const r = callGuard({
++      boundHost: '0.0.0.0',
++      trustedRaw: 'not-a-url',
++      origin: PROXY_ORIGIN,
++    });
++    expect(r.passed).toBe(false);
++    expect(r.status).toBe(403);
++  });
++
++  it('a wildcard entry admits nothing — there is no magic allow-all value', () => {
++    for (const raw of ['*', 'http://*']) {
++      const r = callGuard({ boundHost: '0.0.0.0', trustedRaw: raw, origin: PROXY_ORIGIN });
++      expect(r.passed, `raw=${raw}`).toBe(false);
++      expect(r.status, `raw=${raw}`).toBe(403);
++    }
++  });
++
++  // ---- preserved upstream behaviour (must be green with AND without the patch) ----
++
++  it('env absent ⇒ byte-for-byte upstream behaviour: loopback only', () => {
++    const upstream = (origin?: string) => callGuard({ boundHost: '0.0.0.0', origin });
++    expect(upstream('http://localhost:5173').passed).toBe(true);
++    expect(upstream('http://127.0.0.1:4747').passed).toBe(true);
++    expect(upstream('http://[::1]:4747').passed).toBe(true);
++    expect(upstream(PROXY_ORIGIN).passed).toBe(false);
++    expect(upstream('http://192.168.1.5:4747').passed).toBe(false);
++    expect(upstream('https://gitnexus.vercel.app').passed).toBe(false);
++  });
++
++  it('keeps admitting loopback when an allowlist IS configured', () => {
++    const withList = (origin: string) =>
++      callGuard({ boundHost: '0.0.0.0', trustedRaw: PROXY_ORIGIN, origin });
++    expect(withList('http://localhost:5173').passed).toBe(true);
++    expect(withList('http://127.0.0.1:4747').passed).toBe(true);
++    expect(withList('http://[::1]:4747').passed).toBe(true);
++  });
++
++  it('keeps admitting the bound host when an allowlist IS configured', () => {
++    const r = callGuard({
++      boundHost: '192.168.1.100',
++      trustedRaw: PROXY_ORIGIN,
++      origin: 'http://192.168.1.100:4747',
++    });
++    expect(r.passed).toBe(true);
++  });
++
++  it('requests with no Origin header (curl / CLI / cron) still pass, list or no list', () => {
++    expect(callGuard({ boundHost: '0.0.0.0', origin: undefined }).passed).toBe(true);
++    expect(
++      callGuard({ boundHost: '0.0.0.0', trustedRaw: PROXY_ORIGIN, origin: undefined }).passed,
++    ).toBe(true);
++  });
++});
++
++/**
++ * End-to-end through a real Express 5 app: the unit calls above drive the guard
++ * with a hand-made req/res pair, which cannot catch a mistake in how Express
++ * itself surfaces the Origin header or writes the 403 body.
++ */
++describe('trusted write origins through a real Express app', () => {
++  async function withServer(
++    trustedRaw: string | undefined,
++    fn: (base: string) => Promise<void>,
++  ): Promise<void> {
++    const app = express();
++    const guard = createLocalhostOriginGuard('0.0.0.0', parseTrustedWriteOrigins(trustedRaw).origins);
++    app.post('/api/analyze', guard, (_req, res) => {
++      res.status(202).json({ ok: true });
++    });
++    const server = app.listen(0, '127.0.0.1');
++    await new Promise<void>((resolve) => server.once('listening', resolve));
++    const { port } = server.address() as AddressInfo;
++    try {
++      await fn(`http://127.0.0.1:${port}`);
++    } finally {
++      await new Promise<void>((resolve) => server.close(() => resolve()));
++    }
++  }
++
++  it('POST /api/analyze succeeds from a whitelisted origin and 403s from a lookalike', async () => {
++    await withServer(PROXY_ORIGIN, async (base) => {
++      const ok = await fetch(`${base}/api/analyze`, {
++        method: 'POST',
++        headers: { origin: PROXY_ORIGIN },
++      });
++      expect(ok.status).toBe(202);
++
++      const hostile = await fetch(`${base}/api/analyze`, {
++        method: 'POST',
++        headers: { origin: 'http://gitnexus.elysium.local.evil.com' },
++      });
++      expect(hostile.status).toBe(403);
++      const body = (await hostile.json()) as { code?: string };
++      expect(body.code).toBe('origin_not_allowed');
++    });
++  });
++
++  it('POST /api/analyze 403s from that same origin when no allowlist is configured', async () => {
++    await withServer(undefined, async (base) => {
++      const res = await fetch(`${base}/api/analyze`, {
++        method: 'POST',
++        headers: { origin: PROXY_ORIGIN },
++      });
++      expect(res.status).toBe(403);
++    });
++  });
++});
++
++/**
++ * Σ-A-GUARD-VERIFIED-BY-TESTS-IS-NOT-THE-GUARD-THAT-RUNS.
++ *
++ * Everything above proves the allowlist *works*. None of it proves the server
++ * *uses* it: a parser exported and never wired is inert, and that failure mode
++ * has bitten this repo before. api.ts cannot be imported here (it pulls the
++ * native LadybugDB stack), so we assert against its source text — the same text
++ * the container executes.
++ */
++describe('api.ts actually wires the allowlist into the guard', () => {
++  const apiSource = readFileSync(
++    path.join(path.dirname(fileURLToPath(import.meta.url)), '../../src/server/api.ts'),
++    'utf8',
++  );
++
++  it('reads the env var through the shared constant and feeds the parser', () => {
++    expect(apiSource).toContain('parseTrustedWriteOrigins(process.env[TRUSTED_WRITE_ORIGINS_ENV])');
++  });
++
++  it('passes the parsed origins to createLocalhostOriginGuard alongside the bind host', () => {
++    expect(apiSource).toMatch(
++      /createLocalhostOriginGuard\(\s*host\s*,\s*trustedWriteOrigins\.origins\s*\)/,
++    );
++  });
++
++  it('logs the loaded allowlist and every rejected entry at boot', () => {
++    // An operator must be able to read back what was taken into account.
++    expect(apiSource).toMatch(/logger\.info\([\s\S]{0,400}trustedWriteOrigins/);
++    expect(apiSource).toMatch(/for \(const \{ entry, reason \} of trustedWriteOrigins\.rejected\)/);
++  });
++
++  it('names the env var exactly GITNEXUS_TRUSTED_WRITE_ORIGINS', () => {
++    // The deployment manifest and the docs key off this literal.
++    expect(TRUSTED_WRITE_ORIGINS_ENV).toBe('GITNEXUS_TRUSTED_WRITE_ORIGINS');
++  });
++});
 diff --git a/gitnexus/test/unit/wiki-prompt-injection-guard.test.ts b/gitnexus/test/unit/wiki-prompt-injection-guard.test.ts
 new file mode 100644
 index 00000000..0aeb9190

@@ -1,6 +1,6 @@
 # Bump dry-run report — cible `v1.6.9`
 
-- clean: 169
+- clean: 172
 - conflict: 0
 - fail: 0
 
@@ -149,6 +149,7 @@
 - [clean] (additive) gitnexus-web/src/services/research-client.ts
 - [clean] (additive) gitnexus-web/src/services/semantic-labeler.ts
 - [clean] (additive) gitnexus-web/src/services/snapshot-ghosts-cache.ts
+- [clean] (additive) gitnexus/test/unit/trusted-write-origins.test.ts
 - [clean] (additive) gitnexus/test/unit/wiki-prompt-injection-guard.test.ts
 - [clean] (inplace) Dockerfile.web
 - [clean] (inplace) docker-server.mjs
@@ -176,3 +177,5 @@
 - [clean] (inplace) gitnexus-web/vite.config.ts
 - [clean] (inplace) gitnexus/src/core/wiki/generator.ts
 - [clean] (inplace) gitnexus/src/core/wiki/prompts.ts
+- [clean] (inplace) gitnexus/src/server/api.ts
+- [clean] (inplace) gitnexus/src/server/middleware.ts

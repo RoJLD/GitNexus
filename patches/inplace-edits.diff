@@ -9521,3 +9521,223 @@ index 0a6902b7..968aaf5e 100644
  /**
   * Shorten a file path for readability.
   */
+diff --git a/gitnexus/src/server/api.ts b/gitnexus/src/server/api.ts
+index 383bed5a..2499ecdc 100644
+--- a/gitnexus/src/server/api.ts
++++ b/gitnexus/src/server/api.ts
+@@ -41,7 +41,12 @@ import {
+   GITHUB_TOKEN_HOSTS,
+ } from './git-clone.js';
+ import { createAnalyzeUploadHandler } from './analyze-upload.js';
+-import { createLocalhostOriginGuard, normalizeBoundHost } from './middleware.js';
++import {
++  createLocalhostOriginGuard,
++  normalizeBoundHost,
++  parseTrustedWriteOrigins,
++  TRUSTED_WRITE_ORIGINS_ENV,
++} from './middleware.js';
+ import { createLaunchAnalysisWorker } from './analyze-launch.js';
+ import { UPLOAD_ROOT } from './upload-paths.js';
+ import { sweepStaleUploads } from './upload-sweep.js';
+@@ -766,19 +771,45 @@ export const createServer = async (port: number, host: string = '127.0.0.1') =>
+   );
+   app.use(express.json({ limit: '10mb' }));
+ 
+-  // Same-host origin guard for write routes. Only allows loopback and the
+-  // server's own bound host — scoped to prevent CSRF from other LAN devices.
+-  const requireLocalhostOrigin = createLocalhostOriginGuard(host);
++  // Same-host origin guard for write routes. Only allows loopback, the
++  // server's own bound host, and any origin explicitly opted into via
++  // GITNEXUS_TRUSTED_WRITE_ORIGINS — scoped to prevent CSRF from other LAN devices.
++  const trustedWriteOrigins = parseTrustedWriteOrigins(process.env[TRUSTED_WRITE_ORIGINS_ENV]);
++  const requireLocalhostOrigin = createLocalhostOriginGuard(host, trustedWriteOrigins.origins);
++
++  // A guard must be able to prove what it measured: log the allowlist as
++  // actually parsed, and every entry that was dropped. A silently shrunk
++  // allowlist is indistinguishable from one that was never configured.
++  for (const { entry, reason } of trustedWriteOrigins.rejected) {
++    logger.warn(
++      { entry, reason, env: TRUSTED_WRITE_ORIGINS_ENV },
++      `[gitnexus serve] Ignoring invalid ${TRUSTED_WRITE_ORIGINS_ENV} entry "${entry}": ` +
++        `${reason}. Write routes stay closed to it.`,
++    );
++  }
++  if (trustedWriteOrigins.origins.size > 0) {
++    const loaded = [...trustedWriteOrigins.origins];
++    logger.info(
++      { trustedWriteOrigins: loaded, env: TRUSTED_WRITE_ORIGINS_ENV },
++      `[gitnexus serve] Browser write routes additionally accept ${loaded.length} trusted ` +
++        `origin(s): ${loaded.join(', ')}`,
++    );
++  }
+ 
+   // A wildcard bind (`0.0.0.0`/`::`) has no single host identity for the
+   // same-host check, so browser write routes accept only loopback origins.
+   // Warn the operator so a remote-access deployment isn't silently write-blocked.
+-  if (host && normalizeBoundHost(host) === undefined) {
++  // Suppressed once an explicit allowlist is configured: writes do work then,
++  // and repeating "loopback only" would be a false statement in the log.
++  if (host && normalizeBoundHost(host) === undefined && trustedWriteOrigins.origins.size === 0) {
+     logger.warn(
+       { host },
+       `[gitnexus serve] Bound to a wildcard address (${host}); browser write routes ` +
+         `accept only loopback origins (localhost/127.0.0.1/[::1]). To allow writes from a ` +
+-        `specific LAN address, bind --host <that-address> instead of a wildcard.`,
++        `specific LAN address, bind --host <that-address> instead of a wildcard. When the ` +
++        `browser reaches this server through a reverse proxy (so the Origin is a hostname ` +
++        `that is not a bindable address), set ${TRUSTED_WRITE_ORIGINS_ENV} to that origin ` +
++        `instead, e.g. ${TRUSTED_WRITE_ORIGINS_ENV}=https://gitnexus.example.internal`,
+     );
+   }
+ 
+diff --git a/gitnexus/src/server/middleware.ts b/gitnexus/src/server/middleware.ts
+index 286d0b33..ad533144 100644
+--- a/gitnexus/src/server/middleware.ts
++++ b/gitnexus/src/server/middleware.ts
+@@ -39,10 +39,113 @@ export function normalizeBoundHost(boundHost?: string): string | undefined {
+   return hostname;
+ }
+ 
++/**
++ * Name of the env var that carries the opt-in trusted write origins.
++ * Exported so the boot log, the docs and the tests all name the same string
++ * instead of three copies that can drift apart.
++ */
++export const TRUSTED_WRITE_ORIGINS_ENV = 'GITNEXUS_TRUSTED_WRITE_ORIGINS';
++
++/** Outcome of parsing {@link TRUSTED_WRITE_ORIGINS_ENV}. */
++export interface TrustedWriteOrigins {
++  /**
++   * Canonical WHATWG `URL.origin` strings (scheme + host + non-default port)
++   * admitted for write routes, in addition to loopback and the bound host.
++   */
++  origins: ReadonlySet<string>;
++  /**
++   * Entries that were dropped, with the reason. The caller logs these at boot
++   * so a typo is visible rather than silently reducing the allowlist.
++   */
++  rejected: ReadonlyArray<{ entry: string; reason: string }>;
++}
++
++/**
++ * Parse the opt-in trusted-write-origin allowlist.
++ *
++ * WHY THIS EXISTS: `createLocalhostOriginGuard` derives the admitted browser
++ * origins from the *bind address*, so the two are coupled. Behind a reverse
++ * proxy the browser Origin is a hostname (`http://gitnexus.example.internal`)
++ * that is not a bindable address — binding to it would fail with
++ * EADDRNOTAVAIL, and binding to a wildcard makes `normalizeBoundHost` return
++ * `undefined` (loopback-only writes). This allowlist decouples "which origins
++ * may write" from "which address we listen on", without widening either.
++ *
++ * DEFAULT IS EMPTY. With the env var unset the guard behaves exactly as it
++ * does upstream — no origin is added, nothing is relaxed.
++ *
++ * Rules, all fail-closed (a rejected entry admits nothing):
++ *   - entries are comma-separated; surrounding whitespace and empty slots
++ *     (trailing comma) are ignored
++ *   - each entry must be a full absolute origin: `http://host[:port]`
++ *   - only `http:` and `https:` — matching the schemes the guard itself accepts
++ *   - no credentials, path, query or fragment: an origin has none of those, and
++ *     accepting `http://host/path` would silently trust *all* of `http://host`
++ *   - NO WILDCARD. `*` is rejected with its own message rather than parsed.
++ *     A magic "allow everything" value would turn a CSRF guard into a no-op for
++ *     the whole LAN, which is precisely the failure mode this guard exists to
++ *     prevent; an operator who wants that can already remove the guard upstream.
++ *
++ * Matching is on the whole canonicalized origin via `Set.has` — never a prefix
++ * or substring test. `http://example.com.evil.tld` shares a prefix with
++ * `http://example.com` and must not be admitted by it.
++ */
++export function parseTrustedWriteOrigins(raw?: string): TrustedWriteOrigins {
++  const origins = new Set<string>();
++  const rejected: Array<{ entry: string; reason: string }> = [];
++  if (!raw) return { origins, rejected };
++
++  for (const piece of raw.split(',')) {
++    const entry = piece.trim();
++    // Padding / trailing comma — not a typo worth warning about.
++    if (entry === '') continue;
++
++    if (entry.includes('*')) {
++      rejected.push({
++        entry,
++        reason: 'wildcards are not supported — list each trusted origin explicitly',
++      });
++      continue;
++    }
++
++    let url: URL;
++    try {
++      url = new URL(entry);
++    } catch {
++      rejected.push({ entry, reason: 'not a parseable absolute origin (expected http://host[:port])' });
++      continue;
++    }
++
++    if (url.protocol !== 'http:' && url.protocol !== 'https:') {
++      rejected.push({ entry, reason: `unsupported scheme "${url.protocol}" (expected http: or https:)` });
++      continue;
++    }
++    if (url.username !== '' || url.password !== '') {
++      rejected.push({ entry, reason: 'an origin carries no credentials' });
++      continue;
++    }
++    if (url.pathname !== '/' || url.search !== '' || url.hash !== '') {
++      rejected.push({ entry, reason: 'an origin carries no path, query or fragment' });
++      continue;
++    }
++    // Defence in depth: a non-special scheme yields the opaque origin "null",
++    // which is also what a sandboxed iframe / file:// page sends. Never store it.
++    if (url.origin === 'null' || url.origin === '') {
++      rejected.push({ entry, reason: 'resolves to an opaque origin' });
++      continue;
++    }
++
++    origins.add(url.origin);
++  }
++
++  return { origins, rejected };
++}
++
+ /**
+  * Restrict a route to same-host browser origins. Allows:
+  *   - loopback (`localhost`, `127.0.0.1`, `[::1]`)
+  *   - the server's own bound host (when non-loopback, e.g. a LAN IP)
++ *   - any origin explicitly named in `trustedWriteOrigins` (opt-in, empty by default)
+  *
+  * Non-browser requests (no Origin header, e.g. curl / the CLI) pass through.
+  * This closes cross-origin reach to write routes without affecting read routes.
+@@ -50,8 +153,16 @@ export function normalizeBoundHost(boundHost?: string): string | undefined {
+  * @param boundHost - The hostname/IP the server is listening on (from
+  *   `createServer`'s `host` parameter). When `undefined`, `'localhost'`, or a
+  *   wildcard (`0.0.0.0`/`::`), only loopback origins are admitted.
++ * @param trustedWriteOrigins - Canonical origins from
++ *   {@link parseTrustedWriteOrigins}. Omitted / empty ⇒ upstream behaviour,
++ *   unchanged. Typed as a `ReadonlySet` on purpose: passing a raw array of
++ *   un-canonicalized strings would silently never match, so the type system
++ *   forces callers through the parser.
+  */
+-export function createLocalhostOriginGuard(boundHost?: string) {
++export function createLocalhostOriginGuard(
++  boundHost?: string,
++  trustedWriteOrigins?: ReadonlySet<string>,
++) {
+   const normalizedBoundHost = normalizeBoundHost(boundHost);
+   return function requireLocalhostOrigin(req: Request, res: Response, next: () => void): void {
+     const origin = req.headers.origin;
+@@ -78,6 +189,14 @@ export function createLocalhostOriginGuard(boundHost?: string) {
+         next();
+         return;
+       }
++      // Opt-in allowlist: whole-origin equality against the canonical form the
++      // parser stored (scheme + host + non-default port). `Set.has` is an exact
++      // match — a prefix like `http://example.com.evil.tld` cannot satisfy an
++      // entry of `http://example.com`. Empty by default ⇒ no effect.
++      if (trustedWriteOrigins?.has(parsed.origin)) {
++        next();
++        return;
++      }
+     } catch {
+       /* malformed origin → reject */
+     }
