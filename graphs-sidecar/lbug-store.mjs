@@ -32,15 +32,32 @@ function assertNotLegacy(name) {
   }
 }
 
-async function withConn(name, fn) {
-  const db = new lbug.Database(dbPath(name));
-  const conn = new lbug.Connection(db);
-  try {
-    return await fn(conn);
-  } finally {
-    try { await conn.close(); } catch { /* */ }
-    try { await db.close(); } catch { /* */ }
-  }
+/**
+ * Every call opens the graph's DB file, and a second open of the same file cannot take
+ * its lock ("Could not set lock on file"), so operations on one graph run one at a time:
+ * each waits for the previous one to settle. Different graphs still run in parallel.
+ */
+const tails = new Map();
+function exclusive(name, fn) {
+  const run = (tails.get(name) || Promise.resolve()).then(fn);
+  const tail = run.then(() => {}, () => {});
+  tails.set(name, tail);
+  tail.then(() => { if (tails.get(name) === tail) tails.delete(name); });
+  return run;
+}
+
+function withConn(name, fn) {
+  const path = dbPath(name);
+  return exclusive(name, async () => {
+    const db = new lbug.Database(path);
+    const conn = new lbug.Connection(db);
+    try {
+      return await fn(conn);
+    } finally {
+      try { await conn.close(); } catch { /* */ }
+      try { await db.close(); } catch { /* */ }
+    }
+  });
 }
 
 /**

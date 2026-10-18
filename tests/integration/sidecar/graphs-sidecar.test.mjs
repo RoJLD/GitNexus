@@ -148,6 +148,16 @@ describe('graphs sidecar', () => {
     expect((await (await fetch(`${BASE}/g`)).json()).graphs).toContain('legacy');
   });
 
+  // Each request opens the graph's DB file; two at once used to collide on its lock.
+  it('serves concurrent requests on one graph', async () => {
+    const rs = await Promise.all([
+      ...Array.from({ length: 5 }, () => fetch(`${BASE}/g/t1/render`)),
+      fetch(`${BASE}/g/t1/ingest`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ nodes: [{ table: 'Artifact', props: { id: 'c1', type: 't', label: 'C1', path: '', stage: '' } }], edges: [] }) }),
+    ]);
+    expect(rs.map((r) => r.status)).toEqual([200, 200, 200, 200, 200, 200]);
+  });
+
   it('errors return JSON 500, server stays up', async () => {
     const r = await fetch(`${BASE}/g/t1/cypher`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ query: 'NOT VALID CYPHER' }) });
     expect(r.status).toBe(500);

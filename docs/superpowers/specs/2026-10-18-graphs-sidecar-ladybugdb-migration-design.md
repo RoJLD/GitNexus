@@ -68,6 +68,17 @@ byte-identical on the payloads above). Additions: `409 {error}` for a graph stil
 Kùzu format; `GET /g` names come from `.lbug` files. The web container (`graphsFetch`) and
 Quant-lab (`push`) only test `res.ok`.
 
+### 3.1 Concurrent requests on one graph
+
+Each call opens the graph's DB file, and a second open of the same file cannot take its
+lock: two requests on one graph at once failed with "Could not set lock on file" on both
+engines (on Kùzu the unawaited close could then crash the process). The web container can
+issue such pairs: `/graph/research/:name` and `/graph/metrics/:name` both render the graph.
+`lbug-store.mjs` now chains the operations of each graph (`exclusive(name, fn)`: each one
+starts when the previous one has settled, failure included); different graphs still run in
+parallel. Measured: 5 parallel renders + an ingest on one graph went from `[200, 500×5]` to
+all 200; 45 mixed operations over two graphs, none rejected.
+
 ## 4. Deploying (not done here — needs Robin's go-ahead)
 
 1. Rebuild and restart only the sidecar: `docker compose build gitnexus-graphs` then
@@ -89,8 +100,9 @@ Quant-lab (`push`) only test `res.ok`.
 - `tests/unit/sidecar-*.test.mjs` (render-map + ingest-cypher, kuzu-free): 13/13.
 - `tests/integration/sidecar/graphs-sidecar.test.mjs` with a new legacy case (plants
   `legacy.kuzu` via `docker exec`, expects 409, `create` → 201, empty render, listed in
-  `GET /g`): run on the host against `node server.mjs` on LadybugDB, with the Docker
-  `beforeAll` stripped and the plant done by a file write: **6/6**.
+  `GET /g`) and a concurrency case (§3.1): run on the host against `node server.mjs` on
+  LadybugDB, with the Docker `beforeAll` stripped and the plant done by a file write:
+  **7/7** (the concurrency case fails without §3.1).
 - Quant-lab's own `export-gitnexus --push` (typed and single) against that server:
   722 nodes / 583 edges ingested and rendered (the graph had grown since §2's export).
 - Not verified: the Docker image build (Docker was not running; the glibc check above is
@@ -99,11 +111,6 @@ Quant-lab (`push`) only test `res.ok`.
 
 ## 6. Out of scope / follow-ups
 
-- **Concurrent requests on one graph** still fail on both engines ("Could not set lock on
-  file"): each call opens the DB file, and a second open of the same file cannot take its
-  lock. On Kùzu this could crash the sidecar (unawaited close, §3); on LadybugDB the request
-  gets a 500 and the process stays up. A per-graph serialization in the store removes it —
-  see the follow-up commit on this branch, if present, or the backlog.
 - Following upstream's version: when the fork bumps upstream to a release on a newer
   `@ladybugdb/core`, align the sidecar pin in the same pass (separate DB files, so no
   storage coupling forces it).
