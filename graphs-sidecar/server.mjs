@@ -3,10 +3,13 @@
  * Internal-only (compose network); the gitnexus-web container proxies to it.
  *   POST /g/:name/create   {ddl:[...]}            -> {name, created}
  *   POST /g/:name/ingest   {nodes:[...], edges:[...]} -> {nodes, edges}
+ *        node {table, props}; edge {table, from, to, props, from_table?, to_table?}
+ *        (endpoint tables required once a REL table spans several FROM/TO pairs)
  *   POST /g/:name/cypher   {query, params?}       -> {rows}
  *   GET  /g/:name/render                          -> {nodes, edges}
  *   GET  /g                                        -> {graphs:[name,...]}
  *   GET  /health                                   -> {ok:true}
+ * Errors: {error} with 400 for an invalid graph/table name, 500 otherwise.
  */
 import { createServer } from 'node:http';
 import { mkdir, readdir } from 'node:fs/promises';
@@ -51,7 +54,7 @@ const server = createServer(async (req, res) => {
     }
     send(res, 404, { error: 'not found' });
   } catch (e) {
-    send(res, 500, { error: String((e && e.message) || e) });
+    send(res, e?.status === 400 ? 400 : 500, { error: String((e && e.message) || e) });
   }
 });
 

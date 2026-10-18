@@ -6,13 +6,13 @@
 import kuzuPkg from 'kuzu';
 import { join } from 'node:path';
 import { mapRenderRows } from './render-map.mjs';
+import { safeName, nodeMergeQuery, edgeMergeQuery } from './ingest-cypher.mjs';
 
 const kuzu = kuzuPkg.default || kuzuPkg;
 export const GRAPHS_DIR = process.env.GRAPHS_DIR || '/data/gitnexus/graphs';
 
 function dbPath(name) {
-  if (!/^[A-Za-z0-9._-]+$/.test(name)) throw new Error(`invalid graph name: ${name}`);
-  return join(GRAPHS_DIR, `${name}.kuzu`);
+  return join(GRAPHS_DIR, `${safeName(name, 'graph name')}.kuzu`);
 }
 
 function withConn(name, fn) {
@@ -51,25 +51,17 @@ export async function createGraph(name, ddl) {
   return { name, created: true };
 }
 
-/** Ingest nodes + edges. Nodes: [{table, props}]; edges: [{table, from, to, props}]. */
+/**
+ * Ingest nodes + edges. Nodes: [{table, props}]; edges: [{table, from, to, props,
+ * from_table?, to_table?}] — the endpoint tables are needed once a graph has several
+ * node tables (see edgeMergeQuery). Every query is built before the DB is opened, so an
+ * invalid table name rejects the whole payload (400) without a partial write.
+ */
 export async function ingest(name, nodes, edges) {
+  const queries = [...(nodes || []).map(nodeMergeQuery), ...(edges || []).map(edgeMergeQuery)];
   await withConn(name, async (conn) => {
-    for (const n of nodes || []) {
-      const keys = Object.keys(n.props).filter((k) => k !== 'id');
-      const setClause = keys.length ? ` SET ${keys.map((k) => `x.${k} = $${k}`).join(', ')}` : '';
-      const r = await run(conn, `MERGE (x:${n.table} {id: $id})${setClause}`, n.props);
-      r.close?.();
-    }
-    const RESERVED = new Set(['id', 'from', 'to']);
-    for (const e of edges || []) {
-      const props = { ...(e.props || {}), id: e.props?.id ?? `${e.from}->${e.to}` };
-      const keys = Object.keys(props).filter((k) => !RESERVED.has(k));
-      const setClause = keys.length ? ` SET ${keys.map((k) => `r.${k} = $${k}`).join(', ')}` : '';
-      const r = await run(
-        conn,
-        `MATCH (a {id: $from}), (b {id: $to}) MERGE (a)-[r:${e.table} {id: $id}]->(b)${setClause}`,
-        { from: e.from, to: e.to, ...props },
-      );
+    for (const { query, params } of queries) {
+      const r = await run(conn, query, params);
       r.close?.();
     }
   });
