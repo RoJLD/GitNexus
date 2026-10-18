@@ -29,6 +29,9 @@ beforeAll(async () => {
 }, 240000);
 afterAll(() => { try { execSync('docker rm -f gnx-graphs-test', { stdio: 'ignore' }); } catch { /* already gone */ } });
 
+// Plant an (empty) pre-migration <name>.kuzu file in the container's GRAPHS_DIR.
+const touchLegacyGraph = (name) => execSync(`docker exec gnx-graphs-test touch /tmp/graphs/${name}.kuzu`);
+
 describe('graphs sidecar', () => {
   it('create -> ingest -> render round-trips a graph', async () => {
     await fetch(`${BASE}/g/t1/create`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -79,9 +82,9 @@ describe('graphs sidecar', () => {
   });
 
   // Quant-lab's `export-gitnexus --mode typed` shape: a node table per type, edges
-  // carrying from_table/to_table. The unlabeled endpoint match is a Kùzu binder error
-  // once a REL table spans several FROM/TO pairs (relies_on below); the labeled one
-  // also tells apart two nodes that share an id across tables.
+  // carrying from_table/to_table. The unlabeled endpoint match is a binder error (Kùzu
+  // and LadybugDB alike) once a REL table spans several FROM/TO pairs (relies_on below);
+  // the labeled one also tells apart two nodes that share an id across tables.
   it('ingests a typed graph whose edges carry from_table/to_table', async () => {
     await fetch(`${BASE}/g/typed/create`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ ddl: [
@@ -125,6 +128,24 @@ describe('graphs sidecar', () => {
     expect(r.status).toBe(400);
     expect((await r.json()).error).toMatch(/invalid to_table/);
     expect(await count()).toBe(before);
+  });
+
+  // A graph built before the LadybugDB migration is a <name>.kuzu file the new engine
+  // cannot open. Reads refuse it with 409 (rather than silently opening an empty
+  // <name>.lbug); create rebuilds it, and GET /g lists only LadybugDB graphs.
+  it('refuses a graph left in the Kùzu format with 409 until it is re-created', async () => {
+    touchLegacyGraph('legacy');
+    const r = await fetch(`${BASE}/g/legacy/render`);
+    expect(r.status).toBe(409);
+    expect((await r.json()).error).toMatch(/re-create and re-import/);
+    expect((await (await fetch(`${BASE}/g`)).json()).graphs).not.toContain('legacy');
+    const c = await fetch(`${BASE}/g/legacy/create`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ddl: ['CREATE NODE TABLE Artifact(id STRING, PRIMARY KEY(id))'] }) });
+    expect(c.status).toBe(201);
+    const g = await fetch(`${BASE}/g/legacy/render`);
+    expect(g.status).toBe(200);
+    expect(await g.json()).toEqual({ nodes: [], edges: [] });
+    expect((await (await fetch(`${BASE}/g`)).json()).graphs).toContain('legacy');
   });
 
   it('errors return JSON 500, server stays up', async () => {

@@ -1,4 +1,4 @@
-# Graphs sidecar — Node 22 + Kùzu. Our own image (no upstream coupling).
+# Graphs sidecar — Node 22 + LadybugDB (@ladybugdb/core). Our own image (no upstream coupling).
 FROM node:22-bookworm-slim
 WORKDIR /app
 COPY graphs-sidecar/package.json graphs-sidecar/package-lock.json ./

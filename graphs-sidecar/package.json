@@ -3,6 +3,6 @@
   "private": true,
   "type": "module",
   "dependencies": {
-    "kuzu": "0.11.3"
+    "@ladybugdb/core": "0.21.2"
   }
 }

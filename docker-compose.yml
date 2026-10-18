@@ -83,7 +83,7 @@ services:
     image: gitnexus-web-derived:1.6.9-patched
     container_name: gitnexus-web
     environment:
-      # Graph-templates routes proxy to the Kùzu sidecar (compose DNS name).
+      # Graph-templates routes proxy to the LadybugDB sidecar (compose DNS name).
       GRAPHS_URL: http://gitnexus-graphs:4749
     ports:
       - "4173:4173"
@@ -104,8 +104,8 @@ services:
       - gitnexus-data:/data/gitnexus
     restart: unless-stopped
 
-  # Graph-templates Kùzu sidecar (our image, no upstream coupling). Owns
-  # /data/gitnexus/graphs/<name>.kuzu. Internal-only; the web container proxies.
+  # Graph-templates LadybugDB sidecar (our image, no upstream coupling). Owns
+  # /data/gitnexus/graphs/<name>.lbug. Internal-only; the web container proxies.
   gitnexus-graphs:
     build:
       context: .
