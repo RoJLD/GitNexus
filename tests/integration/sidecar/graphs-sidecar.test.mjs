@@ -78,6 +78,55 @@ describe('graphs sidecar', () => {
     expect(g.edges[0]).toMatchObject({ source: 'a1', target: 'p1', kind: 'AUTHORED' });
   });
 
+  // Quant-lab's `export-gitnexus --mode typed` shape: a node table per type, edges
+  // carrying from_table/to_table. The unlabeled endpoint match is a Kùzu binder error
+  // once a REL table spans several FROM/TO pairs (relies_on below); the labeled one
+  // also tells apart two nodes that share an id across tables.
+  it('ingests a typed graph whose edges carry from_table/to_table', async () => {
+    await fetch(`${BASE}/g/typed/create`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ddl: [
+        'CREATE NODE TABLE WorkItem(id STRING, title STRING, PRIMARY KEY(id))',
+        'CREATE NODE TABLE Spec(id STRING, title STRING, PRIMARY KEY(id))',
+        'CREATE REL TABLE relies_on(FROM WorkItem TO Spec, FROM WorkItem TO WorkItem, id STRING)',
+      ] }) });
+    const r = await fetch(`${BASE}/g/typed/ingest`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        nodes: [
+          { table: 'WorkItem', props: { id: 'x', title: 'work x' } },
+          { table: 'WorkItem', props: { id: 'w2', title: 'work 2' } },
+          { table: 'Spec', props: { id: 'x', title: 'spec x' } },
+        ],
+        edges: [
+          { table: 'relies_on', from: 'x', to: 'x', from_table: 'WorkItem', to_table: 'Spec', props: { id: 'x->relies_on->x' } },
+          { table: 'relies_on', from: 'w2', to: 'x', from_table: 'WorkItem', to_table: 'WorkItem', props: { id: 'w2->relies_on->x' } },
+        ],
+      }) });
+    expect(r.status).toBe(200);
+    const rows = (await (await fetch(`${BASE}/g/typed/cypher`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query: 'MATCH (a)-[r:relies_on]->(b) RETURN r.id AS id, label(a) AS fromT, a.title AS fromTitle, label(b) AS toT, b.title AS toTitle ORDER BY id' }) })).json()).rows;
+    expect(rows).toEqual([
+      { id: 'w2->relies_on->x', fromT: 'WorkItem', fromTitle: 'work 2', toT: 'WorkItem', toTitle: 'work x' },
+      { id: 'x->relies_on->x', fromT: 'WorkItem', fromTitle: 'work x', toT: 'Spec', toTitle: 'spec x' },
+    ]);
+    const g = await (await fetch(`${BASE}/g/typed/render`)).json();
+    expect(g.nodes).toHaveLength(3);
+    expect(g.edges).toHaveLength(2);
+  });
+
+  it('rejects an unsafe table name with 400 before writing anything', async () => {
+    const count = async () => (await (await fetch(`${BASE}/g/typed/cypher`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query: 'MATCH (n) RETURN count(n) AS c' }) })).json()).rows[0].c;
+    const before = await count();
+    const r = await fetch(`${BASE}/g/typed/ingest`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        nodes: [{ table: 'WorkItem', props: { id: 'w3', title: 'never written' } }],
+        edges: [{ table: 'relies_on', from: 'w3', to: 'x', from_table: 'WorkItem', to_table: 'Spec) DETACH DELETE (b', props: { id: 'bad' } }],
+      }) });
+    expect(r.status).toBe(400);
+    expect((await r.json()).error).toMatch(/invalid to_table/);
+    expect(await count()).toBe(before);
+  });
+
   it('errors return JSON 500, server stays up', async () => {
     const r = await fetch(`${BASE}/g/t1/cypher`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ query: 'NOT VALID CYPHER' }) });
     expect(r.status).toBe(500);
