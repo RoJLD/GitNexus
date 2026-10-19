@@ -1,5 +1,9 @@
 # Graphs sidecar — Node 22 + LadybugDB (@ladybugdb/core). Our own image (no upstream coupling).
 FROM node:22-bookworm-slim
+# The LadybugDB native binding (lbugjs.node) links libssl.so.3 / libcrypto.so.3, which the slim
+# base does not ship: without libssl3 the sidecar dies at startup with ERR_DLOPEN_FAILED.
+RUN apt-get update && apt-get install -y --no-install-recommends libssl3 \
+ && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY graphs-sidecar/package.json graphs-sidecar/package-lock.json ./
 RUN npm install --omit=dev --no-audit --no-fund
