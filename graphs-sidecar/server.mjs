@@ -1,5 +1,5 @@
 /**
- * Graphs sidecar HTTP API. Owns template graphs as Kùzu DBs under GRAPHS_DIR.
+ * Graphs sidecar HTTP API. Owns template graphs as LadybugDB DBs under GRAPHS_DIR.
  * Internal-only (compose network); the gitnexus-web container proxies to it.
  *   POST /g/:name/create   {ddl:[...]}            -> {name, created}
  *   POST /g/:name/ingest   {nodes:[...], edges:[...]} -> {nodes, edges}
@@ -9,11 +9,12 @@
  *   GET  /g/:name/render                          -> {nodes, edges}
  *   GET  /g                                        -> {graphs:[name,...]}
  *   GET  /health                                   -> {ok:true}
- * Errors: {error} with 400 for an invalid graph/table name, 500 otherwise.
+ * Errors: {error} with 400 for an invalid graph/table name, 409 for a graph still in
+ *   the pre-LadybugDB Kùzu format (re-create + re-import it), 500 otherwise.
  */
 import { createServer } from 'node:http';
 import { mkdir, readdir } from 'node:fs/promises';
-import { createGraph, ingest, cypher, render, GRAPHS_DIR } from './kuzu-store.mjs';
+import { createGraph, ingest, cypher, render, GRAPHS_DIR, DB_EXT } from './lbug-store.mjs';
 
 const PORT = Number(process.env.GRAPHS_PORT) || 4749;
 
@@ -37,7 +38,7 @@ const server = createServer(async (req, res) => {
     if (path === '/g' && req.method === 'GET') {
       let files = [];
       try { files = await readdir(GRAPHS_DIR); } catch { /* none yet */ }
-      return send(res, 200, { graphs: files.filter((f) => f.endsWith('.kuzu')).map((f) => f.replace(/\.kuzu$/, '')) });
+      return send(res, 200, { graphs: files.filter((f) => f.endsWith(DB_EXT)).map((f) => f.slice(0, -DB_EXT.length)) });
     }
 
     const m = path.match(/^\/g\/([^/]+)\/(create|ingest|cypher|render)$/);
@@ -54,7 +55,7 @@ const server = createServer(async (req, res) => {
     }
     send(res, 404, { error: 'not found' });
   } catch (e) {
-    send(res, e?.status === 400 ? 400 : 500, { error: String((e && e.message) || e) });
+    send(res, [400, 409].includes(e?.status) ? e.status : 500, { error: String((e && e.message) || e) });
   }
 });
 
