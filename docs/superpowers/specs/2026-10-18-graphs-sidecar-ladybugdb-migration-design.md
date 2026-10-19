@@ -114,3 +114,16 @@ all 200; 45 mixed operations over two graphs, none rejected.
 - Following upstream's version: when the fork bumps upstream to a release on a newer
   `@ladybugdb/core`, align the sidecar pin in the same pass (separate DB files, so no
   storage coupling forces it).
+
+## Update 2026-10-19 — Docker image fixed (libssl3) and verified in Docker
+
+The first Docker build (2026-10-19, deploy go-ahead from Robin) produced an image whose sidecar died at
+startup: `@ladybugdb/core`'s `lbugjs.node` links `libssl.so.3` and `libcrypto.so.3`, which
+`node:22-bookworm-slim` does not ship (`ERR_DLOPEN_FAILED`). The static check of §2 covered glibc only.
+`Dockerfile.graphs` now installs `libssl3`; `ldd` on the binding then resolves every library.
+
+Verified in Docker: `docker compose build gitnexus-graphs` succeeds, and
+`tests/integration/sidecar/graphs-sidecar.test.mjs` passes **7/7** against the real container
+(`INTEG_SKIP_SETUP=1`: this file builds and runs its own sidecar container, so it does not need the full
+test stack). Still not verified: the full integration tier and the web container against the new
+sidecar, because `upstream/` is not cloned on this machine (the web and API images build from it).
