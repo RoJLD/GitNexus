@@ -49,7 +49,18 @@ export async function snapshotFixtureAtCommit(sha) {
   return api.createSnapshot(FIXTURE_NAME, sha);
 }
 
-export async function snapshotFixtureFullHistory({ count = 5, sinceDays = 600, minSnapshots = 3 } = {}) {
+// The fixture's history is pinned to 2025-01-01..2025-02-25 (make-fixture.mjs),
+// but /snapshot/bulk filters with `git log --since="<sinceDays> days ago"` —
+// relative to TODAY. A fixed 600 covered the whole history until 2026-10-18,
+// then matched zero commits (400 "no commits matched the filters") and
+// global-setup aborted the whole tier. Anchor the window to the fixture's first
+// commit (+ a week of timezone/clock slack) so it never expires.
+const FIXTURE_FIRST_COMMIT = Date.parse('2025-01-01T00:00:00Z');
+export function fixtureHistoryDays(now = Date.now()) {
+  return Math.ceil((now - FIXTURE_FIRST_COMMIT) / 86_400_000) + 7;
+}
+
+export async function snapshotFixtureFullHistory({ count = 5, sinceDays = fixtureHistoryDays(), minSnapshots = 3 } = {}) {
   const api = getApi();
   // Mirror the proven e2e global-setup: POST /snapshot/bulk?repo= { count,
   // sinceDays }, then poll /snapshots until >= minSnapshots exist. The old code

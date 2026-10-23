@@ -59,7 +59,10 @@ export default async function globalSetup() {
   await fetch(`${WEB}/snapshot/bulk?repo=${encodeURIComponent(REPO)}`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ count: 8, sinceDays: 600 }),
+    // Window anchored to the fixture's first commit (2025-01-01): a fixed 600
+    // days stopped reaching the fixture's history on 2026-10-18 (same time bomb
+    // as tests/integration/helpers/analyze.mjs fixtureHistoryDays).
+    body: JSON.stringify({ count: 8, sinceDays: Math.ceil((Date.now() - Date.parse('2025-01-01T00:00:00Z')) / 86_400_000) + 7 }),
   });
   await poll(async () => {
     const l = await (await fetch(`${WEB}/snapshots?repo=${encodeURIComponent(REPO)}`)).json();
