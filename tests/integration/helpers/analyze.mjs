@@ -68,7 +68,12 @@ export async function snapshotFixtureFullHistory({ count = 5, sinceDays = fixtur
   // finds ZERO commits → no snapshots) AND polled a JSON `state` on
   // GET /snapshot/bulk/:jobId (an SSE stream, never JSON) — two independent
   // reasons it could never succeed.
-  await api.bulkSnapshot(FIXTURE_NAME, { count, sinceDays });
+  const { jobId } = await api.bulkSnapshot(FIXTURE_NAME, { count, sinceDays });
+  // Wait for the WHOLE job, not just minSnapshots: returning while commits
+  // minSnapshots+1..count are still analyzing let the first analyze-backed test
+  // (baseline-seed, when vitest schedules it early) race it → "/api/analyze
+  // failed: 409" → job 'failed'. Reproduced on demand 2026-10-23.
+  await api.waitBulkSnapshot(jobId);
   await pollUntilDone(async () => {
     const l = await api.listSnapshots(FIXTURE_NAME);
     const n = Array.isArray(l.snapshots) ? l.snapshots.length : 0;
