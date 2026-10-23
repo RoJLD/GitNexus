@@ -54,12 +54,20 @@ export class ApiClient {
   createSnapshot(repo, sha) { return this._post(this.webBase, '/snapshot', { repo, sha }); }
   listSnapshots(repo) { return this._get(this.webBase, '/snapshots', { repo }); }
   // repo is a QUERY param (?repo=); the body is { mode, count, sinceDays }.
-  // Completion is signalled by polling /snapshots (see analyze.mjs), NOT by the
-  // GET /snapshot/bulk/:jobId route — that route is an SSE progress stream, not
-  // a JSON status, so a `res.json()` poll on it could never succeed.
+  // GET /snapshot/bulk/:jobId is an SSE progress stream, not a JSON status, so
+  // a `res.json()` poll on it can never succeed — see waitBulkSnapshot.
   bulkSnapshot(repo, opts = {}) {
     const qs = new URLSearchParams({ repo }).toString();
     return this._post(this.webBase, `/snapshot/bulk?${qs}`, opts);
+  }
+  // Resolves when the bulk job settles: the SSE stream replays the job's buffered
+  // events (also to a late subscriber, within 60s of the end) and the server
+  // closes it once the job is done/aborted/failed — draining the body IS the wait.
+  async waitBulkSnapshot(jobId, { timeoutMs = 300_000 } = {}) {
+    const url = `${this.webBase}/snapshot/bulk/${encodeURIComponent(jobId)}`;
+    const res = await fetch(url, { signal: AbortSignal.timeout(timeoutMs) });
+    if (!res.ok) throw new Error(`GET ${url} → ${res.status}: ${await res.text()}`);
+    return res.text();
   }
 
   // Analytics

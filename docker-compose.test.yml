@@ -87,6 +87,12 @@ services:
       # at the test API service. (This is why the tier never had a green
       # baseline; the "green" e2e ran against the dev stack, not this compose.)
       - GITNEXUS_API=http://gitnexus-server-test:4747
+      # Same trap for the wiki-worker (2nd process in the API container, :4748):
+      # docker-server-wiki.mjs defaults WIKI_WORKER_URL to http://gitnexus:4748,
+      # unresolvable here → /wiki/status and /wiki/generate answered 502 "wiki
+      # worker unreachable", which tests/integration/endpoints/wiki.test.mjs
+      # accepts as "worker down" — so the tier never reached the real worker.
+      - WIKI_WORKER_URL=http://gitnexus-server-test:4748
       # Same 16 GiB→2 GiB mmap cap as the server (the web container also opens
       # lbug read-side for the /api/graph-backed analytics routes).
       - GITNEXUS_LBUG_MAX_DB_SIZE=2147483648
