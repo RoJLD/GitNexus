@@ -5,6 +5,7 @@ import {
   getTemplate,
   registerTemplate,
   sanitizeSource,
+  mergeGraphListing,
 } from '../../upstream/docker-server-graph-templates-core.mjs';
 
 describe('graph-templates registry', () => {
@@ -84,5 +85,26 @@ describe('template kinds + ddl', () => {
     expect(mg.importer).toBe('model-graph-json');
     expect(mg.ddl.some((s) => /CREATE NODE TABLE ModelNode\(.*type STRING.*\)/.test(s))).toBe(true);
     expect(mg.ddl.some((s) => /CREATE REL TABLE ModelEdge\(.*kind STRING.*weight DOUBLE.*\)/.test(s))).toBe(true);
+  });
+});
+
+// GET /graph/list: a graph pushed straight to the sidecar (Quant-lab's export-gitnexus
+// --push) has no index record, and the list used to be the index alone.
+describe('mergeGraphListing', () => {
+  const scaffolded = { name: 'notes', template: 'research-artifacts', schema_type: 'research-artifacts', source: 'notes', created: '2026-10-01T00:00:00.000Z' };
+
+  it('adds a stub record for a graph only the sidecar holds', () => {
+    expect(mergeGraphListing([scaffolded], ['notes', 'quant-lab'])).toEqual([
+      scaffolded,
+      { name: 'quant-lab', template: null, schema_type: 'external', source: null, created: null },
+    ]);
+  });
+
+  it('keeps index records, also those the sidecar does not list', () => {
+    expect(mergeGraphListing([scaffolded], [])).toEqual([scaffolded]);
+  });
+
+  it('lists the sidecar-only graphs once each, sorted by name', () => {
+    expect(mergeGraphListing([], ['zeta', 'alpha', 'zeta']).map((g) => g.name)).toEqual(['alpha', 'zeta']);
   });
 });

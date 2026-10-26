@@ -110,3 +110,21 @@ sidebar. No new deps, no Dockerfile.web change.
   index/list; surfacing "open a lens over repo X" in the meta UI is a later enhancement.
 - **Active-graph highlight** — matched by `?research=<name>`; lens-view active state is deferred.
 - **Inspector placement** — a fixed panel in v1; a dockable/resizable inspector is later polish.
+
+## Update 2026-10-26 — `/graph/list` also lists graphs pushed straight to the sidecar
+
+§3.1 returned the index records only. A graph written straight to the sidecar never goes through
+`/graph/scaffold`, so it has no index record: Quant-lab's research graph (`export-gitnexus --mode typed
+--push`, loaded as `quant-lab`, 723 nodes) rendered by name at `?research=quant-lab` but the sidebar
+said "No graphs yet".
+
+`GET /graph/list` (and `GET /graph/research`, which served the same records) now merge the index with
+the sidecar's own listing (`GET /g`): the index records first, then, sorted by name, one stub per graph
+the sidecar holds without a record:
+`{ name, template: null, schema_type: 'external', source: null, created: null }`. No registration step
+is needed. The merge is the pure `mergeGraphListing` in `docker-server-graph-templates-core.mjs`
+(`sidecarList` is the client call). When the sidecar does not answer, the list falls back to the index
+alone (logged), so a sidecar outage does not empty the sidebar. The `GraphInstance` client type now
+allows `template` / `created` to be `null`; `GraphSidebar` shows the `external` badge as it shows any
+`schema_type`. `/graph/activations/:name` still needs an index record (it reads the source dir), so it
+answers 404 for an external graph, as before.

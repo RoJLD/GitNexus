@@ -9,7 +9,8 @@
  *   GET  /g/:name/render                          -> {nodes, edges}
  *   GET  /g                                        -> {graphs:[name,...]}
  *   GET  /health                                   -> {ok:true}
- * Errors: {error} with 400 for an invalid graph/table name, 409 for a graph still in
+ * Errors: {error} with 400 for an invalid graph/table name, 404 when ingest/cypher/render
+ *   name a graph that was never created (nothing is written), 409 for a graph still in
  *   the pre-LadybugDB Kùzu format (re-create + re-import it), 500 otherwise.
  */
 import { createServer } from 'node:http';
@@ -55,7 +56,7 @@ const server = createServer(async (req, res) => {
     }
     send(res, 404, { error: 'not found' });
   } catch (e) {
-    send(res, [400, 409].includes(e?.status) ? e.status : 500, { error: String((e && e.message) || e) });
+    send(res, [400, 404, 409].includes(e?.status) ? e.status : 500, { error: String((e && e.message) || e) });
   }
 });
 

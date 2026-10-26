@@ -305,6 +305,12 @@ curl -s -o /dev/null -w "groups: HTTP %{http_code}\n" \
 curl -s -o /dev/null -w "graph/merged (unsynced→404): HTTP %{http_code}\n" \
   "http://localhost:4173/graph/merged?group=__none__"
 
+# Graph templates (Tier 67 / P3.4) — /graph/list merges the scaffold index with
+# the graphs the LadybugDB sidecar holds (a graph pushed straight to it, e.g.
+# Quant-lab's quant-lab, is listed with schema_type "external"). 200, even empty.
+curl -s -o /dev/null -w "graph/list: HTTP %{http_code}
+"   "http://localhost:4173/graph/list"
+
 # MCP sidecar — stdio JSON-RPC against the live stack. Exercises the
 # wrapper layer that exposes our analytics to Claude Code / Cursor.
 node mcp-server/smoke.mjs

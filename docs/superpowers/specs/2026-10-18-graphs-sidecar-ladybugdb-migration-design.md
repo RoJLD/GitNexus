@@ -135,3 +135,13 @@ timeout and killed the sidecar (exit 137), possibly in the middle of an ingest. 
 the HTTP server on SIGTERM/SIGINT and exits 0 once the in-flight requests (and so their database
 operations) are done, or after 2 s. Covered by `tests/integration/stack-stop-signal.test.mjs`, which
 also covers `gitnexus-web` (same defect, fixed in `docker-server-routes.mjs` → `exitOnStopSignals`).
+
+## Update 2026-10-26 (2) — unknown graphs answer 404, nothing is created
+
+Opening a LadybugDB database creates its file, so a render, cypher or ingest naming a graph that was
+never created made an empty `<name>.lbug`, answered 500 ("Binder exception: Cannot find property id
+for a."), and the name was listed by `GET /g` from then on (and, since the same date, by the web's
+`/graph/list`). `lbug-store.mjs` now checks the file before opening it, inside the per-graph queue
+(§3.1) so that a read sent after a create sees the graph: absent → **404** `graph <name> not found`;
+absent with a `<name>.kuzu` beside it → the 409 of §3. Only `create` makes a graph. Quant-lab's
+`export-gitnexus --push` calls create before ingest, so it is unaffected.
