@@ -10294,10 +10294,10 @@ index 00000000..ea950ca6
 +}
 diff --git a/docker-server-routes.mjs b/docker-server-routes.mjs
 new file mode 100644
-index 00000000..9ba2f152
+index 00000000..c8d1161b
 --- /dev/null
 +++ b/docker-server-routes.mjs
-@@ -0,0 +1,90 @@
+@@ -0,0 +1,109 @@
 +import { handleSnapshotRoute } from './docker-server-snapshots.mjs';
 +import { handleSnapshotBulkRoute } from './docker-server-snapshots-bulk.mjs';
 +import { handleChurnRoute } from './docker-server-churn.mjs';
@@ -10387,6 +10387,25 @@ index 00000000..9ba2f152
 +// Grouping point: add future crons here so docker-server.mjs stays untouched.
 +export function startGitnexusCron(api) {
 +  startWatchesCron(api);
++}
++
++/**
++ * Exit 0 on SIGTERM (`docker compose stop`) and SIGINT. Node running as PID 1 gets no
++ * default signal handling, so the container ignored SIGTERM and Docker killed it once
++ * the stop timeout ran out (exit 137). Stop accepting connections and exit when the
++ * in-flight ones are done; a stream that outlives `graceMs` (the bulk-snapshot SSE)
++ * is cut. Returns a function that removes the handlers.
++ */
++export function exitOnStopSignals(server, { graceMs = 2000, exit = (code) => process.exit(code) } = {}) {
++  const stop = (signal) => {
++    console.log(`[gitnexus-web] ${signal} received, shutting down`);
++    const cut = setTimeout(() => { server.closeAllConnections(); exit(0); }, graceMs).unref();
++    server.close(() => { clearTimeout(cut); exit(0); });
++    server.closeIdleConnections();
++  };
++  process.once('SIGTERM', stop);
++  process.once('SIGINT', stop);
++  return () => { process.off('SIGTERM', stop); process.off('SIGINT', stop); };
 +}
 diff --git a/docker-server-semantic-labels.mjs b/docker-server-semantic-labels.mjs
 new file mode 100644

@@ -100,7 +100,7 @@ Pré-requis local : Rancher Desktop running, **Node ≥ 22 LTS**. CI : `.github/
 | Patch drift guard | `unit/check-patch-drift.test.mjs` | `filesInDiff` + `compareDiffFileSets` + `normalizeDiff` |
 | Upstream releases watch | `unit/check-upstream-releases.test.mjs` | `parsePinnedVersion` + `parseStableTags` + `cmpSemver` |
 | Commits parse | `unit/commits-parse.test.mjs` | `parseCommitLines` + `isSafeRef` |
-| Docker-server routes shim | `unit/docker-server-routes.test.mjs` | route registry shim (`registerGitnexusRoutes`) |
+| Docker-server routes shim | `unit/docker-server-routes.test.mjs` | route registry shim (`registerGitnexusRoutes`) + `exitOnStopSignals` (SIGTERM/SIGINT close the server and exit 0; a stream still open after the grace period is cut) |
 | Embedding tools | `unit/embedding-tools.test.mjs` | `nearestNeighbors` + `spectralLayout` |
 | Graph diff — models | `unit/graph-diff-models.test.mjs` | `diffGraphs` (P-IA-3 model diff) |
 | Graph diff — view | `unit/graph-diff-view.test.mjs` | `buildDiffStatus` + `unionResearchGraphs` + `DIFF_VIEW_COLORS` |
@@ -167,6 +167,7 @@ Pré-requis local : Rancher Desktop running, **Node ≥ 22 LTS**. CI : `.github/
 | Test | Fichier | Couvre |
 |---|---|---|
 | Health + routes | `integration/stack-health.test.mjs` | `/health`, présence des 16 routes |
+| Stop signal | `integration/stack-stop-signal.test.mjs` | web + graphs-sidecar images exit 0 on `docker stop` (they ignored SIGTERM as PID 1 and were killed, exit 137) |
 
 ### Endpoints integration
 | Test | Fichier | Couvre |

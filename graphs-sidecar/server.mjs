@@ -63,3 +63,15 @@ await mkdir(GRAPHS_DIR, { recursive: true }).catch(() => {});
 server.listen(PORT, '0.0.0.0', () => {
   process.stdout.write(`[graphs-sidecar] listening on :${PORT} · dir=${GRAPHS_DIR}\n`);
 });
+
+// Node running as PID 1 gets no default signal handling: `docker stop` used to wait out
+// its timeout and kill the sidecar (exit 137), possibly mid-write. Stop accepting
+// connections and exit once the in-flight requests (and so their DB operations) are done.
+function shutdown(signal) {
+  process.stdout.write(`[graphs-sidecar] ${signal} received, shutting down\n`);
+  server.close(() => process.exit(0));
+  server.closeIdleConnections();
+  setTimeout(() => process.exit(0), 2000).unref(); // a request still running is cut
+}
+process.once('SIGTERM', shutdown);
+process.once('SIGINT', shutdown);
