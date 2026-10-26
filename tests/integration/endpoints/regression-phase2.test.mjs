@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { FIXTURE } from '../helpers/analyze.mjs';
 
-const BASE = 'http://localhost:4173';
+const BASE = `http://localhost:${process.env.TEST_WEB_PORT || 4173}`;
 const reg = async (metric) => {
   const res = await fetch(`${BASE}/regression?repo=${encodeURIComponent(FIXTURE.name)}&metric=${encodeURIComponent(metric)}`);
   return { status: res.status, body: res.ok ? await res.json() : await res.json().catch(() => ({})) };

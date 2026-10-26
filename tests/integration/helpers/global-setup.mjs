@@ -21,6 +21,10 @@ export default async function setup() {
   } catch (err) {
     console.error('[global-setup] failed; dumping logs:');
     console.error(dumpLogs());
+    // vitest only registers the teardown below once setup returns, so a failed setup
+    // used to leave the test stack running and the fixture folder behind.
+    console.error('[global-setup] tearing down stack…');
+    try { await stopStack(); } catch (e) { console.error(`[global-setup] teardown failed: ${e.message}`); }
     throw err;
   }
   return async () => {

@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 
-const BASE = 'http://localhost:4173';
+const BASE = `http://localhost:${process.env.TEST_WEB_PORT || 4173}`;
 
 describe('graph-templates routes', () => {
   it('lists the built-in research-artifacts template', async () => {
