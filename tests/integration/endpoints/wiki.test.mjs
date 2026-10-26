@@ -3,7 +3,7 @@ import { FIXTURE } from '../helpers/analyze.mjs';
 
 describe('Wiki endpoints', () => {
   const fetchWiki = async (path, options = {}) => {
-    const url = `http://localhost:4173${path}`;
+    const url = `http://localhost:${process.env.TEST_WEB_PORT || 4173}${path}`;
     const res = await fetch(url, options);
     const contentType = res.headers.get('content-type') || '';
     let body;

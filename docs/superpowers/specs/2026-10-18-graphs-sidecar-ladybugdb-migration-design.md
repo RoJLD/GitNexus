@@ -127,3 +127,21 @@ Verified in Docker: `docker compose build gitnexus-graphs` succeeds, and
 (`INTEG_SKIP_SETUP=1`: this file builds and runs its own sidecar container, so it does not need the full
 test stack). Still not verified: the full integration tier and the web container against the new
 sidecar, because `upstream/` is not cloned on this machine (the web and API images build from it).
+
+## Update 2026-10-26 — the sidecar exits on SIGTERM
+
+Node running as PID 1 has no default signal handling, so `docker compose stop` waited out the stop
+timeout and killed the sidecar (exit 137), possibly in the middle of an ingest. `server.mjs` now closes
+the HTTP server on SIGTERM/SIGINT and exits 0 once the in-flight requests (and so their database
+operations) are done, or after 2 s. Covered by `tests/integration/stack-stop-signal.test.mjs`, which
+also covers `gitnexus-web` (same defect, fixed in `docker-server-routes.mjs` → `exitOnStopSignals`).
+
+## Update 2026-10-26 (2) — unknown graphs answer 404, nothing is created
+
+Opening a LadybugDB database creates its file, so a render, cypher or ingest naming a graph that was
+never created made an empty `<name>.lbug`, answered 500 ("Binder exception: Cannot find property id
+for a."), and the name was listed by `GET /g` from then on (and, since the same date, by the web's
+`/graph/list`). `lbug-store.mjs` now checks the file before opening it, inside the per-graph queue
+(§3.1) so that a read sent after a create sees the graph: absent → **404** `graph <name> not found`;
+absent with a `<name>.kuzu` beside it → the 409 of §3. Only `create` makes a graph. Quant-lab's
+`export-gitnexus --push` calls create before ingest, so it is unaffected.

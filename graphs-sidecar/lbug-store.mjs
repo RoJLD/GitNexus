@@ -18,18 +18,20 @@ function dbPath(name) {
 }
 
 /**
- * A graph built before the migration sits in <name>.kuzu, a file LadybugDB cannot open
- * ("not a valid Lbug database file"). Reading or ingesting it would silently open a new
- * empty <name>.lbug instead, so refuse with 409 until it is re-created and re-imported.
- * `create` is exempt: it is how the graph gets rebuilt.
+ * Only `create` brings a graph into being. Opening a DB creates its file, so reading or
+ * ingesting an unknown name used to leave an empty <name>.lbug behind (listed by GET /g
+ * from then on): refuse it with 404 instead. A graph built before the migration sits in
+ * <name>.kuzu, a file LadybugDB cannot open ("not a valid Lbug database file"): refuse it
+ * with 409 until it is re-created and re-imported.
  */
-function assertNotLegacy(name) {
-  const path = dbPath(name);
-  if (!existsSync(path) && existsSync(join(GRAPHS_DIR, `${name}.kuzu`))) {
-    const err = new Error(`graph ${name} was built by Kùzu (${name}.kuzu), which LadybugDB cannot open: re-create and re-import it`);
-    err.status = 409;
-    throw err;
-  }
+function assertExists(name) {
+  if (existsSync(dbPath(name))) return;
+  const legacy = existsSync(join(GRAPHS_DIR, `${name}.kuzu`));
+  const err = new Error(legacy
+    ? `graph ${name} was built by Kùzu (${name}.kuzu), which LadybugDB cannot open: re-create and re-import it`
+    : `graph ${name} not found`);
+  err.status = legacy ? 409 : 404;
+  throw err;
 }
 
 /**
@@ -46,9 +48,12 @@ function exclusive(name, fn) {
   return run;
 }
 
-function withConn(name, fn) {
+// The existence check runs inside the per-graph queue, so a read sent after a create
+// sees the graph that create made.
+function withConn(name, fn, { mustExist = true } = {}) {
   const path = dbPath(name);
   return exclusive(name, async () => {
+    if (mustExist) assertExists(name);
     const db = new lbug.Database(path);
     const conn = new lbug.Connection(db);
     try {
@@ -86,7 +91,7 @@ export async function createGraph(name, ddl) {
         if (!/already exists/i.test(String(e && e.message))) throw e;
       }
     }
-  });
+  }, { mustExist: false });
   return { name, created: true };
 }
 
@@ -98,7 +103,6 @@ export async function createGraph(name, ddl) {
  */
 export async function ingest(name, nodes, edges) {
   const queries = [...(nodes || []).map(nodeMergeQuery), ...(edges || []).map(edgeMergeQuery)];
-  assertNotLegacy(name);
   await withConn(name, async (conn) => {
     for (const { query, params } of queries) await closeResult(await run(conn, query, params));
   });
@@ -107,7 +111,6 @@ export async function ingest(name, nodes, edges) {
 
 /** Run a read Cypher query, return rows. */
 export async function cypher(name, query, params = {}) {
-  assertNotLegacy(name);
   return withConn(name, async (conn) => {
     const r = await run(conn, query, params);
     const rows = await r.getAll();

@@ -4,7 +4,7 @@ import { FIXTURE } from '../helpers/analyze.mjs';
 
 describe('GET /lifespan windowed mode', () => {
   const fetchLifespan = async (repo, params = '') => {
-    const url = `http://localhost:4173/lifespan?repo=${encodeURIComponent(repo)}${params}`;
+    const url = `http://localhost:${process.env.TEST_WEB_PORT || 4173}/lifespan?repo=${encodeURIComponent(repo)}${params}`;
     const res = await fetch(url);
     return { status: res.status, body: res.ok ? await res.json() : await res.text() };
   };

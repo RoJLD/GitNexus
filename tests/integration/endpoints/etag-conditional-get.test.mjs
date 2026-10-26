@@ -6,7 +6,7 @@ import { FIXTURE } from '../helpers/analyze.mjs';
 // handlers are deterministic (no per-request timestamp), so an unchanged repo
 // yields a byte-identical body → identical ETag → 304 on re-request.
 describe('conditional-GET (ETag / 304) on /churn', () => {
-  const base = `http://localhost:4173/churn?repo=${encodeURIComponent(FIXTURE.name)}`;
+  const base = `http://localhost:${process.env.TEST_WEB_PORT || 4173}/churn?repo=${encodeURIComponent(FIXTURE.name)}`;
 
   it('returns a strong-looking ETag header on the first 200', async () => {
     const res = await fetch(base);

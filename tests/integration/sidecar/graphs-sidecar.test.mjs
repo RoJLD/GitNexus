@@ -31,6 +31,7 @@ afterAll(() => { try { execSync('docker rm -f gnx-graphs-test', { stdio: 'ignore
 
 // Plant an (empty) pre-migration <name>.kuzu file in the container's GRAPHS_DIR.
 const touchLegacyGraph = (name) => execSync(`docker exec gnx-graphs-test touch /tmp/graphs/${name}.kuzu`);
+const graphFiles = () => execSync('docker exec gnx-graphs-test ls -a /tmp/graphs', { encoding: 'utf8' }).split(/\s+/);
 
 describe('graphs sidecar', () => {
   it('create -> ingest -> render round-trips a graph', async () => {
@@ -146,6 +147,22 @@ describe('graphs sidecar', () => {
     expect(g.status).toBe(200);
     expect(await g.json()).toEqual({ nodes: [], edges: [] });
     expect((await (await fetch(`${BASE}/g`)).json()).graphs).toContain('legacy');
+  });
+
+  // Opening a DB creates its file: a render of an unknown name used to leave an empty
+  // <name>.lbug behind, listed by GET /g from then on, and answer 500 "Binder exception".
+  it('answers 404 for a graph that was never created, and creates nothing', async () => {
+    const json = { method: 'POST', headers: { 'Content-Type': 'application/json' } };
+    const render = await fetch(`${BASE}/g/never/render`);
+    expect(render.status).toBe(404);
+    expect((await render.json()).error).toBe('graph never not found');
+    const cypher = await fetch(`${BASE}/g/never/cypher`, { ...json, body: JSON.stringify({ query: 'MATCH (n) RETURN n' }) });
+    expect(cypher.status).toBe(404);
+    const ingest = await fetch(`${BASE}/g/never/ingest`, { ...json,
+      body: JSON.stringify({ nodes: [{ table: 'Artifact', props: { id: 'n1' } }], edges: [] }) });
+    expect(ingest.status).toBe(404);
+    expect(graphFiles().filter((f) => f.startsWith('never'))).toEqual([]);
+    expect((await (await fetch(`${BASE}/g`)).json()).graphs).not.toContain('never');
   });
 
   // Each request opens the graph's DB file; two at once used to collide on its lock.

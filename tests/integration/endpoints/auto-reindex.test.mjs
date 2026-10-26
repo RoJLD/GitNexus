@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { FIXTURE } from '../helpers/analyze.mjs';
 
-const BASE = 'http://localhost:4173';
+const BASE = `http://localhost:${process.env.TEST_WEB_PORT || 4173}`;
 
 describe('GET /auto-reindex', () => {
   it('returns per-repo auto-reindex state', async () => {

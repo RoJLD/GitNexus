@@ -8,7 +8,8 @@
  * `POST /ghosts/sync`) — NOT tests/integration/helpers/analyze.mjs, whose
  * api-client posts to `/analyze` with `{repo}` (a 404 on gitnexus ≥1.6.x; the real
  * route is `/api/analyze` with `{path}`), which is likely why the docker CI tier
- * has never had a green baseline.
+ * has never had a green baseline. (That api-client has used the real routes since;
+ * the bulk-snapshot step below now goes through it.)
  *
  * Assumes the stack is already UP with the fixture mounted at /data/projects
  * (CI: `docker compose -f docker-compose.test.yml up` after the "Extract fixture"
@@ -16,6 +17,9 @@
  *
  * Local dev runs against an already-prepared stack: set E2E_SKIP_SETUP=1 to skip.
  */
+import { ApiClient } from '../integration/helpers/api-client.mjs';
+import { fixtureHistoryDays } from '../integration/helpers/analyze.mjs';
+
 const REPO = process.env.E2E_REPO || 'sample-repo';
 const API = process.env.E2E_API_URL || `http://localhost:${process.env.TEST_PORT || 4747}`;
 const WEB = process.env.E2E_WEB_URL || `http://localhost:${process.env.TEST_WEB_PORT || 4173}`;
@@ -55,15 +59,17 @@ export default async function globalSetup() {
   });
 
   // 2) Bulk-snapshot so the Timeline (cursors + cursor-diff) has ≥ 2 snapshots.
+  // Wait for the WHOLE job by draining its SSE stream (the server closes it when the job
+  // ends), as tests/integration/helpers/analyze.mjs does: returning once 3 of the 8
+  // snapshots existed ran the specs against a snapshot list still growing and an API
+  // still busy analyzing (the race that failed the integration tier's baseline-seed
+  // with "/api/analyze failed: 409"). The window is anchored to the fixture's first
+  // commit: a fixed 600 days stopped reaching its history on 2026-10-18. A refused job
+  // (400/404) now fails here instead of in a 3-minute poll.
   console.log('[e2e global-setup] bulk snapshot …');
-  await fetch(`${WEB}/snapshot/bulk?repo=${encodeURIComponent(REPO)}`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    // Window anchored to the fixture's first commit (2025-01-01): a fixed 600
-    // days stopped reaching the fixture's history on 2026-10-18 (same time bomb
-    // as tests/integration/helpers/analyze.mjs fixtureHistoryDays).
-    body: JSON.stringify({ count: 8, sinceDays: Math.ceil((Date.now() - Date.parse('2025-01-01T00:00:00Z')) / 86_400_000) + 7 }),
-  });
+  const api = new ApiClient(API, WEB);
+  const bulk = await api.bulkSnapshot(REPO, { count: 8, sinceDays: fixtureHistoryDays() });
+  await api.waitBulkSnapshot(bulk.jobId);
   await poll(async () => {
     const l = await (await fetch(`${WEB}/snapshots?repo=${encodeURIComponent(REPO)}`)).json();
     return (Array.isArray(l.snapshots) ? l.snapshots.length : 0) >= 3;

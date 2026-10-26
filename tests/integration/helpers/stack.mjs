@@ -25,6 +25,8 @@ let extractedFixtureDir = null;
 export function extractFixture() {
   if (extractedFixtureDir && existsSync(extractedFixtureDir)) return extractedFixtureDir;
   const dir = mkdtempSync(join(tmpdir(), 'gitnexus-fixture-'));
+  // Recorded before extracting, so stopStack() removes the folder even when tar fails.
+  extractedFixtureDir = dir;
   const tarSrc = join(HERE, '..', '..', 'fixtures', 'sample-repo.tar.gz');
   // On Windows, Git tar treats "C:" as a remote hostname; use --force-local and
   // forward-slash paths so that both GNU tar (Git) and bsdtar (System32) work.
@@ -42,24 +44,30 @@ export function extractFixture() {
     // array form removes the shell-injection surface entirely.
     try { execFileSync('chmod', ['-R', 'a+rwX', dir], { stdio: 'pipe' }); } catch { /* best effort */ }
   }
-  extractedFixtureDir = dir;
   return dir;
 }
 
-export async function startStack({ port = 4747, projectsRoot } = {}) {
+// TEST_PORT / TEST_WEB_PORT move the stack off the dev stack's ports (4747 / 4173), so
+// both can run at once. TEST_WEB_PORT reaches compose through process.env.
+export async function startStack({ port = Number(process.env.TEST_PORT) || 4747, projectsRoot } = {}) {
   const root = projectsRoot ?? extractFixture();
   compose('up -d --build', { env: { TEST_PORT: String(port), TEST_PROJECTS_ROOT: root } });
   await waitForReady({ timeoutMs: 120_000 });
 }
 
+// Also the cleanup of a failed setup: runs whatever state the stack is in, and removes the
+// fixture folder even when `compose down` fails.
 export async function stopStack({ collectLogs = false } = {}) {
   if (collectLogs) {
     try { compose('logs --no-color > docker-logs.txt'); } catch { /* best effort */ }
   }
-  compose('down -v', { silent: true });
-  if (extractedFixtureDir) {
-    rmSync(extractedFixtureDir, { recursive: true, force: true });
-    extractedFixtureDir = null;
+  try {
+    compose('down -v', { silent: true });
+  } finally {
+    if (extractedFixtureDir) {
+      rmSync(extractedFixtureDir, { recursive: true, force: true });
+      extractedFixtureDir = null;
+    }
   }
 }
 

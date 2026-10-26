@@ -6073,10 +6073,10 @@ index 00000000..4bf2da66
 +}
 diff --git a/docker-server-graph-templates-core.mjs b/docker-server-graph-templates-core.mjs
 new file mode 100644
-index 00000000..9e8be7bd
+index 00000000..bf90bfb9
 --- /dev/null
 +++ b/docker-server-graph-templates-core.mjs
-@@ -0,0 +1,303 @@
+@@ -0,0 +1,319 @@
 +/**
 + * Graph-templates engine (web container, pure Node — no Kùzu).
 + * Registry + built-in descriptors + index store + Kùzu sidecar client. Graphs
@@ -6132,6 +6132,19 @@ index 00000000..9e8be7bd
 +  } catch {
 +    return { graphs: [] };
 +  }
++}
++
++/**
++ * The graph list the UI shows: the index records (graphs scaffolded through the web), then
++ * a stub record, sorted by name, for each graph the sidecar holds without one. A graph
++ * pushed straight to the sidecar (Quant-lab's `export-gitnexus --push`) never goes through
++ * /graph/scaffold, so the index alone left it out of the list. Pure.
++ */
++export function mergeGraphListing(records, sidecarNames) {
++  const known = new Set(records.map((g) => g.name));
++  const extra = [...new Set(sidecarNames)].filter((name) => !known.has(name)).sort()
++    .map((name) => ({ name, template: null, schema_type: 'external', source: null, created: null }));
++  return [...records, ...extra];
 +}
 +
 +export async function writeIndexRecord(record) {
@@ -6380,18 +6393,22 @@ index 00000000..9e8be7bd
 +export async function sidecarRender(name) {
 +  return graphsFetch(`/g/${encodeURIComponent(name)}/render`, { method: 'GET' });
 +}
++export async function sidecarList() {
++  return (await graphsFetch('/g', { method: 'GET' })).graphs || [];
++}
 diff --git a/docker-server-graph-templates.mjs b/docker-server-graph-templates.mjs
 new file mode 100644
-index 00000000..ae049d98
+index 00000000..f32c80f4
 --- /dev/null
 +++ b/docker-server-graph-templates.mjs
-@@ -0,0 +1,103 @@
+@@ -0,0 +1,113 @@
 +/**
 + * Graph templates routes (web container) — sidecar-backed (Kùzu).
 + *   GET  /graph/templates              -> { templates }
 + *   POST /graph/scaffold {templateId,name,source} -> { record }   (creates Kùzu graph via sidecar)
 + *   POST /graph/import   {name}        -> { report }              (importer -> sidecar ingest)
-+ *   GET  /graph/research               -> { graphs }              (index records)
++ *   GET  /graph/list                   -> { graphs }              (index records + graphs only the sidecar holds)
++ *   GET  /graph/research               -> { graphs }              (same list)
 + *   GET  /graph/research/:name         -> { nodes, edges }        (sidecar render)
 + *   GET  /graph/activations/:name      -> { nodes, edges, report } (model-activations.json overlay)
 + *   GET  /graph/diff?a=&b=             -> { nodes, edges, summary }  (structural diff of two sidecar graphs)
@@ -6400,8 +6417,8 @@ index 00000000..ae049d98
 +import { join } from 'node:path';
 +import {
 +  listTemplates, getTemplate, sanitizeSource,
-+  readIndex, writeIndexRecord, shapeActivations,
-+  sidecarCreate, sidecarIngest, sidecarRender, diffGraphs,
++  readIndex, writeIndexRecord, mergeGraphListing, shapeActivations,
++  sidecarCreate, sidecarIngest, sidecarRender, sidecarList, diffGraphs,
 +} from './docker-server-graph-templates-core.mjs';
 +import { importResearchFs } from './docker-server-research-fs-importer.mjs';
 +import { importAcademicJson } from './docker-server-academic-json-importer.mjs';
@@ -6412,12 +6429,21 @@ index 00000000..ae049d98
 +async function readBody(req) { let b = ''; for await (const c of req) b += c; return b ? JSON.parse(b) : {}; }
 +const IMPORTERS = { 'research-fs': importResearchFs, 'academic-json': importAcademicJson, 'research-graph-json': importResearchGraph, 'model-graph-json': importModelGraph };
 +
++// The sidecar being down must not empty the list: fall back to the index alone.
++async function listGraphRecords() {
++  const { graphs } = await readIndex();
++  let names = [];
++  try { names = await sidecarList(); }
++  catch (e) { console.warn(`[graph-templates] sidecar listing unavailable, listing the index only: ${e.message}`); }
++  return mergeGraphListing(graphs, names);
++}
++
 +export async function handleGraphTemplatesRoute(req, url, res, _opts) {
 +  const path = url.pathname;
 +
 +  if (path === '/graph/templates' && req.method === 'GET') { sendJson(res, 200, { templates: listTemplates() }); return true; }
 +
-+  if (path === '/graph/list' && req.method === 'GET') { sendJson(res, 200, { graphs: (await readIndex()).graphs }); return true; }
++  if (path === '/graph/list' && req.method === 'GET') { sendJson(res, 200, { graphs: await listGraphRecords() }); return true; }
 +
 +  if (path === '/graph/scaffold' && req.method === 'POST') {
 +    let body; try { body = await readBody(req); } catch { sendJson(res, 400, { error: 'invalid JSON body' }); return true; }
@@ -6451,7 +6477,7 @@ index 00000000..ae049d98
 +    return true;
 +  }
 +
-+  if (path === '/graph/research' && req.method === 'GET') { sendJson(res, 200, { graphs: (await readIndex()).graphs }); return true; }
++  if (path === '/graph/research' && req.method === 'GET') { sendJson(res, 200, { graphs: await listGraphRecords() }); return true; }
 +
 +  if (path.startsWith('/graph/research/') && req.method === 'GET') {
 +    const name = decodeURIComponent(path.slice('/graph/research/'.length));
@@ -10294,10 +10320,10 @@ index 00000000..ea950ca6
 +}
 diff --git a/docker-server-routes.mjs b/docker-server-routes.mjs
 new file mode 100644
-index 00000000..9ba2f152
+index 00000000..c8d1161b
 --- /dev/null
 +++ b/docker-server-routes.mjs
-@@ -0,0 +1,90 @@
+@@ -0,0 +1,109 @@
 +import { handleSnapshotRoute } from './docker-server-snapshots.mjs';
 +import { handleSnapshotBulkRoute } from './docker-server-snapshots-bulk.mjs';
 +import { handleChurnRoute } from './docker-server-churn.mjs';
@@ -10387,6 +10413,25 @@ index 00000000..9ba2f152
 +// Grouping point: add future crons here so docker-server.mjs stays untouched.
 +export function startGitnexusCron(api) {
 +  startWatchesCron(api);
++}
++
++/**
++ * Exit 0 on SIGTERM (`docker compose stop`) and SIGINT. Node running as PID 1 gets no
++ * default signal handling, so the container ignored SIGTERM and Docker killed it once
++ * the stop timeout ran out (exit 137). Stop accepting connections and exit when the
++ * in-flight ones are done; a stream that outlives `graceMs` (the bulk-snapshot SSE)
++ * is cut. Returns a function that removes the handlers.
++ */
++export function exitOnStopSignals(server, { graceMs = 2000, exit = (code) => process.exit(code) } = {}) {
++  const stop = (signal) => {
++    console.log(`[gitnexus-web] ${signal} received, shutting down`);
++    const cut = setTimeout(() => { server.closeAllConnections(); exit(0); }, graceMs).unref();
++    server.close(() => { clearTimeout(cut); exit(0); });
++    server.closeIdleConnections();
++  };
++  process.once('SIGTERM', stop);
++  process.once('SIGINT', stop);
++  return () => { process.off('SIGTERM', stop); process.off('SIGINT', stop); };
 +}
 diff --git a/docker-server-semantic-labels.mjs b/docker-server-semantic-labels.mjs
 new file mode 100644
@@ -28126,10 +28171,10 @@ index 00000000..02e6bf4e
 +}
 diff --git a/gitnexus-web/src/services/research-client.ts b/gitnexus-web/src/services/research-client.ts
 new file mode 100644
-index 00000000..63f23367
+index 00000000..b5a801a5
 --- /dev/null
 +++ b/gitnexus-web/src/services/research-client.ts
-@@ -0,0 +1,77 @@
+@@ -0,0 +1,79 @@
 +import type { ResearchGraph } from '../lib/research-graph-adapter';
 +import type { GraphDiffResponse } from '../lib/graph-diff-view';
 +
@@ -28193,7 +28238,9 @@ index 00000000..63f23367
 +  return jsonOrThrow(await fetch(`/graph/lens/${encodeURIComponent(id)}?repo=${encodeURIComponent(repo)}`));
 +}
 +
-+export interface GraphInstance { name: string; template: string; schema_type: string; source: string | null; created: string }
++// A graph pushed straight to the sidecar has no index record: the server lists it with
++// template/source/created null and schema_type 'external'.
++export interface GraphInstance { name: string; template: string | null; schema_type: string; source: string | null; created: string | null }
 +export async function listGraphs(): Promise<GraphInstance[]> {
 +  const res = await fetch('/graph/list');
 +  const body = await res.json().catch(() => ({}));

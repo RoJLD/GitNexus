@@ -34,6 +34,12 @@ describe('MCP graph-template tools', () => {
   beforeAll(async () => {
     server = spawn(process.execPath, [SERVER_PATH], {
       stdio: ['pipe', 'pipe', 'inherit'],
+      // The server defaults to :4747/:4173, the dev stack's ports: aim it at the test stack.
+      env: {
+        ...process.env,
+        GITNEXUS_API: `http://localhost:${process.env.TEST_PORT || 4747}`,
+        GITNEXUS_WEB: `http://localhost:${process.env.TEST_WEB_PORT || 4173}`,
+      },
     });
     rl = createInterface({ input: server.stdout });
     rl.on('line', (line) => {

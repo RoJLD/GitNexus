@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 
-const BASE = 'http://localhost:4173';
+const BASE = `http://localhost:${process.env.TEST_WEB_PORT || 4173}`;
 
 // Routing + validation contract for the multi-repo group-graph endpoints.
 // These do not require a real synced group (a live merged-graph render is

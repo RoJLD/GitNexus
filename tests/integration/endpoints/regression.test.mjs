@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { FIXTURE } from '../helpers/analyze.mjs';
 
-const BASE = 'http://localhost:4173';
+const BASE = `http://localhost:${process.env.TEST_WEB_PORT || 4173}`;
 
 const fetchReg = async (params) => {
   const res = await fetch(`${BASE}/regression?${params}`);

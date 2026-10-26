@@ -144,7 +144,7 @@ index b102a700..5847cadb 100644
  RUN chown -R node:node /app
  
 diff --git a/docker-server.mjs b/docker-server.mjs
-index f6c9eb8f..5d7da397 100644
+index f6c9eb8f..b6b90b38 100644
 --- a/docker-server.mjs
 +++ b/docker-server.mjs
 @@ -1,6 +1,11 @@
@@ -156,7 +156,7 @@ index f6c9eb8f..5d7da397 100644
 +import { tmpdir } from 'node:os';
 +import { basename, dirname, extname, isAbsolute, join, normalize, relative, resolve, sep } from 'node:path';
 +import { spawn } from 'node:child_process';
-+import { registerGitnexusRoutes, startGitnexusCron } from './docker-server-routes.mjs';
++import { registerGitnexusRoutes, startGitnexusCron, exitOnStopSignals } from './docker-server-routes.mjs';
 +import { recorder, normalizePath } from './docker-server-metrics.mjs';
  
  const host = '0.0.0.0';
@@ -644,7 +644,7 @@ index f6c9eb8f..5d7da397 100644
    let decoded;
    try {
      decoded = decodeURIComponent(urlPath);
-@@ -172,4 +636,7 @@ const server = createServer(async (req, res) => {
+@@ -172,4 +636,8 @@ const server = createServer(async (req, res) => {
  
  server.listen(port, host, () => {
    console.log(`gitnexus-web listening on http://${host}:${port}`);
@@ -652,6 +652,7 @@ index f6c9eb8f..5d7da397 100644
 +  // by 10s so the stack settles first. Disable via WATCHES_ENABLED=false.
 +  startGitnexusCron(GITNEXUS_API);
  });
++exitOnStopSignals(server);
 diff --git a/gitnexus-web/package-lock.json b/gitnexus-web/package-lock.json
 index bcda6b90..f56a3251 100644
 --- a/gitnexus-web/package-lock.json

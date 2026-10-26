@@ -86,7 +86,7 @@ Pré-requis local : Rancher Desktop running, **Node ≥ 22 LTS**. CI : `.github/
 | Lens authoring client — preview/propose | `unit/lens-authoring-client.test.ts` | `previewLens` 200 → `{ok,braingraph}` / 422 → `{ok:false,errors}` / transport throw → `{ok:false}` (never rejects) ; `proposeLens` sends `Authorization: Bearer` + body `{spec,auto_approve}` WITHOUT `author` (server-derived) + FastAPI `{detail}` surfaced ; `setBridgeUrl` reuses the `validateBackendUrl` SSRF scheme-guard — 6 cases |
 | Lens preview render — useAppState.previewLens | `unit/use-app-state-preview-lens.test.tsx` | ok path builds the graph then applies lens metadata (`lensInsights`/`lensMeaning` set — the gap-#7 regression class) ; non-ok returns `{ok:false,errors}` without replacing the graph — 2 cases |
 | Guided lens form spec — pure translator + client gate | `unit/lens-form-spec.test.ts` | `predicateRowToExpr` comparison ops + bracketed `in` list ; `formStateToSpec` minimal spec, OMITS `color`/`select`/`insight` blocks when unset (empty block breaks backend grammar), emits them when set, omits blank `meaning`, never emits an `insight.rank` the backend answers with `[]` and no error (`top 0/-3/2.5 by x`, `top 5 by in-degree` — `min={1}` is never enforced, no `<form>` wraps the fields) ; `validateFormState` issue codes — name/`source.lens` required (an empty upstream is falsy, so the promoter's referential-integrity guard is short-circuited), predicate operand carrying `< > = !` rejected (eval_predicate scans operators by containment before its ` in ` branch → whole graph silently dimmed), half-filled/out-of-range insight reported instead of dropped, fully-blank insight treated as an opt-out ; `isFormPristine` per-field (guards the guided→expert serialization against destroying hand-written expert JSON) — 44 cases |
-| Graph templates registry | `unit/graph-templates-registry.test.mjs` | registry list/get + builtin-protect + sanitizeSource |
+| Graph templates registry | `unit/graph-templates-registry.test.mjs` | registry list/get + builtin-protect + sanitizeSource + `mergeGraphListing` (sidecar-only graphs listed as `external` stubs) |
 | Research-fs importer | `unit/research-fs-importer.test.mjs` | walk + frontmatter types + link resolution + unresolved report |
 | Research graph adapter | `unit/research-graph-adapter.test.mjs` | ResearchGraph -> graphology nodes/colors/edges |
 | Academic JSON importer | `unit/academic-json-importer.test.mjs` | generic ingest shape + author/topic dedup + edge dedup + report counts + skipped |
@@ -100,7 +100,7 @@ Pré-requis local : Rancher Desktop running, **Node ≥ 22 LTS**. CI : `.github/
 | Patch drift guard | `unit/check-patch-drift.test.mjs` | `filesInDiff` + `compareDiffFileSets` + `normalizeDiff` |
 | Upstream releases watch | `unit/check-upstream-releases.test.mjs` | `parsePinnedVersion` + `parseStableTags` + `cmpSemver` |
 | Commits parse | `unit/commits-parse.test.mjs` | `parseCommitLines` + `isSafeRef` |
-| Docker-server routes shim | `unit/docker-server-routes.test.mjs` | route registry shim (`registerGitnexusRoutes`) |
+| Docker-server routes shim | `unit/docker-server-routes.test.mjs` | route registry shim (`registerGitnexusRoutes`) + `exitOnStopSignals` (SIGTERM/SIGINT close the server and exit 0; a stream still open after the grace period is cut) |
 | Embedding tools | `unit/embedding-tools.test.mjs` | `nearestNeighbors` + `spectralLayout` |
 | Graph diff — models | `unit/graph-diff-models.test.mjs` | `diffGraphs` (P-IA-3 model diff) |
 | Graph diff — view | `unit/graph-diff-view.test.mjs` | `buildDiffStatus` + `unionResearchGraphs` + `DIFF_VIEW_COLORS` |
@@ -124,6 +124,7 @@ Pré-requis local : Rancher Desktop running, **Node ≥ 22 LTS**. CI : `.github/
 | Research graph importer | `unit/research-graph-importer.test.mjs` | `importResearchGraph` |
 | Research → 3D | `unit/research-to-3d.test.mjs` | `researchTo3D` (P3-3 lens 3D) |
 | Sidecar render map | `unit/sidecar-render-map.test.mjs` | `mapRenderRows` |
+| Sidecar ingest Cypher | `unit/sidecar-ingest-cypher.test.mjs` | `nodeMergeQuery` / `edgeMergeQuery` (labeled endpoint match from `from_table`/`to_table`) + unsafe table / graph names rejected (`safeName`) |
 | Wiki anti-injection guard | `unit/wiki-prompt-injection-guard.test.mjs` | anti-injection system frame (P0-5) |
 
 ### Components React (unit)
@@ -167,6 +168,7 @@ Pré-requis local : Rancher Desktop running, **Node ≥ 22 LTS**. CI : `.github/
 | Test | Fichier | Couvre |
 |---|---|---|
 | Health + routes | `integration/stack-health.test.mjs` | `/health`, présence des 16 routes |
+| Stop signal | `integration/stack-stop-signal.test.mjs` | web + graphs-sidecar images exit 0 on `docker stop` (they ignored SIGTERM as PID 1 and were killed, exit 137) |
 
 ### Endpoints integration
 | Test | Fichier | Couvre |
@@ -207,7 +209,7 @@ Pré-requis local : Rancher Desktop running, **Node ≥ 22 LTS**. CI : `.github/
 | MCP ghost_audit | `integration/mcp/ghost_audit.test.mjs` | stdio JSON-RPC tool call |
 | Clusters endpoint | `integration/endpoints/clusters.test.mjs` | `GET /clusters` 200/400/404 + filter |
 | Group graph endpoints | `integration/endpoints/group-graph.test.mjs` | `GET /groups` 200 array shape + `GET /group/status` 400 + `POST /group/sync` 400 + `GET /graph/merged` 400 missing-group + 404 unsynced-group |
-| Graph templates | `integration/endpoints/graph-templates.test.mjs` | `/graph/templates` + scaffold -> import -> `/graph/research/:name` + 400 unknown template |
+| Graph templates | `integration/endpoints/graph-templates.test.mjs` | `/graph/templates` + scaffold -> import -> `/graph/research/:name` + 400 unknown template + a graph pushed straight to the sidecar is in `/graph/list` + 404 (nothing created) for an unknown graph |
 | Graph template tools | `integration/mcp/graph_templates.test.mjs` | 3 new tools present + list_graph_templates returns research-artifacts |
 | Baseline seed + promote | `integration/endpoints/baseline-seed.test.mjs` | `POST /snapshot/baseline-seed` + `POST /snapshot/promote` |
 | Commits lister | `integration/endpoints/commits.test.mjs` | `GET /commits` |
@@ -216,7 +218,7 @@ Pré-requis local : Rancher Desktop running, **Node ≥ 22 LTS**. CI : `.github/
 ### Sidecar integration
 | Test | Fichier | Couvre |
 |---|---|---|
-| Graphs sidecar | `integration/sidecar/graphs-sidecar.test.mjs` | build image + create/ingest/render round-trip + 500-on-bad-cypher (server stays up) |
+| Graphs sidecar | `integration/sidecar/graphs-sidecar.test.mjs` | build image + create/ingest/render round-trip + 500-on-bad-cypher (server stays up) + 404 on render/cypher/ingest of a graph never created, no file written |
 
 ### UI flows e2e
 | Test | Fichier | Couvre |

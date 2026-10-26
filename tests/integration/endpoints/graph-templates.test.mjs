@@ -1,6 +1,13 @@
 import { describe, it, expect } from 'vitest';
+import { execFileSync } from 'node:child_process';
 
-const BASE = 'http://localhost:4173';
+const BASE = `http://localhost:${process.env.TEST_WEB_PORT || 4173}`;
+
+// The sidecar publishes no host port on the test stack: reach it from the web container.
+const sidecarPost = (name, action, body) => execFileSync('docker', [
+  'exec', 'gitnexus-web-test', 'curl', '-fsS', '-X', 'POST', '-H', 'Content-Type: application/json',
+  '-d', JSON.stringify(body), `http://gitnexus-graphs-test:4749/g/${name}/${action}`,
+], { encoding: 'utf8' });
 
 describe('graph-templates routes', () => {
   it('lists the built-in research-artifacts template', async () => {
@@ -161,5 +168,30 @@ describe('graph-templates routes', () => {
     const body = await act.json();
     expect(typeof body.nodes.s0).toBe('number');
     expect(Number.isFinite(body.report.max)).toBe(true);
+  });
+
+  // Quant-lab's `export-gitnexus --push` writes straight to the sidecar (create + ingest),
+  // never through /graph/scaffold, so the graph had no index record and /graph/list (the
+  // UI's graph sidebar) did not show it.
+  it('lists a graph pushed straight to the sidecar', async () => {
+    sidecarPost('it-pushed', 'create', { ddl: ['CREATE NODE TABLE Item(id STRING, title STRING, PRIMARY KEY(id))'] });
+    sidecarPost('it-pushed', 'ingest', { nodes: [{ table: 'Item', props: { id: 'i1', title: 'one' } }], edges: [] });
+    const list = await (await fetch(`${BASE}/graph/list`)).json();
+    expect(list.graphs.find((g) => g.name === 'it-pushed'))
+      .toEqual({ name: 'it-pushed', template: null, schema_type: 'external', source: null, created: null });
+    // Scaffolded graphs keep their index record.
+    expect(list.graphs.find((g) => g.name === 'it-research')?.schema_type).toBe('research-artifacts');
+    const graph = await (await fetch(`${BASE}/graph/research/it-pushed`)).json();
+    expect(graph.nodes.map((n) => n.id)).toEqual(['i1']);
+  });
+
+  // The sidecar used to create an empty <name>.lbug on the render of an unknown name; with
+  // the list now built from the sidecar's graphs, that ghost would show in the sidebar.
+  it('answers 404 for an unknown graph without creating it', async () => {
+    const res = await fetch(`${BASE}/graph/research/it-never-made`);
+    expect(res.status).toBe(404);
+    expect((await res.json()).error).toMatch(/graph it-never-made not found/);
+    const list = await (await fetch(`${BASE}/graph/list`)).json();
+    expect(list.graphs.map((g) => g.name)).not.toContain('it-never-made');
   });
 });
