@@ -44,7 +44,9 @@ services:
       GITNEXUS_MODEL: ${GITNEXUS_MODEL:-}
       GITNEXUS_LLM_BASE_URL: ${GITNEXUS_LLM_BASE_URL:-}
     ports:
-      - "4747:4747"
+      # Loopback only by default: /api/mcp has no auth in `gitnexus serve` mode. Set GITNEXUS_BIND=0.0.0.0 in .env
+      # to reach the stack from another machine on purpose.
+      - "${GITNEXUS_BIND:-127.0.0.1}:4747:4747"
     volumes:
       # Mount the host's project root entirely so any sub-project is indexable
       # via the UI's local-path mode. The host path comes from PROJECTS_ROOT
@@ -86,7 +88,7 @@ services:
       # Graph-templates routes proxy to the LadybugDB sidecar (compose DNS name).
       GRAPHS_URL: http://gitnexus-graphs:4749
     ports:
-      - "4173:4173"
+      - "${GITNEXUS_BIND:-127.0.0.1}:4173:4173"
     volumes:
       # Mount of the host project root (PROJECTS_ROOT in .env) so /listdir
       # can enumerate subfolders, /export can read .gitnexus directories, and
