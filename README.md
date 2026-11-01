@@ -113,6 +113,10 @@ watches cron triggers due regenerations.
 | MCP endpoint (for Claude Code)     | http://localhost:4747/api/mcp                                 |
 | Web UI                             | http://localhost:4173                                         |
 
+Both ports are published on `127.0.0.1` only: the API and `/api/mcp` have no authentication, so another machine on
+the network must not reach them. To expose the stack on purpose (a trusted network), set `GITNEXUS_BIND=0.0.0.0` in
+`.env`, then `docker compose up -d`.
+
 The two named volumes (`gitnexus-data`, `gitnexus-hf-cache`) are scoped
 globally (no compose-project prefix), so they survive teardowns and rebuilds.
 
