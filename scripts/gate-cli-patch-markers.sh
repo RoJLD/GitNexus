@@ -84,6 +84,7 @@ case "$MODE" in
     API="$ROOT/gitnexus/src/server/api.ts"
     PR="$ROOT/gitnexus/src/core/wiki/prompts.ts"
     GEN="$ROOT/gitnexus/src/core/wiki/generator.ts"
+    LBUG="$ROOT/gitnexus/src/core/lbug/lbug-adapter.ts"
 
     # PR #11 — trusted write-origins allow-list (the only thing that makes the
     # browser write routes usable behind gitnexus-gateway: CMD binds 0.0.0.0,
@@ -102,6 +103,10 @@ case "$MODE" in
     has    "src/prompts:    appendAntiInjectionFrame"    "$PR"  "appendAntiInjectionFrame"
     has    "src/generator:  frame imported"              "$GEN" "appendAntiInjectionFrame"
     has    "src/generator:  framedSystem passed on"      "$GEN" "framedSystem"
+
+    # No CHECKPOINT on a read-only connection: closing a REST read connection
+    # left lbug.shadow + lbug.wal that MCP's read-only pool cannot replay.
+    has    "src/lbug:       read-only flushWAL no-op"    "$LBUG" "PATCHED:readonly-no-checkpoint"
     ;;
 
   dist)
@@ -126,6 +131,7 @@ case "$MODE" in
     has    "dist/prompts:    UNTRUSTED INPUT frame"      "$PR"  "UNTRUSTED INPUT"
     has    "dist/generator:  frame imported"             "$GEN" "appendAntiInjectionFrame"
     has    "dist/generator:  framedSystem passed on"     "$GEN" "framedSystem"
+    has    "dist/lbug:       read-only flushWAL no-op"   "$LBUG" "PATCHED:readonly-no-checkpoint"
 
     # The three dist/ rewrites that DID reach production since 2026-05. The
     # COPY of the freshly-built dist/ happens BEFORE the two patch RUNs; put

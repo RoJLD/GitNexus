@@ -9439,6 +9439,32 @@ index a62b9e58..46f7be42 100644
 +    },
    },
  });
+diff --git a/gitnexus/src/core/lbug/lbug-adapter.ts b/gitnexus/src/core/lbug/lbug-adapter.ts
+index 7c571b7f..3d851bc9 100644
+--- a/gitnexus/src/core/lbug/lbug-adapter.ts
++++ b/gitnexus/src/core/lbug/lbug-adapter.ts
+@@ -1833,11 +1833,20 @@ export const fetchExistingEmbeddingHashes = async (
+  * Use this instead of safeClose when the connection must stay open
+  * (e.g. the /api/embed handler that keeps serving queries after flushing).
+  *
++ * A no-op on a read-only connection (the REST read routes open one): it has
++ * no pending writes, and a CHECKPOINT there is not harmless — LadybugDB writes
++ * `lbug.shadow` and `lbug.wal`, then fails to write the main file opened
++ * read-only, and leaves both behind. Every later read-only open of that index
++ * (the MCP pool) then fails with "Couldn't replay shadow pages under read-only
++ * mode" until a writable open replays them. Same rule as closeBridgeHandle
++ * (core/group/bridge-db.ts).
++ *
+  * @see safeClose — CHECKPOINT + connection/database close
+  */
+ export const flushWAL = async (): Promise<void> => {
+   const c = conn;
+-  if (!c) return;
++  // PATCHED:readonly-no-checkpoint (fork) — see the doc comment above.
++  if (!c || currentDbReadOnly) return;
+   try {
+     await withConnLock(async () => {
+       const checkpointResult = await c.query('CHECKPOINT');
 diff --git a/gitnexus/src/core/wiki/generator.ts b/gitnexus/src/core/wiki/generator.ts
 index 2e618073..cdc59c70 100644
 --- a/gitnexus/src/core/wiki/generator.ts

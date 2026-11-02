@@ -7,7 +7,7 @@ repository (tag `v1.6.9`) for this deployment:
 - **`additive-files.diff`** — <!-- COUNTER:additive-files -->144<!-- /COUNTER --> new
   files we own entirely. These never conflict with upstream changes because
   they are new files, not edits.
-- **`inplace-edits.diff`** — <!-- COUNTER:inplace-files -->28<!-- /COUNTER --> modified
+- **`inplace-edits.diff`** — <!-- COUNTER:inplace-files -->29<!-- /COUNTER --> modified
   upstream files. This is the real conflict surface when bumping upstream.
 
 Both counts are AUTOGEN — regenerate with `node scripts/check-doc-counters.mjs
@@ -39,7 +39,7 @@ manually re-applying the changes — see "Regenerate the diffs" below.
 ## What's inside
 
 <!-- COUNTER:additive-files -->144<!-- /COUNTER --> additive files (new files we
-own, in `additive-files.diff`) + <!-- COUNTER:inplace-files -->28<!-- /COUNTER -->
+own, in `additive-files.diff`) + <!-- COUNTER:inplace-files -->29<!-- /COUNTER -->
 in-place edits to upstream files (the real conflict surface, in
 `inplace-edits.diff`); zero deletions.
 
