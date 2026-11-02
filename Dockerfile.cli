@@ -68,6 +68,13 @@
 #      until the server restarts. The MCP backend already does the right thing
 #      (mcp/local/local-backend.ts); we mirror the staleness check into the
 #      REST adapter via scripts/patch-lbug-staleness.mjs.
+#   3. (2026-11-02, still on upstream main) closing the REST adapter's
+#      read-only connection — a read of another repo evicts it — ran a
+#      CHECKPOINT on it: LadybugDB wrote lbug.shadow + lbug.wal, failed to write
+#      the read-only main file and left both, so MCP's read-only pool refused
+#      the index ("Couldn't replay shadow pages under read-only mode"). Fixed in
+#      the .ts (flushWAL is a no-op on a read-only connection,
+#      patches/inplace-edits.diff, marker PATCHED:readonly-no-checkpoint).
 
 ARG NPM_VERSION=11.14.1
 

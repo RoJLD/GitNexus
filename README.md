@@ -157,5 +157,6 @@ with your usage context (academic research is fine; commercial use of the
 | Container starts then exits                                  | `docker compose logs gitnexus` — usually a port conflict on :4747 |
 | UI shows "0 indexed repos" after a re-deploy                 | Volumes were re-created; re-run analyze from the UI      |
 | Analyze fails with `EACCES` on `/data/gitnexus/registry.json` | The `gitnexus-data` root is owned by root: `docker compose up -d` (the `gitnexus-graphs` service hands it to `node` at start) |
+| MCP says "Couldn't replay shadow pages under read-only mode" | An image older than 2026-11-02 left `lbug.wal` + `lbug.shadow` after a REST read: rebuild (`docker compose build gitnexus && docker compose up -d`); the next REST read of that repo replays them |
 | Embeddings count stays at 0 after analyze                    | Patch failed — `docker exec gitnexus ls /app/gitnexus/scripts/` should list `install-duckdb-extension.mjs` |
 | Need to wipe everything                                      | `docker compose down -v` (also removes named volumes — destructive) |
