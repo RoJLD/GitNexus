@@ -156,5 +156,6 @@ with your usage context (academic research is fine; commercial use of the
 | `start.bat` says "container with name X already exists"      | Already handled (`docker rm -f` upfront), but if it leaks: `docker rm -f gitnexus gitnexus-web` |
 | Container starts then exits                                  | `docker compose logs gitnexus` — usually a port conflict on :4747 |
 | UI shows "0 indexed repos" after a re-deploy                 | Volumes were re-created; re-run analyze from the UI      |
+| Analyze fails with `EACCES` on `/data/gitnexus/registry.json` | The `gitnexus-data` root is owned by root: `docker compose up -d` (the `gitnexus-graphs` service hands it to `node` at start) |
 | Embeddings count stays at 0 after analyze                    | Patch failed — `docker exec gitnexus ls /app/gitnexus/scripts/` should list `install-duckdb-extension.mjs` |
 | Need to wipe everything                                      | `docker compose down -v` (also removes named volumes — destructive) |

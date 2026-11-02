@@ -116,6 +116,11 @@ services:
     container_name: gitnexus-graphs
     environment:
       GRAPHS_DIR: /data/gitnexus/graphs
+    # This container runs as root and may be the first to mount gitnexus-data: a fresh volume then gets a root-owned
+    # 755 root (seen on 2026-10-19), and the API and web containers (user node, uid 1000) can neither write
+    # registry.json nor clone into repos/, so every analyze fails with EACCES. Hand the volume's root to node at each
+    # start (idempotent), then exec the server (it keeps receiving SIGTERM).
+    command: ["sh", "-c", "chown 1000:1000 /data/gitnexus && exec node server.mjs"]
     volumes:
       - gitnexus-data:/data/gitnexus
     restart: unless-stopped
