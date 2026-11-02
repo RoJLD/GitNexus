@@ -8,7 +8,7 @@
 **Fork interne : [github.com/RoJLD/GitNexus](https://github.com/RoJLD/GitNexus) → branche active `feat/classdiagram-export-and-class-lens`** (le code v7 live ; `deployment` = base de réconciliation, fast-forwardée sur cette branche).
 
 <!-- Compteurs autogénérés (source de vérité = le code). `node scripts/check-doc-counters.mjs --write` régénère ; `--check` échoue en CI si un compteur dérive. NE PAS éditer les nombres à la main entre les marqueurs COUNTER. -->
-**Compteurs (autogénérés)** : MCP tools = <!-- COUNTER:mcp-tools -->37<!-- /COUNTER --> · additive-files = <!-- COUNTER:additive-files -->144<!-- /COUNTER --> · inplace-files = <!-- COUNTER:inplace-files -->28<!-- /COUNTER -->.
+**Compteurs (autogénérés)** : MCP tools = <!-- COUNTER:mcp-tools -->37<!-- /COUNTER --> · additive-files = <!-- COUNTER:additive-files -->144<!-- /COUNTER --> · inplace-files = <!-- COUNTER:inplace-files -->29<!-- /COUNTER -->.
 
 Document figé dans le temps, vocation : servir de base de brainstorming
 pour les évolutions futures. À ré-éditer quand on bump la version
@@ -139,6 +139,8 @@ Le paquet **web** n'a jamais eu ce défaut — `Dockerfile.web` compile l'arbre 
 Effet de bord voulu : `build-gate` (CI) **compile réellement** le paquet CLI. Une erreur de type dans nos quatre `.ts` patchés fait maintenant échouer l'image.
 
 Vérifié depuis l'image `1.6.9-elysium-v2` (pod jetable, pas depuis le dépôt) : `TRUSTED_WRITE_ORIGINS` → 4 fichiers, `ANTI_INJECTION_DIRECTIVE` → 3 fichiers, `createLocalhostOriginGuard(boundHost, trustedWriteOrigins)`, `PATCHED:lbug-staleness-check` ×1, `INCREMENTAL-DUMP` ×2, `wiki-worker.mjs` présent, `gitnexus --version` = 1.6.9.
+
+**Pas de CHECKPOINT sur une connexion lecture seule (2026-11-02)** — édit in-place de `gitnexus/src/core/lbug/lbug-adapter.ts` : `flushWAL` (donc `safeClose`, `closeLbug`, `closeLbugBeforeExit`) ne fait rien quand la connexion ouverte est en lecture seule. Avant, fermer la connexion REST de lecture (une lecture d'un autre repo l'évince) laissait `lbug.shadow` + `lbug.wal` que le pool MCP lecture seule ne sait pas rejouer. Marqueur `PATCHED:readonly-no-checkpoint` (gate src + dist), test `tests/integration/rest-read-no-wal.test.mjs`.
 
 ### B.2 Time-travel + analytics
 **Implémentation : patches sur upstream** (clone gitignoré, deltas sérialisés dans deux fichiers diff — voir ci-dessous).
@@ -376,7 +378,7 @@ Pure frontend extension de la Timeline existante — aucune route serveur, réut
 | [../CLAUDE.md](../CLAUDE.md) | Règle workspace : tests CI/CD si module en a déjà |
 | [patches/README.md](patches/README.md) | Comment ré-appliquer les patches sur un clone frais + procédure de bump dry-run |
 | [patches/additive-files.diff](patches/additive-files.diff) | <!-- COUNTER:additive-files -->144<!-- /COUNTER --> fichiers neufs que nous possédons (risque de conflit nul) — base v1.6.9 (bump 2026-08-19) |
-| [patches/inplace-edits.diff](patches/inplace-edits.diff) | <!-- COUNTER:inplace-files -->28<!-- /COUNTER --> édits in-place de fichiers upstream (vraie surface de conflit au bump) — base v1.6.9 |
+| [patches/inplace-edits.diff](patches/inplace-edits.diff) | <!-- COUNTER:inplace-files -->29<!-- /COUNTER --> édits in-place de fichiers upstream (vraie surface de conflit au bump) — base v1.6.9 |
 | [patches/bump-dry-run-main.md](patches/bump-dry-run-main.md) | Rapport du premier dry-run de bump contre `main` (107 clean / 0 conflict / 9 fail) |
 | [scripts/bump-upstream.mjs](scripts/bump-upstream.mjs) | Outil de bump dry-run : clone la cible, applique les deux diffs, écrit le rapport |
 | [patches/example-gitnexus-domains.json](patches/example-gitnexus-domains.json) | Template pour la feature Dissonance |

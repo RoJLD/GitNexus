@@ -169,6 +169,7 @@ Pré-requis local : Rancher Desktop running, **Node ≥ 22 LTS**. CI : `.github/
 |---|---|---|
 | Health + routes | `integration/stack-health.test.mjs` | `/health`, présence des 16 routes |
 | Stop signal | `integration/stack-stop-signal.test.mjs` | web + graphs-sidecar images exit 0 on `docker stop` (they ignored SIGTERM as PID 1 and were killed, exit 137) |
+| REST read leaves no WAL | `integration/rest-read-no-wal.test.mjs` | throwaway CLI server on two one-file repos: `/api/query` on one then the other closes the first's read-only connection without leaving `lbug.wal`/`lbug.shadow`, and MCP `cypher` still opens it (before: "Couldn't replay shadow pages under read-only mode") |
 
 ### Endpoints integration
 | Test | Fichier | Couvre |
